@@ -223,11 +223,7 @@ function download_datasets(names=nothing; extract=nothing)
     end
 end
 
-function register_datasets(datasets::Dict; datasets_path::Union{Nothing,String}=nothing, kwargs...)
-    if datasets_path === nothing
-        datasets_path = DATASETS_PATH
-    end
-
+function register_datasets(datasets::Dict; kwargs...)
     for (name, info) in pairs(datasets)
         if haskey(info, "remote")
             register_repository(name, info["remote"]; folder=get(info, "folder", nothing), type=get(info, "type", "git"), kwargs...)
