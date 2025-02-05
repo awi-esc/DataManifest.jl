@@ -8,6 +8,15 @@ Currently Datasets supports download from a set of URLs suited for repositories 
 
 It provides declarative functions to register and download datasets, as well as a way to write to and read from an equivalent (and optional) `toml` config file.
 
+## How to install?
+
+This package is not registerd, so you need to install it from URL:
+
+```julia
+using Pkg
+Pkg.add(url="https://github.com/awi-esc/Datasets.jl")
+```
+
 ## Examples
 
 Examples of the declarative syntax
