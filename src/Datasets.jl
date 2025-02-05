@@ -10,8 +10,10 @@ COMPRESSED_FORMATS = ["zip", "tar.gz", "tar"]
 EXTRACT = true
 
 function register_dataset(name::String=""; doi::Union{Nothing,String}=nothing,
-    aliases::Vector{String}=Vector{String}(), downloads::Vector{String}=Vector{String}(),
-    folder=nothing, datasets=DATASETS, overwrite::Bool=false)
+    aliases::Vector{String}=Vector{String}(),
+    downloads::Vector{String}=Vector{String}(),
+    datasets_path=nothing, folder=nothing,
+    datasets=DATASETS, overwrite::Bool=false)
     if (name == "" && doi !== nothing)
         name = doi
     end
@@ -21,10 +23,16 @@ function register_dataset(name::String=""; doi::Union{Nothing,String}=nothing,
     if haskey(datasets, name) && !overwrite
         error("Dataset $name already exists. Set overwrite=true to overwrite.")
     end
+    if folder === nothing
+        if datasets_path === nothing
+            datasets_path = DATASETS_PATH
+        end
+        folder = joinpath(datasets_path, doi === nothing ? name : doi)
+    end
     datasets[name] = Dict(
         "doi" => doi,
         "downloads" => downloads,
-        "folder" => joinpath(folder === nothing ? DATASETS_PATH : folder, doi === nothing ? name : doi)
+        "folder" => folder,
     )
     if length(aliases) > 0
         datasets[name]["aliases"] = aliases
@@ -55,17 +63,25 @@ function _parse_git_remote(remote::String)
 end
 
 
-function register_repository(name::String, remote::String; folder=nothing, type="git", datasets=DATASETS, overwrite::Bool=false)
+function register_repository(name::String, remote::String;
+    datasets_path::Union{String, Nothing}=nothing, folder=nothing,
+    type="git", datasets=DATASETS, overwrite::Bool=false)
     if name == ""
         name, _ = splitext(basename(remote))
     end
     if haskey(datasets, name) && !overwrite
         error("Dataset $name already exists. Set overwrite=true to overwrite.")
     end
-    parsed = _parse_git_remote(remote)
+    if folder === nothing
+        if datasets_path === nothing
+            datasets_path = DATASETS_PATH
+        end
+        parsed = _parse_git_remote(remote)
+        folder = joinpath(folder === nothing ? datasets_path : folder, parsed["server"], parsed["group"], parsed["repo"])
+    end
     datasets[name] = Dict(
         "remote" => remote,
-        "folder" => joinpath(folder === nothing ? DATASETS_PATH : folder, parsed["server"], parsed["group"], parsed["repo"]),
+        "folder" => folder,
         "type" => type,
         "aliases" => [joinpath(parsed["group"], parsed["repo"]), parsed["repo"]],
     )
@@ -193,9 +209,9 @@ function register_datasets(datasets::Dict; datasets_path::Union{Nothing,String}=
 
     for (name, info) in pairs(datasets)
         if haskey(info, "remote")
-            register_repository(name, info["remote"]; folder=get(info, "folder", datasets_path), type=get(info, "type", "git"), kwargs...)
+            register_repository(name, info["remote"]; folder=get(info, "folder", nothing), type=get(info, "type", "git"), kwargs...)
         else
-            register_dataset(name ;doi=info["doi"], downloads=info["downloads"], folder=get(info, "folder", datasets_path), kwargs...)
+            register_dataset(name; doi=info["doi"], downloads=info["downloads"], folder=get(info, "folder", nothing), kwargs...)
         end
     end
 end

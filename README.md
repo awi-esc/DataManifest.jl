@@ -63,7 +63,14 @@ datasets = register_datasets("config.yml")
 
 At present there is a global variable `DATASETS` that contains all datasets,
 so that is it not needed as an input argument to the functions, but
-optional parameters make it possible to handle separate dataset files.
+an optional parameter `datasets::Dict` make it possible to handle separate dataset files.
+
+Similarly, there is a global `DATASETS_PATH` variable that defines the default folder
+for saving all datasets, which defaults to a local `datasets` folder. The global variable
+can be overwritten using the module prefix, i.e. `Datasets.DATASETS_PATH = ...` and a local
+`folder=` attribute can be used to define a local folder for each dataset individually.
+By default, the write function `write_datasets_toml` removes the `folder` parameter
+because it is up to the user.
 
 Finally, the datasets can be downloaded straightforwardly:
 
