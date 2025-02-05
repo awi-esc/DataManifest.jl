@@ -13,22 +13,28 @@ It provides declarative functions to register and download datasets, as well as 
 Examples of the declarative syntax
 ```julia
 
-import Datasets: register_dataset, register_repository, DATASETS
+using Datasets
 
-herzschuh2021 = register_dataset("10.1594/PANGAEA.930512";
+# Datasets.DATASETS_PATH = "datasets" # default
+
+register_dataset("herzschuh2021"; doi="10.1594/PANGAEA.930512",
     downloads=["https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"],
-    )
+)
 
-jonkers2024 = register_dataset("10.1594/PANGAEA.962852";
+register_dataset("jonkers2024"; doi="10.1594/PANGAEA.962852",
     downloads=["https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv"],
-    )
+)
 
-tierney2020 = register_repository("git@github.com:jesstierney/lgmDA.git")
+register_repository("git@github.com:jesstierney/lgmDA.git"; name="tierney2020")
 
 println(DATASETS)
 ```
 yields:
-```julia
+```
+Dict{Any, Any} with 3 entries:
+  "herzschuh2021" => Dict{String, Any}("downloads"=>["https://doi.pangaea.de/10…
+  "jonkers2024"   => Dict{String, Any}("downloads"=>["https://download.pangaea.…
+  "tierney2020"   => Dict{String, Any}("aliases"=>AbstractString["jesstierney/l…
 ```
 
 An equivalent declaration can be defined in a toml file for more clarify (that's what I'd recommended):
@@ -52,7 +58,6 @@ And read via the `register_datasets` function
 
 ```julia
 
-import Datasets: save_datasets
 datasets = register_datasets("config.yml")
 ```
 
@@ -63,8 +68,6 @@ optional parameters make it possible to handle separate dataset files.
 Finally, the datasets can be downloaded straightforwardly:
 
 ```julia
-import Datasets: download_dataset, download_datasets
-
 download_dataset("jonkers2024")
 download_datasets()  # download all datasets defined in DATASETS
 ```
@@ -72,7 +75,7 @@ download_datasets()  # download all datasets defined in DATASETS
 That files will be downloaded to their `folder` key, which defaults to a local `datasets` folder,
 and will then use their DOI if provided, or the github remote, or their name / alias otherwise.
 
-Details are still being worked out.
+See the [example notebook](example.ipynb).
 
 
 ## Why Datasets.jl ?
