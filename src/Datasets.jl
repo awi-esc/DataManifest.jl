@@ -214,12 +214,12 @@ function download_dataset(name; extract=nothing, datasets=DATASETS)
     end
 end
 
-function download_datasets(names=nothing; extract=nothing)
+function download_datasets(names=nothing; kwargs...)
     if names === nothing
         names = keys(DATASETS)
     end
     for name in names
-        download_dataset(name; extract=extract)
+        download_dataset(name; kwargs...)
     end
 end
 
