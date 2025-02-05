@@ -3,7 +3,10 @@ module Datasets
 import TOML
 import Downloads
 
-export DATASETS_PATH, DATASETS, register_dataset, register_repository, search_datasets, search_dataset, download_dataset, download_datasets, register_datasets, write_datasets_toml, register_datasets_toml
+export DATASETS_PATH, DATASETS, register_dataset, register_repository, register_datasets
+export search_datasets, search_dataset, get_dataset_folder
+export download_dataset, download_datasets
+export write_datasets_toml
 
 DATASETS_PATH = "datasets"
 DATASETS = Dict()
@@ -106,6 +109,16 @@ function extract_file(download_path)
     end
 end
 
+"""Search datasets by name. Compare against (by order of priority)
+
+1) dataset ID (key in DATASETS)
+2) "aliases" key
+3) "doi" key
+
+If exact is true, only exact matches are returned, otherwise partial matches are also considered.
+
+Returns a list of datasets::Vector{Dict} that match the search criteria.
+"""
 function search_datasets(name; datasets=DATASETS, exact=false)
 
     exact_results = []
@@ -148,6 +161,8 @@ function search_datasets(name; datasets=DATASETS, exact=false)
     return unique(vcat(exact_results, partial_results))
 end
 
+"""Like search_datasets, but returns the first result or raises an error if no or multiple datasets are found.
+"""
 function search_dataset(name; datasets=DATASETS, exact=false, check_unique=false, raise=true)
     results = search_datasets(name; datasets=datasets, exact=exact)
     if length(results) == 0
@@ -163,6 +178,11 @@ function search_dataset(name; datasets=DATASETS, exact=false, check_unique=false
     return results[1]
 end
 
+"""Get the folder of a dataset by name. See search_dataset for more details on key-word arguments.
+"""
+function get_dataset_folder(name; kwargs...)
+    return search_dataset(name; kwargs...)["folder"]
+end
 
 function download_dataset(name; extract=nothing, datasets=DATASETS)
     if ! haskey(datasets, name)
