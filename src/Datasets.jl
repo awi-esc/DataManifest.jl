@@ -1,6 +1,7 @@
 module Datasets
 
 import TOML
+import Downloads
 
 export DATASETS_PATH, DATASETS, register_dataset, register_repository, search_datasets, search_dataset, download_dataset, download_datasets, register_datasets, write_datasets_toml, register_datasets_toml
 
@@ -182,10 +183,10 @@ function download_dataset(name; extract=nothing, datasets=DATASETS)
     if !isdir(download_dir)
         mkpath(download_dir)
     end
-    for download in dataset["downloads"]
-        download_path = joinpath(download_dir, basename(download))
+    for url in dataset["downloads"]
+        download_path = joinpath(download_dir, basename(url))
         if !isfile(download_path)
-            cd(() -> run(`wget $download`), download_dir)
+            Downloads.download(url, download_path)
             if (extract === nothing ? EXTRACT : extract) && any(endswith(download_path, formats) for formats in COMPRESSED_FORMATS)
                 extract_file(download_path)
             end
