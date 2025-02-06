@@ -84,13 +84,15 @@ root folder for saving all datasets, which defaults to a local `datasets` folder
 The global variable
 can be overwritten using the module prefix, i.e. `Datasets.DATASETS_PATH = ...`
 or passed as `datasets_path=` keyword argument to the `register_...` functions.
-Each dataset has its own `folder` path is then build from their DOI if provided,
+Each dataset has its own `folder` path. It is built from their DOI, if provided,
 or the github remote, or their name otherwise (and is a child of the datasets' path).
-The full `folder` path can also be provided directly in the `DATASETS` items
-(or as key-word argument to `register_dataset` / `register_repository`), in case a
-specific dataset must be stored in a different location. For distributing the project,
-the `folder` parameter would noramally not be exported because each user
-should be free to organize their data as they please, based on their specific architecture.
+In case a specific dataset must be stored in a different location than the rest,
+the full `folder` path can be provided directly as key-word argument 
+to `register_dataset(s)` / `register_repository`, 
+or assigned as `folder` key to one of the `DATASETS` items, 
+or written in the `datasets.toml` file (this is not recommended when the project 
+is to be distributed, because each user should be free to organize their data as they please, 
+based on their specific architecture).
 
 
 ## Why Datasets.jl ?
