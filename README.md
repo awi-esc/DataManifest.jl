@@ -19,6 +19,34 @@ Pkg.add(url="https://github.com/awi-esc/Datasets.jl")
 
 ## Examples
 
+Here is the most straightforward use, e.g. in a `datasets.toml` file:
+
+```toml
+[herzschuh2021]
+downloads = ["https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"]
+doi = "10.1594/PANGAEA.930512"
+
+[jonkers2024]
+downloads = ["https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv"]
+doi = "10.1594/PANGAEA.962852"
+
+[tierney2020]
+remote = "git@github.com:jesstierney/lgmDA.git"
+```
+
+And read via the `register_datasets` function, download via `download_dataset` or `download_datasets`
+
+```julia
+using DataFrames
+using Datasets
+Datasets.DATASETS_PATH = expanduser("~/datasets")
+register_datasets("datasets.yml")
+folder = download_dataset("jonkers2024") # will download only if not present
+df = CSV.read(joinpath(folder, "LGM_foraminifera_assemblages_20240110.csv"), DataFrame)
+```
+
+## Advanced Examples
+
 Examples of the declarative syntax
 ```julia
 
@@ -46,30 +74,6 @@ Dict{Any, Any} with 3 entries:
   "tierney2020"   => Dict{String, Any}("aliases"=>AbstractString["jesstierney/l…
 ```
 
-An equivalent declaration can be defined in a `datasets.toml` file for more clarify (that's what I'd recommended)
-
-```toml
-[herzschuh2021]
-downloads = ["https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"]
-doi = "10.1594/PANGAEA.930512"
-
-[jonkers2024]
-downloads = ["https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv"]
-doi = "10.1594/PANGAEA.962852"
-
-[tierney2020]
-remote = "git@github.com:jesstierney/lgmDA.git"
-```
-
-Note dataset-specific parameters can be provided to overwrite global parameters such as `datasets_path`.
-
-And read via the `register_datasets` function
-
-```julia
-
-datasets = register_datasets("datasets.toml")
-```
-
 The (meta)database is stored in a global variable `Datasets.DATASETS`.
 However, for specific cases such as for a library or when several conflictual datasets
 must co-exist, an optional parameter `datasets::Dict` can be passed to relevant functions
@@ -87,22 +91,6 @@ The full `folder` path can also be provided directly in the `DATASETS` items
 specific dataset must be stored in a different location. For distributing the project,
 the `folder` parameter would noramally not be exported because each user
 should be free to organize their data as they please, based on their specific architecture.
-
-Finally, the datasets can be downloaded straightforwardly:
-
-```julia
-download_datasets()  # download all datasets defined in DATASETS
-```
-or downloaded and accessed in a lazy manner (e.g.inside a load function):
-
-```julia
-
-function load_jonkers2024()
-  download_dataset("jonkers2024")
-  datapath = get_dataset_folder("jonkers2024")
-  return CSV.read(joinpath(datapath, "LGM_foraminifera_assemblages_20240110.csv"), DataFrame)
-end
-```
 
 
 ## Why Datasets.jl ?
