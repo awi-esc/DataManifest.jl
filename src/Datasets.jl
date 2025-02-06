@@ -3,15 +3,43 @@ module Datasets
 import TOML
 import Downloads
 
-export DATASETS_PATH, DATASETS, register_dataset, register_repository, register_datasets
+export register_dataset, register_repository, register_datasets
 export search_datasets, search_dataset, get_dataset_folder
 export download_dataset, download_datasets
 export write_datasets_toml
+export set_datasets_path, set_datasets, get_datasets_path, get_datasets
 
-DATASETS_PATH = "datasets"
-DATASETS = Dict()
+const GLOBAL_STATE = Dict(
+    "DATASETS" => Dict(),
+    "DATASETS_PATH" => "datasets",
+    "EXTRACT" => true,
+)
+
+"""Set global state variables such as DATASETS and DATASETS_PATH
+"""
+function set_datasets_path(path::String)
+    GLOBAL_STATE["DATASETS_PATH"] = path
+end
+
+function set_datasets(datasets::Dict)
+    GLOBAL_STATE["DATASETS"] = datasets
+end
+
+function get_datasets_path(datasets_path::Union{String,Nothing}=nothing)
+    if datasets_path !== nothing
+        return datasets_path
+    end
+    return GLOBAL_STATE["DATASETS_PATH"]
+end
+
+function get_datasets(datasets::Union{Dict,Nothing}=nothing)
+    if datasets !== nothing
+        return datasets
+    end
+    return GLOBAL_STATE["DATASETS"]
+end
+
 COMPRESSED_FORMATS = ["zip", "tar.gz", "tar"]
-EXTRACT = true
 
 """Standard Dataset
 
@@ -41,13 +69,14 @@ function register_dataset(name::String=""; doi::Union{Nothing,String}=nothing,
     url::Union{Nothing,String}=nothing,
     version::Union{Nothing,String}=nothing,
     datasets_path=nothing, folder=nothing,
-    datasets=DATASETS, overwrite::Bool=false)
+    datasets=nothing, overwrite::Bool=false)
     if (name == "" && doi !== nothing)
         name = doi
     end
     if name == ""
         error("name or doi must be provided")
     end
+    datasets = get_datasets(datasets)
     if haskey(datasets, name) && !overwrite
         error("Dataset $name already exists. Set overwrite=true to overwrite.")
     end
@@ -58,9 +87,7 @@ function register_dataset(name::String=""; doi::Union{Nothing,String}=nothing,
         downloads = [url]
     end
     if folder === nothing
-        if datasets_path === nothing
-            datasets_path = DATASETS_PATH
-        end
+        datasets_path = get_datasets_path(datasets_path)
         folder = joinpath(datasets_path, doi === nothing ? name : doi)
         if version !== nothing
             folder = joinpath(folder, version)
@@ -129,17 +156,16 @@ function register_repository(name::String, remote::String;
     ref::Union{String, Nothing}=nothing,
     branch::Union{String, Nothing}=nothing,
     aliases::Vector{String}=Vector{String}(),
-    type="git", datasets=DATASETS, overwrite::Bool=false)
+    type="git", datasets=nothing, overwrite::Bool=false)
     if name == ""
         name, _ = splitext(basename(remote))
     end
+    datasets = get_datasets(datasets)
     if haskey(datasets, name) && !overwrite
         error("Dataset $name already exists. Set overwrite=true to overwrite.")
     end
     if folder === nothing
-        if datasets_path === nothing
-            datasets_path = DATASETS_PATH
-        end
+        datasets_path = get_datasets_path(datasets_path)
         parsed = _parse_git_remote(remote)
         folder = joinpath(folder === nothing ? datasets_path : folder, parsed["server"], parsed["group"], parsed["repo"])
         if ref !== nothing
@@ -186,11 +212,12 @@ If exact is true, only exact matches are returned, otherwise partial matches are
 
 Returns a list of datasets::Vector{Dict} that match the search criteria.
 """
-function search_datasets(name; datasets=DATASETS, exact=false)
+function search_datasets(name; datasets=nothing, exact=true)
 
     exact_results = []
     partial_results = []
 
+    datasets = get_datasets(datasets)
     # first check exact matches in keys
     if haskey(datasets, name)
         push!(exact_results, datasets[name])
@@ -230,8 +257,8 @@ end
 
 """Like search_datasets, but returns the first result or raises an error if no or multiple datasets are found.
 """
-function search_dataset(name; datasets=DATASETS, exact=false, check_unique=false, raise=true)
-    results = search_datasets(name; datasets=datasets, exact=exact)
+function search_dataset(name; check_unique=false, raise=true, kwargs...)
+    results = search_datasets(name; kwargs...)
     if length(results) == 0
         error("No dataset found for $name")
     elseif (check_unique && length(results) > 1)
@@ -251,7 +278,8 @@ function get_dataset_folder(name; kwargs...)
     return search_dataset(name; kwargs...)["folder"]
 end
 
-function download_dataset(name; extract=nothing, datasets=DATASETS)
+function download_dataset(name; extract=nothing, datasets=nothing)
+    datasets = get_datasets(datasets)
     if ! haskey(datasets, name)
         dataset = search_dataset(name, exact=true)
     end
@@ -279,7 +307,7 @@ function download_dataset(name; extract=nothing, datasets=DATASETS)
         download_path = joinpath(download_dir, basename(url))
         if !isfile(download_path)
             Downloads.download(url, download_path)
-            if (extract === nothing ? EXTRACT : extract) && any(endswith(download_path, formats) for formats in COMPRESSED_FORMATS)
+            if (extract === nothing ? GLOBAL_STATE["EXTRACT"] : extract) && any(endswith(download_path, formats) for formats in COMPRESSED_FORMATS)
                 extract_file(download_path)
             end
         end
@@ -287,12 +315,13 @@ function download_dataset(name; extract=nothing, datasets=DATASETS)
     return download_dir
 end
 
-function download_datasets(names=nothing; kwargs...)
+function download_datasets(names=nothing; datasets=nothing, kwargs...)
+    datasets = get_datasets(datasets)
     if names === nothing
-        names = keys(DATASETS)
+        names = keys(datasets)
     end
     for name in names
-        download_dataset(name; kwargs...)
+        download_dataset(name; datasets=datasets, kwargs...)
     end
 end
 
@@ -313,7 +342,7 @@ function register_datasets_toml(filepath; kwargs...)
     register_datasets(config; kwargs...)
 end
 
-function _clean_datasets(datasets::Dict=DATASETS)
+function _clean_datasets(datasets::Dict)
     datasets_clean = Dict()
     for (name, info) in pairs(datasets)
         datasets_clean[name] = Dict()
@@ -329,17 +358,18 @@ function _clean_datasets(datasets::Dict=DATASETS)
     return datasets_clean
 end
 
-function write_datasets_toml(filepath, datasets::Dict=DATASETS)
+function write_datasets_toml(filepath, datasets::Union{Nothing,Dict}=nothing)
+    datasets = get_datasets(datasets)
     datasets_clean = _clean_datasets(datasets)
     open(filepath, "w") do io
         TOML.print(io, datasets_clean)
     end
 end
 
-function register_datasets(filepath::String; datasets_path::Union{Nothing,String}=nothing, kwargs...)
+function register_datasets(filepath::String; kwargs...)
     ext = splitext(filepath)[2]
     if ext == ".toml"
-        register_datasets_toml(filepath; datasets_path=datasets_path, kwargs...)
+        register_datasets_toml(filepath; kwargs...)
     else
         error("Only toml file type supported. Got: $ext")
     end

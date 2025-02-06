@@ -39,7 +39,7 @@ And read via the `register_datasets` function, download via `download_dataset` o
 ```julia
 using DataFrames
 using Datasets
-Datasets.DATASETS_PATH = expanduser("~/datasets")
+set_datasets_path(expanduser("~/datasets"))
 register_datasets("datasets.yml")
 folder = download_dataset("jonkers2024") # will download only if not present
 df = CSV.read(joinpath(folder, "LGM_foraminifera_assemblages_20240110.csv"), DataFrame)
@@ -52,7 +52,7 @@ Examples of the declarative syntax
 
 using Datasets
 
-# Datasets.DATASETS_PATH = "datasets" # default
+set_datasets_path("datasets") # default
 
 register_dataset("herzschuh2023"; doi="10.1594/PANGAEA.930512",
     downloads=["https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"],
@@ -64,7 +64,7 @@ register_dataset("jonkers2024"; doi="10.1594/PANGAEA.962852",
 
 register_repository("git@github.com:jesstierney/lgmDA.git"; name="tierney2020")
 
-println(DATASETS)
+println(get_datasets())
 ```
 yields:
 ```
@@ -74,22 +74,22 @@ Dict{Any, Any} with 3 entries:
   "tierney2020"   => Dict{String, Any}("aliases"=>AbstractString["jesstierney/l…
 ```
 
-The (meta)database is stored in a global variable `Datasets.DATASETS`.
+The (meta)database is stored in a global state `Datasets.GLOBAL_STATE["DATASETS"]`.
 However, for specific cases such as for a library or when several conflictual datasets
 must co-exist, an optional parameter `datasets::Dict` can be passed to relevant functions
-that is then used in place of the global `Datasets.DATASETS` variable.
+that is then used in place of the global `Datasets.GLOBAL_STATE["DATASETS"]` variable.
 
-Similarly, there is a global `Datasets.DATASETS_PATH` variable that defines the default
+Similarly, there is a global `Datasets.GLOBAL_STATE["DATASETS_PATH"]` variable that defines the default
 root folder for saving all datasets, which defaults to a local `datasets` folder.
 The global variable
-can be overwritten using the module prefix, i.e. `Datasets.DATASETS_PATH = ...`
+can be overwritten using the function `set_datasets_path(...)`
 or passed as `datasets_path=` keyword argument to the `register_...` functions.
 Each dataset has its own `folder` path. It is built from their DOI, if provided,
 or the github remote, or their name otherwise (and is a child of the datasets' path).
 In case a specific dataset must be stored in a different location than the rest,
 the full `folder` path can be provided directly as key-word argument
 to `register_dataset(s)` / `register_repository`,
-or assigned as `folder` key to one of the `DATASETS` items,
+or assigned as `folder` key to one of the datasets' items,
 or written in the `datasets.toml` file (this is not recommended when the project
 is to be distributed, because each user should be free to organize their data as they please,
 based on their specific architecture).
