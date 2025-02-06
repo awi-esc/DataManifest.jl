@@ -22,7 +22,7 @@ Pkg.add(url="https://github.com/awi-esc/Datasets.jl")
 Here is the most straightforward use, e.g. in a `datasets.toml` file:
 
 ```toml
-[herzschuh2021]
+[herzschuh2023]
 downloads = ["https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"]
 doi = "10.1594/PANGAEA.930512"
 
@@ -54,7 +54,7 @@ using Datasets
 
 # Datasets.DATASETS_PATH = "datasets" # default
 
-register_dataset("herzschuh2021"; doi="10.1594/PANGAEA.930512",
+register_dataset("herzschuh2023"; doi="10.1594/PANGAEA.930512",
     downloads=["https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"],
 )
 
@@ -69,7 +69,7 @@ println(DATASETS)
 yields:
 ```
 Dict{Any, Any} with 3 entries:
-  "herzschuh2021" => Dict{String, Any}("downloads"=>["https://doi.pangaea.de/10…
+  "herzschuh2023" => Dict{String, Any}("downloads"=>["https://doi.pangaea.de/10…
   "jonkers2024"   => Dict{String, Any}("downloads"=>["https://download.pangaea.…
   "tierney2020"   => Dict{String, Any}("aliases"=>AbstractString["jesstierney/l…
 ```
@@ -87,11 +87,11 @@ or passed as `datasets_path=` keyword argument to the `register_...` functions.
 Each dataset has its own `folder` path. It is built from their DOI, if provided,
 or the github remote, or their name otherwise (and is a child of the datasets' path).
 In case a specific dataset must be stored in a different location than the rest,
-the full `folder` path can be provided directly as key-word argument 
-to `register_dataset(s)` / `register_repository`, 
-or assigned as `folder` key to one of the `DATASETS` items, 
-or written in the `datasets.toml` file (this is not recommended when the project 
-is to be distributed, because each user should be free to organize their data as they please, 
+the full `folder` path can be provided directly as key-word argument
+to `register_dataset(s)` / `register_repository`,
+or assigned as `folder` key to one of the `DATASETS` items,
+or written in the `datasets.toml` file (this is not recommended when the project
+is to be distributed, because each user should be free to organize their data as they please,
 based on their specific architecture).
 
 
