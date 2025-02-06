@@ -46,7 +46,7 @@ Dict{Any, Any} with 3 entries:
   "tierney2020"   => Dict{String, Any}("aliases"=>AbstractString["jesstierney/l…
 ```
 
-An equivalent declaration can be defined in a toml file for more clarify (that's what I'd recommended):
+An equivalent declaration can be defined in a `datasets.toml` file for more clarify (that's what I'd recommended)
 
 ```toml
 [herzschuh2021]
@@ -67,31 +67,42 @@ And read via the `register_datasets` function
 
 ```julia
 
-datasets = register_datasets("config.yml")
+datasets = register_datasets("datasets.toml")
 ```
 
-At present there is a global variable `DATASETS` that contains all datasets,
-so that is it not needed as an input argument to the functions, but
-an optional parameter `datasets::Dict` make it possible to handle separate dataset files.
+The (meta)database is stored in a global variable `Datasets.DATASETS`.
+However, for specific cases such as for a library or when several conflictual datasets
+must co-exist, an optional parameter `datasets::Dict` can be passed to relevant functions
+that is then used in place of the global `Datasets.DATASETS` variable.
 
-Similarly, there is a global `DATASETS_PATH` variable that defines the default folder
-for saving all datasets, which defaults to a local `datasets` folder. The global variable
-can be overwritten using the module prefix, i.e. `Datasets.DATASETS_PATH = ...` and a local
-`folder=` attribute can be used to define a local folder for each dataset individually.
-By default, the write function `write_datasets_toml` removes the `folder` parameter
-because it is up to the user.
+Similarly, there is a global `Datasets.DATASETS_PATH` variable that defines the default
+root folder for saving all datasets, which defaults to a local `datasets` folder.
+The global variable
+can be overwritten using the module prefix, i.e. `Datasets.DATASETS_PATH = ...`
+or passed as `datasets_path=` keyword argument to the `register_...` functions.
+Each dataset has its own `folder` path is then build from their DOI if provided,
+or the github remote, or their name otherwise (and is a child of the datasets' path).
+The full `folder` path can also be provided directly in the `DATASETS` items
+(or as key-word argument to `register_dataset` / `register_repository`), in case a
+specific dataset must be stored in a different location. For distributing the project,
+the `folder` parameter would noramally not be exported because each user
+should be free to organize their data as they please, based on their specific architecture.
 
 Finally, the datasets can be downloaded straightforwardly:
 
 ```julia
-download_dataset("jonkers2024")
 download_datasets()  # download all datasets defined in DATASETS
 ```
+or downloaded and accessed in a lazy manner (e.g.inside a load function):
 
-That files will be downloaded to their `folder` key, which defaults to a local `datasets` folder,
-and will then use their DOI if provided, or the github remote, or their name / alias otherwise.
+```julia
 
-See the [example notebook](example.ipynb).
+function load_jonkers2024()
+  download_dataset("jonkers2024")
+  datapath = get_dataset_folder("jonkers2024")
+  return CSV.read(joinpath(datapath, "LGM_foraminifera_assemblages_20240110.csv"), DataFrame)
+end
+```
 
 
 ## Why Datasets.jl ?
