@@ -1,4 +1,4 @@
-# Datasets
+# Datasets.jl
 
 Keep track of datasets used in a project.
 
