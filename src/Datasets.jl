@@ -279,7 +279,7 @@ end
 
 """Like search_datasets, but returns the first result or raises an error if no or multiple datasets are found.
 """
-function search_dataset(name; check_unique=false, raise=true, datasets=nothing, kwargs...)
+function search_dataset(name; check_unique=true, raise=true, datasets=nothing, kwargs...)
     results = search_datasets(name; datasets=datasets, kwargs...)
     if length(results) == 0
         error("""No dataset found for: `$name`.
@@ -287,7 +287,7 @@ function search_dataset(name; check_unique=false, raise=true, datasets=nothing, 
         $(repr_datasets(datasets))
         """)
     elseif (check_unique && length(results) > 1)
-        message = "Multiple datasets found for $name: $(join([get(x, "doi", x) for x in results], ", "))"
+        message = "Multiple datasets found for $name: $(join([join(list_alternative_keys(x), " | ") for x in results], "\n"))"
         if raise
             error(message)
         else
