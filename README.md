@@ -64,7 +64,7 @@ Several strategies can be used to overcome this problem:
 
 2. Alternatively, initialize `Datasets` in the main / REPL, not in the module,
 and use the Datasets calls inside functions executed at run-time (not at the module top level).
-Or alternatively, define an `init_datasets` function, which is called during pre-compilation in your module
+You may also define an `init_datasets` function, which is called during pre-compilation in your module
 (top-level, e.g. after import and export statements) and must be called again in the main script / REPL.
 
 
