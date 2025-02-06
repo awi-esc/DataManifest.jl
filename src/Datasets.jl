@@ -8,6 +8,7 @@ export search_datasets, search_dataset, get_dataset_folder
 export download_dataset, download_datasets
 export write_datasets_toml
 export set_datasets_path, set_datasets, get_datasets_path, get_datasets
+export repr_dataset_keys, print_dataset_keys, list_dataset_keys, list_alternative_keys
 
 const GLOBAL_STATE = Dict(
     "DATASETS" => Dict(),
@@ -202,65 +203,89 @@ function extract_file(download_path)
     end
 end
 
+function list_alternative_keys(dataset)
+    alternatives = [ ]
+    if haskey(dataset, "aliases")
+        for alias in dataset["aliases"]
+            push!(alternatives, alias)
+        end
+    end
+    if haskey(dataset, "doi")
+        push!(alternatives, dataset["doi"])
+    end
+    return alternatives
+end
+
+function list_dataset_keys(datasets=nothing; alt=true, flat=false)
+    entries = []
+    for (name, dataset) in pairs(get_datasets(datasets))
+        push!(entries, [name])
+        if alt
+            for key in list_alternative_keys(dataset)
+                push!(entries[end], key)
+            end
+        end
+    end
+    if flat
+        entries = cat(entries..., dims=1)
+    end
+    return entries
+end
+
+function repr_dataset_keys(datasets=nothing; alt=true)
+    lines = [alt ? "Datasets including aliases:" : "Datasets:"]
+    for keys in list_dataset_keys(datasets; alt=alt)
+        push!(lines, "- " * join(keys, " | "))
+    end
+    return join(lines, "\n")
+end
+
+function print_dataset_keys(datasets=nothing; alt=true)
+    println(repr_dataset_keys(datasets; alt=alt))
+end
+
+
 """Search datasets by name. Compare against (by order of priority)
 
 1) dataset ID (key in DATASETS)
 2) "aliases" key
 3) "doi" key
 
-If exact is true, only exact matches are returned, otherwise partial matches are also considered.
+Also match DOI or aliases unless alt is false.
+If partial is true, also search partial matches are returned.
 
 Returns a list of datasets::Vector{Dict} that match the search criteria.
 """
-function search_datasets(name; datasets=nothing, exact=true)
-
-    exact_results = []
-    partial_results = []
+function search_datasets(name; datasets=nothing, alt=true, partial=false)
 
     datasets = get_datasets(datasets)
-    # first check exact matches in keys
-    if haskey(datasets, name)
-        push!(exact_results, datasets[name])
-    end
 
-    # then check exact matches in alias or doi
+    matches = []
     for (key, dataset) in pairs(datasets)
-        if (haskey(dataset, "aliases") && (name in dataset["aliases"]))
-            push!(exact_results, dataset)
-        elseif haskey(dataset, "doi") && dataset["doi"] == name
-            push!(exact_results, dataset)
+        if lowercase(key) == lowercase(name)
+            push!(matches, dataset)
+        elseif alt && lowercase(name) in map(lowercase, list_alternative_keys(dataset))
+            push!(matches, dataset)
+        elseif partial && occursin(lowercase(name), lowercase(key))
+            push!(matches, dataset)
+        elseif alt && partial && any(x -> occursin(lowercase(name), lowercase(x)), list_alternative_keys(dataset))
+            push!(matches, dataset)
         end
     end
 
-    if exact
-        return exact_results
-    end
+    return matches
 
-    # then check partial matches in keys
-    for key in keys(datasets)
-        if name != key && occursin(name, key)
-            push!(partial_results, datasets[key])
-        end
-    end
-
-    # then check partial matches in alias
-    for (key, dataset) in pairs(datasets)
-        if haskey(dataset, "aliases") && any(x -> occursin(name, x), dataset["aliases"])
-            push!(partial_results, dataset)
-        elseif haskey(dataset, "doi") && name != dataset["doi"] && occursin(name, dataset["doi"])
-            push!(partial_results, dataset)
-        end
-    end
-
-    return unique(vcat(exact_results, partial_results))
 end
 
 """Like search_datasets, but returns the first result or raises an error if no or multiple datasets are found.
 """
-function search_dataset(name; check_unique=false, raise=true, kwargs...)
-    results = search_datasets(name; kwargs...)
+function search_dataset(name; check_unique=false, raise=true, datasets=nothing, kwargs...)
+    results = search_datasets(name; datasets=datasets, kwargs...)
     if length(results) == 0
-        error("No dataset found for $name")
+        error("""No dataset found for: `$name`.
+        Available datasets: $(join(keys(get_datasets(datasets)), ", "))
+        $(repr_dataset_keys(datasets))
+        """)
     elseif (check_unique && length(results) > 1)
         message = "Multiple datasets found for $name: $(join([get(x, "doi", x) for x in results], ", "))"
         if raise
@@ -278,10 +303,10 @@ function get_dataset_folder(name; kwargs...)
     return search_dataset(name; kwargs...)["folder"]
 end
 
-function download_dataset(name; extract=nothing, datasets=nothing)
+function download_dataset(name; extract=nothing, datasets=nothing, kwargs...)
     datasets = get_datasets(datasets)
     if ! haskey(datasets, name)
-        dataset = search_dataset(name, exact=true)
+        dataset = search_dataset(name; datasets=datasets, kwargs...)
     end
     dataset = datasets[name]
     download_dir = dataset["folder"]
