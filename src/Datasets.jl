@@ -9,8 +9,7 @@ export download_dataset, download_datasets
 export write_datasets_toml
 
 DATASETS_PATH = "datasets"
-const DATASETS = Dict()
-@info "Datasets module loaded"
+DATASETS = Dict()
 COMPRESSED_FORMATS = ["zip", "tar.gz", "tar"]
 EXTRACT = true
 
