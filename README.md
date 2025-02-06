@@ -47,19 +47,24 @@ df = CSV.read(joinpath(folder, "LGM_foraminifera_assemblages_20240110.csv"), Dat
 
 ## Pre-compilation vs run-time: mind the global state when used inside a module
 
-If `Datasets` is initialized inside a module (as opposed to the main script),
-the global datasets storage in the `Datasets` module is wiped out in the calling script,
-due how pre-compilation works. Similarly, if initialized in the main script, the
-initialized global storage won't be accessible from the module top-level scope
-(it will inside the functions that are executed at run time).
+If `Datasets` is initialized inside a module with pre-compilation (i.e. with a Project.toml on its own),
+the global datasets storage in the `Datasets` module during pre-compilation is different from run-time.
+In other words, if `register_datasets` is actually called at import time (and not simply defined inside 
+some function), everything will work as it should until pre-compilation is over, at which point the global
+state inside `Datasets` will be wiped out, as if it was not yet initialized, 
+and any subsequent call of `download_dataset` or `get_folder` will fail.
+Note this does not occur if the module is simply imported via `include()`, where no pre-compilation takes place, 
+or if pre-compilation is disabled.
+
 Several strategies can be used to overcome this problem:
 
-1. Move the storage to your module state: Define a `DATASETS = Dict()` in the module of interest,
-and always pass  `datasets=DATASETS` to functions like `register_datasets` and `download_dataset(s)`.
+1. Move the storage to your module state: Define a `DATASETS = Dict()` in your module, to be used as storage instead of
+   the GLOBAL_STATE in `Datasets`, and always pass  `datasets=DATASETS` to functions like `register_datasets` and `download_dataset(s)`.
+   Your module state will persist.
 
 2. Alternatively, initialize `Datasets` in the main / REPL, not in the module,
-and use the Datasets functions inside functions executed at run-time. Or alternatively,
-define an `init_datasets` function in the module, which is called during pre-compilation
+and use the Datasets calls inside functions executed at run-time (not at the module top level).
+Or alternatively, define an `init_datasets` function, which is called during pre-compilation in your module
 (top-level, e.g. after import and export statements) and must be called again in the main script / REPL.
 
 
