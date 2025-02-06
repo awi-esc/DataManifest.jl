@@ -196,7 +196,7 @@ function download_dataset(name; extract=nothing, datasets=DATASETS)
             if !isdir(joinpath(download_dir, ".git"))
                 run(`git clone $(dataset["remote"]) $download_dir`)
             end
-            return
+            return download_dir
         end
     end
 
@@ -212,6 +212,7 @@ function download_dataset(name; extract=nothing, datasets=DATASETS)
             end
         end
     end
+    return download_dir
 end
 
 function download_datasets(names=nothing; kwargs...)
