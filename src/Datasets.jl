@@ -287,7 +287,7 @@ function search_dataset(name; check_unique=true, raise=true, datasets=nothing, k
         $(repr_datasets(datasets))
         """)
     elseif (check_unique && length(results) > 1)
-        message = "Multiple datasets found for $name: $(join([join(list_alternative_keys(x), " | ") for x in results], "\n"))"
+        message = "Multiple datasets found for $name:\n- $(join([join(list_alternative_keys(x), " | ") for x in results], "\n- "))"
         if raise
             error(message)
         else
