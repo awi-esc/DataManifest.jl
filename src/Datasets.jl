@@ -13,9 +13,33 @@ DATASETS = Dict()
 COMPRESSED_FORMATS = ["zip", "tar.gz", "tar"]
 EXTRACT = true
 
+"""Standard Dataset
+
+Metadata
+--------
+name: name of the dataset
+doi: DOI of the dataset (optional)
+aliases: list of aliases for the dataset (optional)
+downloads: list of download urls (optional)
+    Each URL contains the full specification of the data to download, including the version.
+url: alias for `downloads = [ url ]` (optional)
+    If url is provided, downloads will be set to [url].
+version: version of the dataset (optional)
+    If version is provided, the dataset will be saved in a version subfolder.
+folder: folder to store the dataset (optional)
+
+Other parameters
+----------------
+datasets_path: path to store the dataset, if different from GLOBAL (optional)
+datasets: dictionary of datasets to store the dataset in (optional)
+    By default, the dataset is stored in the module-wide DATASETS dictionary.
+overwrite: if true, overwrite existing dataset with the same name (optional)
+"""
 function register_dataset(name::String=""; doi::Union{Nothing,String}=nothing,
     aliases::Vector{String}=Vector{String}(),
     downloads::Vector{String}=Vector{String}(),
+    url::Union{Nothing,String}=nothing,
+    version::Union{Nothing,String}=nothing,
     datasets_path=nothing, folder=nothing,
     datasets=DATASETS, overwrite::Bool=false)
     if (name == "" && doi !== nothing)
@@ -27,16 +51,26 @@ function register_dataset(name::String=""; doi::Union{Nothing,String}=nothing,
     if haskey(datasets, name) && !overwrite
         error("Dataset $name already exists. Set overwrite=true to overwrite.")
     end
+    if url !== nothing
+        if length(downloads) > 0
+            error("Cannot provide both url and downloads")
+        end
+        downloads = [url]
+    end
     if folder === nothing
         if datasets_path === nothing
             datasets_path = DATASETS_PATH
         end
         folder = joinpath(datasets_path, doi === nothing ? name : doi)
+        if version !== nothing
+            folder = joinpath(folder, version)
+        end
     end
     datasets[name] = Dict(
         "doi" => doi,
         "downloads" => downloads,
         "folder" => folder,
+        "version" => version,
     )
     if length(aliases) > 0
         datasets[name]["aliases"] = aliases
@@ -66,9 +100,35 @@ function _parse_git_remote(remote::String)
     return Dict("server" => server, "group" => group, "repo" => repo)
 end
 
+"""Register a git register_repository
 
+This function handles git repositories that are to be cloned.
+If a specific version is needed, it is sometimes faster to download
+a tarball. In that case you should use download_dataset instead,
+with appropriate downloads and extract options.
+
+Metadata
+--------
+name: name of the dataset
+remote: git remote url
+ref: git reference {hash, branch, tag} (optional)
+    --> if the ref is not included in the default git clone,
+    the additional `branch=` option can be provided.
+branch: git branch to clone (optional)
+aliases: list of aliases for the dataset (optional)
+
+Other parameters
+----------------
+datasets_path: path to store the dataset, if different from GLOBAL (optional)
+datasets: dictionary of datasets to store the dataset in (optional)
+    By default, the dataset is stored in the module-wide DATASETS dictionary.
+overwrite: if true, overwrite existing dataset with the same name (optional)
+"""
 function register_repository(name::String, remote::String;
     datasets_path::Union{String, Nothing}=nothing, folder=nothing,
+    ref::Union{String, Nothing}=nothing,
+    branch::Union{String, Nothing}=nothing,
+    aliases::Vector{String}=Vector{String}(),
     type="git", datasets=DATASETS, overwrite::Bool=false)
     if name == ""
         name, _ = splitext(basename(remote))
@@ -82,12 +142,19 @@ function register_repository(name::String, remote::String;
         end
         parsed = _parse_git_remote(remote)
         folder = joinpath(folder === nothing ? datasets_path : folder, parsed["server"], parsed["group"], parsed["repo"])
+        if ref !== nothing
+            folder = joinpath(folder, ref)
+        elseif branch !== nothing
+            folder = joinpath(folder, branch)
+        end
     end
     datasets[name] = Dict(
         "remote" => remote,
         "folder" => folder,
         "type" => type,
-        "aliases" => [joinpath(parsed["group"], parsed["repo"]), parsed["repo"]],
+        "ref" => ref,
+        "branch" => branch,
+        "aliases" => length(aliases) > 0 ? aliases : [joinpath(parsed["group"], parsed["repo"]), parsed["repo"]],
     )
     return datasets[name]
 end
@@ -191,13 +258,18 @@ function download_dataset(name; extract=nothing, datasets=DATASETS)
     dataset = datasets[name]
     download_dir = dataset["folder"]
 
-    if haskey(dataset, "type")
-        if dataset["type"] == "git"
-            if !isdir(joinpath(download_dir, ".git"))
+    if get(dataset, "type", nothing) == "git"
+        if !isdir(joinpath(download_dir, ".git"))
+            if get(dataset, "branch", nothing) !== nothing
+                run(`git clone -b $(dataset["branch"]) $(dataset["remote"]) $download_dir`)
+            else
                 run(`git clone $(dataset["remote"]) $download_dir`)
             end
-            return download_dir
+            if get(dataset, "ref", nothing) !== nothing
+                run(`git -C $download_dir reset --hard $(dataset["ref"])`)
+            end
         end
+        return download_dir
     end
 
     if !isdir(download_dir)
@@ -225,11 +297,13 @@ function download_datasets(names=nothing; kwargs...)
 end
 
 function register_datasets(datasets::Dict; kwargs...)
-    for (name, info) in pairs(datasets)
-        if haskey(info, "remote")
-            register_repository(name, info["remote"]; folder=get(info, "folder", nothing), type=get(info, "type", "git"), kwargs...)
+    for (name, info_) in pairs(datasets)
+        info = Dict(Symbol(k) => v for (k, v) in info_)
+        if haskey(info, :remote)
+            remote = pop!(info, :remote)
+            register_repository(name, remote; info..., kwargs...)
         else
-            register_dataset(name; doi=info["doi"], downloads=info["downloads"], folder=get(info, "folder", nothing), kwargs...)
+            register_dataset(name; info..., kwargs...)
         end
     end
 end

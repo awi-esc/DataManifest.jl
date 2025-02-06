@@ -1,4 +1,4 @@
-[herzschuh2021]
+[herzschuh2023]
 doi = "10.1594/PANGAEA.930512"
 downloads = ["https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"]
 
@@ -8,3 +8,4 @@ downloads = ["https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_
 
 [tierney2020]
 remote = "git@github.com:jesstierney/lgmDA.git"
+ref = "v2.1"
