@@ -8,7 +8,7 @@ export search_datasets, search_dataset, get_dataset_folder
 export download_dataset, download_datasets
 export write_datasets_toml
 export set_datasets_path, set_datasets, get_datasets_path, get_datasets
-export repr_dataset_keys, print_dataset_keys, list_dataset_keys, list_alternative_keys
+export repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_keys
 
 const GLOBAL_STATE = Dict(
     "DATASETS" => Dict(),
@@ -232,7 +232,7 @@ function list_dataset_keys(datasets=nothing; alt=true, flat=false)
     return entries
 end
 
-function repr_dataset_keys(datasets=nothing; alt=true)
+function repr_datasets(datasets=nothing; alt=true)
     lines = [alt ? "Datasets including aliases:" : "Datasets:"]
     for keys in list_dataset_keys(datasets; alt=alt)
         push!(lines, "- " * join(keys, " | "))
@@ -241,7 +241,7 @@ function repr_dataset_keys(datasets=nothing; alt=true)
 end
 
 function print_dataset_keys(datasets=nothing; alt=true)
-    println(repr_dataset_keys(datasets; alt=alt))
+    println(repr_datasets(datasets; alt=alt))
 end
 
 
@@ -284,7 +284,7 @@ function search_dataset(name; check_unique=false, raise=true, datasets=nothing, 
     if length(results) == 0
         error("""No dataset found for: `$name`.
         Available datasets: $(join(keys(get_datasets(datasets)), ", "))
-        $(repr_dataset_keys(datasets))
+        $(repr_datasets(datasets))
         """)
     elseif (check_unique && length(results) > 1)
         message = "Multiple datasets found for $name: $(join([get(x, "doi", x) for x in results], ", "))"
