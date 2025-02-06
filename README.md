@@ -52,7 +52,7 @@ the global datasets storage in the `Datasets` module during pre-compilation is d
 In other words, if `register_datasets` is actually called at import time (and not simply defined inside 
 some function), everything will work as it should until pre-compilation is over, at which point the global
 state inside `Datasets` will be wiped out, as if it was not yet initialized, 
-and any subsequent call of `download_dataset` or `get_folder` will fail.
+and any subsequent call of `download_dataset` or `get_dataset_folder` will fail.
 Note this does not occur if the module is simply imported via `include()`, where no pre-compilation takes place, 
 or if pre-compilation is disabled.
 
