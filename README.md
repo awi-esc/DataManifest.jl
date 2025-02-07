@@ -34,85 +34,14 @@ doi = "10.1594/PANGAEA.962852"
 remote = "git@github.com:jesstierney/lgmDA.git"
 ```
 
-And read via the `register_datasets` function, download via `download_dataset` or `download_datasets`
+And read via the `Datasets.read` function, download via `download_dataset` or `download_datasets`
 
 ```julia
 using DataFrames
 using Datasets
-set_datasets_path(expanduser("~/datasets"))
-register_datasets("datasets.yml")
-folder = download_dataset("jonkers2024") # will download only if not present
+db = Datasets.read("datasets.yml"; datasets_path=expanduser("~/datasets"))
+folder = download_dataset(db, "jonkers2024") # will download only if not present
 df = CSV.read(joinpath(folder, "LGM_foraminifera_assemblages_20240110.csv"), DataFrame)
-```
-
-## Pre-compilation vs run-time: mind the global state when used inside a module
-
-Here we're dealing with the following situation: in a julia project (i.e. with a Project.toml) you have
-a DataModule that relies on `Datasets.jl`. It imports it, register the relevant datasets, perhaps even
-download the required files. What usually happens is the DataModule module is pre-compiled, and its state is cached and later re-used. However, `Datasets`'s global state is not part of the cache, so any work done there is wiped out. Given the default behaviour of "hiding" the database object inside `Datasets`' global, any initialization done during pre-compilation will be lost, i.e. any Datasets' work done at or executed from the module's top-level.
-
-Several strategies can be used to overcome this problem:
-
-1. Move the storage to your module state: Define a `DATASETS = Dict()` in your module, to be used as storage  instead of
-   the GLOBAL_STATE in `Datasets`, and always pass  `datasets=DATASETS` to functions like `register_datasets` and `download_dataset(s)`.
-   Your module state will persist (recommended option).
-
-```julia
-module DataModule
-export read_jonkers2024, TIERNEY2020
-using Datasets
-DATASETS = Dict()
-register_datasets(joinpath(@__DIR__, "..", "datasets.toml"),
-    datasets=DATASETS, datasets_path=expanduser("~/datasets"))
-TIERNEY2020 = download_dataset("tierney2020", datasets=DATASETS)
-
-function read_jonkers2024()
-    folder = download_dataset("jonkers2024", datasets=DATASETS)
-    # ... do work with it
-end
-end # module
-```
-
-2. Alternatively, if you want to stick to global storage, you avoid doing anything during pre-compilation and use the handy `__init__()` function that is not run
-during pre-compilation and initializes module at run-time.
-
-```julia
-module DataModule
-export read_jonkers2024, TIERNEY2020
-using Datasets
-
-"will be called at run-time when the module is loaded (not during pre-compulation)"
-function __init__()
-    global TIERNEY2020
-    set_datasets_path(expanduser("~/datasets"))
-    register_datasets(joinpath(@__DIR__, "..", "datasets.toml"))
-    TIERNEY2020 = download_dataset("tierney2020")
-end
-
-
-function read_jonkers2024()
-    folder = download_dataset("jonkers2024") # run-time (relies on __init__)
-    # ... do work with it
-end
-
-end # module
-```
-
-And of course, if initialization is needed during pre-compilation you can have a separate `init_datasets` function called at top-level and also called inside the module;
-
-```julia
-function init_datasets()
-    global TIERNEY2020
-    set_datasets_path(expanduser("~/datasets"))
-    register_datasets(joinpath(@__DIR__, "..", "datasets.toml"))
-    TIERNEY2020 = download_dataset("tierney2020")
-end
-
-function __init__()
-    init_datasets()  # called at run-time
-end
-
-init_datasets() # called during pre-compilation
 ```
 
 ## Advanced Examples
@@ -122,47 +51,45 @@ Examples of the declarative syntax
 
 using Datasets
 
-set_datasets_path("datasets") # default
+db = Database(datasets_path="datasets") # the default
 
-register_dataset("herzschuh2023"; doi="10.1594/PANGAEA.930512",
+register_dataset(db, "herzschuh2023"; doi="10.1594/PANGAEA.930512",
     downloads=["https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"],
 )
 
-register_dataset("jonkers2024"; doi="10.1594/PANGAEA.962852",
+register_dataset(db, "jonkers2024"; doi="10.1594/PANGAEA.962852",
     downloads=["https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv"],
 )
 
-register_repository("git@github.com:jesstierney/lgmDA.git"; name="tierney2020")
+register_repository(db, "git@github.com:jesstierney/lgmDA.git"; name="tierney2020")
 
-println(get_datasets())
+println(db)
 ```
 yields:
 ```
-Dict{Any, Any} with 3 entries:
-  "herzschuh2023" => Dict{String, Any}("downloads"=>["https://doi.pangaea.de/10…
-  "jonkers2024"   => Dict{String, Any}("downloads"=>["https://download.pangaea.…
-  "tierney2020"   => Dict{String, Any}("aliases"=>AbstractString["jesstierney/l…
+Database:
+- herzschuh2023 => 10.1594/PANGAEA.930512
+- jonkers2024 => 10.1594/PANGAEA.962852
+- tierney2020 => git@github.com:jesstierney/lgmDA.git
+datasets_path: datasets
 ```
+## Data Structure
 
-The (meta)database is stored in a global state `Datasets.GLOBAL_STATE["DATASETS"]`.
-However, for specific cases such as for a library or when several conflictual datasets
-must co-exist, an optional parameter `datasets::Dict` can be passed to relevant functions
-that is then used in place of the global `Datasets.GLOBAL_STATE["DATASETS"]` variable.
-
-Similarly, there is a global `Datasets.GLOBAL_STATE["DATASETS_PATH"]` variable that defines the default
-root folder for saving all datasets, which defaults to a local `datasets` folder.
-The global variable
-can be overwritten using the function `set_datasets_path(...)`
-or passed as `datasets_path=` keyword argument to the `register_...` functions.
-Each dataset has its own `folder` path. It is built from their DOI, if provided,
-or the github remote, or their name otherwise (and is a child of the datasets' path).
-In case a specific dataset must be stored in a different location than the rest,
-the full `folder` path can be provided directly as key-word argument
-to `register_dataset(s)` / `register_repository`,
-or assigned as `folder` key to one of the datasets' items,
-or written in the `datasets.toml` file (this is not recommended when the project
-is to be distributed, because each user should be free to organize their data as they please,
-based on their specific architecture).
+To be completed. But basically
+```julia
+println(repr(db))
+```
+yields
+```
+Database(
+  datasets=Dict(
+    herzschuh2023 => DatasetEntry(doi="10.1594/PANGAEA.930512"...),
+    jonkers2024 => DatasetEntry(doi="10.1594/PANGAEA.962852"...),
+    tierney2020 => RepositoryEntry(remote="git@github.com:jesstierney/lgmDA.git"...),
+  ),
+  datasets_path="datasets"
+)
+```
 
 
 ## Why Datasets.jl ?

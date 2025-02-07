@@ -3,81 +3,183 @@ module Datasets
 import TOML
 import Downloads
 
+export Database, DatasetEntry, RepositoryEntry, AbstractEntry
 export register_dataset, register_repository, register_datasets
 export search_datasets, search_dataset, get_dataset_folder
 export download_dataset, download_datasets
 export write_datasets_toml
 export set_datasets_path, set_datasets, get_datasets_path, get_datasets
 export repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_keys
+export repr_short, string_short, read
 
-const GLOBAL_STATE = Dict(
-    "DATASETS" => Dict(),
-    "DATASETS_PATH" => "datasets",
-    "EXTRACT" => true,
-)
+DEFAULT_DATASETS_PATH = "datasets"
 
-"""Set global state variables such as DATASETS and DATASETS_PATH
+abstract type AbstractEntry end
+
+function Base.:(==)(a::AbstractEntry, b::AbstractEntry)
+    if typeof(a) != typeof(b)
+        return false
+    end
+    for field in fieldnames(typeof(a))
+        if getfield(a, field) != getfield(b, field)
+            return false
+        end
+    end
+    return true
+end
+
+function to_dict(info::AbstractEntry; folder=true)
+    output = Dict{String,Union{String,Vector{String}}}()
+    for field in fieldnames(typeof(info))
+        value = getfield(info, field)
+        if folder && field == :folder
+            continue
+        end
+        if value !== nothing && value != [] && value != Dict() && value != ""
+            output[String(field)] = value
+        end
+    end
+    return output
+end
+
+# This method controls the default string output,
+# e.g. when you call string(x) or print(x)
+function Base.string(x::AbstractEntry)
+    return "$(typeof(x)):\n$(join(("- $k=$(string(v))" for (k, v) in pairs(to_dict(x))),"\n"))"
+end
+
+function Base.show(io::IO, x::AbstractEntry)
+    # print(io, "$(typeof(x)):\n", join(("- $k=$(string(v))" for (k, v) in pairs(to_dict(x))), "\n"))
+    print(io, Base.string(x))
+end
+
+function string_short(x::AbstractEntry)
+    return "$(join((string(v) for (k, v) in pairs(to_dict(x)) if k in ["doi", "remote"]), ", "))"
+end
+
+function Base.repr(x::AbstractEntry)
+    return "$(typeof(x))($(join(("$k=$(repr(v))" for (k, v) in pairs(to_dict(x))), ", ")))"
+end
+
+function repr_short(x::AbstractEntry)
+    return "$(typeof(x))($(join(("$k=$(repr(v))" for (k, v) in pairs(to_dict(x)) if k in ["doi", "remote"]), ", "))...)"
+end
+
+# # This method controls the representation used by repr(x)
+# # and is also the one the REPL uses by default.
+function Base.show(io::IO, ::MIME"text/plain", x::AbstractEntry)
+    print(io, Base.repr(x))
+end
+
+@kwdef struct Database
+    datasets::Dict{String,<:AbstractEntry} = Dict{String,AbstractEntry}()
+    datasets_path::String = DEFAULT_DATASETS_PATH
+end
+
+function Base.:(==)(db1::Database, db2::Database)
+    return db1.datasets == db2.datasets && db1.datasets_path == db2.datasets_path
+end
+
+function to_dict(db::Database; kwargs...)
+    return Dict(key => to_dict(entry; kwargs...) for (key, entry) in pairs(db.datasets))
+end
+
+
+@kwdef struct DatasetEntry <: AbstractEntry
+    doi::Union{Nothing,String}=nothing
+    aliases::Vector{String}=Vector{String}()
+    downloads::Vector{String}=Vector{String}()
+    version::Union{Nothing,String}=nothing
+    folder::String=""
+end
+
+@kwdef struct RepositoryEntry <: AbstractEntry
+    remote::String
+    ref::Union{Nothing,String}=nothing
+    branch::Union{Nothing,String}=nothing
+    aliases::Vector{String}=Vector{String}()
+    folder::String=""
+end
+
+
+# This method controls the default string output,
+# e.g. when you call string(x) or print(x)
+function Base.show(io::IO, db::Database)
+    print(io, "$(typeof(db))")
+    if length(db.datasets) == 0
+        print(io, " (Empty)\n")
+    else
+        print(io, ":\n")
+    end
+    for (k, v) in pairs(db.datasets)
+        print(io, "- $k => $(string_short(v))\n")
+    end
+    print(io, "datasets_path: $(db.datasets_path)")
+end
+
+# This method controls the representation used by repr(x)
+# and is also the one the REPL uses by default.
+function Base.show(io::IO, ::MIME"text/plain", db::Database)
+    print(io, "$(typeof(db))(\n")
+    print(io, "  datasets=Dict(\n")
+    for (k, v) in pairs(db.datasets)
+        print(io, "    $k => ", repr_short(v), ",\n")
+    end
+    print(io, "  ),\n")
+    print(io, "  datasets_path=$(repr(db.datasets_path))\n)")
+end
+
+function TOML.print(io::IO, db::Database; folder=false, kwargs...)
+    return TOML.print(io, to_dict(db; folder=folder); kwargs...)
+end
+
+function TOML.print(db::Database; folder=false, kwargs...)
+    return TOML.print(to_dict(db; folder=folder); kwargs...)
+end
+
+function write_datasets_toml(db::Database, filepath::String; kwargs...)
+    open(filepath, "w") do io
+        TOML.print(io, db; kwargs...)
+    end
+end
+
+"""Accessor functions for back-compatibility
 """
-function set_datasets_path(path::String)
-    GLOBAL_STATE["DATASETS_PATH"] = path
+function set_datasets_path(db::Database, path::String)
+    db.datasets_path = path
 end
 
-function set_datasets(datasets::Dict)
-    GLOBAL_STATE["DATASETS"] = datasets
+function set_datasets(db::Database, datasets::Dict{String,<:AbstractEntry})
+    db.datasets = datasets
 end
 
-function get_datasets_path(datasets_path::Union{String,Nothing}=nothing)
+function get_datasets_path(db::Database, datasets_path::Union{String,Nothing}=nothing)
     if datasets_path !== nothing
         return datasets_path
     end
-    return GLOBAL_STATE["DATASETS_PATH"]
+    return db.datasets_path
 end
 
-function get_datasets(datasets::Union{Dict,Nothing}=nothing)
-    if datasets !== nothing
-        return datasets
-    end
-    return GLOBAL_STATE["DATASETS"]
+function get_datasets(db::Database)
+    return db.datasets
 end
 
 COMPRESSED_FORMATS = ["zip", "tar.gz", "tar"]
 
-"""Standard Dataset
-
-Metadata
---------
-name: name of the dataset
-doi: DOI of the dataset (optional)
-aliases: list of aliases for the dataset (optional)
-downloads: list of download urls (optional)
-    Each URL contains the full specification of the data to download, including the version.
-url: alias for `downloads = [ url ]` (optional)
-    If url is provided, downloads will be set to [url].
-version: version of the dataset (optional)
-    If version is provided, the dataset will be saved in a version subfolder.
-folder: folder to store the dataset (optional)
-
-Other parameters
-----------------
-datasets_path: path to store the dataset, if different from GLOBAL (optional)
-datasets: dictionary of datasets to store the dataset in (optional)
-    By default, the dataset is stored in the module-wide DATASETS dictionary.
-overwrite: if true, overwrite existing dataset with the same name (optional)
-"""
-function register_dataset(name::String=""; doi::Union{Nothing,String}=nothing,
+function register_dataset(db::Database, name::String=""; doi::Union{Nothing,String}=nothing,
     aliases::Vector{String}=Vector{String}(),
     downloads::Vector{String}=Vector{String}(),
     url::Union{Nothing,String}=nothing,
     version::Union{Nothing,String}=nothing,
     datasets_path=nothing, folder=nothing,
-    datasets=nothing, overwrite::Bool=false)
+    overwrite::Bool=false)
     if (name == "" && doi !== nothing)
         name = doi
     end
     if name == ""
         error("name or doi must be provided")
     end
-    datasets = get_datasets(datasets)
+    datasets = get_datasets(db)
     if haskey(datasets, name) && !overwrite
         error("Dataset $name already exists. Set overwrite=true to overwrite.")
     end
@@ -88,29 +190,16 @@ function register_dataset(name::String=""; doi::Union{Nothing,String}=nothing,
         downloads = [url]
     end
     if folder === nothing
-        datasets_path = get_datasets_path(datasets_path)
+        datasets_path = get_datasets_path(db, datasets_path)
         folder = joinpath(datasets_path, doi === nothing ? name : doi)
         if version !== nothing
             folder = joinpath(folder, version)
         end
     end
-    datasets[name] = Dict(
-        "doi" => doi,
-        "downloads" => downloads,
-        "folder" => folder,
-        "version" => version,
-    )
-    if length(aliases) > 0
-        datasets[name]["aliases"] = aliases
-    end
+    datasets[name] = DatasetEntry(doi, aliases, downloads, version, folder)
     return datasets[name]
 end
 
-
-"""
-parse git@github.com:awi-esc/Datasets.git OR https://github.com/awi-esc/Datasets.git
-as server=github.com, group=awi-esc, repo=Datasets
-"""
 function _parse_git_remote(remote::String)
     if startswith(remote, "git@")
         server, group_repo = split(remote[length("git@")+1:end], ":")
@@ -128,45 +217,21 @@ function _parse_git_remote(remote::String)
     return Dict("server" => server, "group" => group, "repo" => repo)
 end
 
-"""Register a git register_repository
-
-This function handles git repositories that are to be cloned.
-If a specific version is needed, it is sometimes faster to download
-a tarball. In that case you should use download_dataset instead,
-with appropriate downloads and extract options.
-
-Metadata
---------
-name: name of the dataset
-remote: git remote url
-ref: git reference {hash, branch, tag} (optional)
-    --> if the ref is not included in the default git clone,
-    the additional `branch=` option can be provided.
-branch: git branch to clone (optional)
-aliases: list of aliases for the dataset (optional)
-
-Other parameters
-----------------
-datasets_path: path to store the dataset, if different from GLOBAL (optional)
-datasets: dictionary of datasets to store the dataset in (optional)
-    By default, the dataset is stored in the module-wide DATASETS dictionary.
-overwrite: if true, overwrite existing dataset with the same name (optional)
-"""
-function register_repository(name::String, remote::String;
+function register_repository(db::Database, name::String, remote::String;
     datasets_path::Union{String, Nothing}=nothing, folder=nothing,
     ref::Union{String, Nothing}=nothing,
     branch::Union{String, Nothing}=nothing,
     aliases::Vector{String}=Vector{String}(),
-    type="git", datasets=nothing, overwrite::Bool=false)
+    type="git", overwrite::Bool=false)
     if name == ""
         name, _ = splitext(basename(remote))
     end
-    datasets = get_datasets(datasets)
+    datasets = get_datasets(db)
     if haskey(datasets, name) && !overwrite
         error("Dataset $name already exists. Set overwrite=true to overwrite.")
     end
     if folder === nothing
-        datasets_path = get_datasets_path(datasets_path)
+        datasets_path = get_datasets_path(db, datasets_path)
         parsed = _parse_git_remote(remote)
         folder = joinpath(folder === nothing ? datasets_path : folder, parsed["server"], parsed["group"], parsed["repo"])
         if ref !== nothing
@@ -175,19 +240,12 @@ function register_repository(name::String, remote::String;
             folder = joinpath(folder, branch)
         end
     end
-    datasets[name] = Dict(
-        "remote" => remote,
-        "folder" => folder,
-        "type" => type,
-        "ref" => ref,
-        "branch" => branch,
-        "aliases" => length(aliases) > 0 ? aliases : [joinpath(parsed["group"], parsed["repo"]), parsed["repo"]],
-    )
+    datasets[name] = RepositoryEntry(remote, ref, branch, aliases, folder)
     return datasets[name]
 end
 
-function register_repository(remote::String; name::String="", kwargs...)
-    return register_repository(name, remote; kwargs...)
+function register_repository(db::Database, remote::String; name::String="", kwargs...)
+    return register_repository(db, name, remote; kwargs...)
 end
 
 function extract_file(download_path)
@@ -203,22 +261,22 @@ function extract_file(download_path)
     end
 end
 
-function list_alternative_keys(dataset)
+function list_alternative_keys(dataset::AbstractEntry)
     alternatives = [ ]
-    if haskey(dataset, "aliases")
-        for alias in dataset["aliases"]
+    if hasfield(typeof(dataset), :aliases)
+        for alias in dataset.aliases
             push!(alternatives, alias)
         end
     end
-    if haskey(dataset, "doi")
-        push!(alternatives, dataset["doi"])
+    if hasfield(typeof(dataset), :doi)
+        push!(alternatives, dataset.doi)
     end
     return alternatives
 end
 
-function list_dataset_keys(datasets=nothing; alt=true, flat=false)
+function list_dataset_keys(db::Database; alt=true, flat=false)
     entries = []
-    for (name, dataset) in pairs(get_datasets(datasets))
+    for (name, dataset) in pairs(get_datasets(db))
         push!(entries, [name])
         if alt
             for key in list_alternative_keys(dataset)
@@ -232,34 +290,20 @@ function list_dataset_keys(datasets=nothing; alt=true, flat=false)
     return entries
 end
 
-function repr_datasets(datasets=nothing; alt=true)
+function repr_datasets(db::Database; alt=true)
     lines = [alt ? "Datasets including aliases:" : "Datasets:"]
-    for keys in list_dataset_keys(datasets; alt=alt)
+    for keys in list_dataset_keys(db; alt=alt)
         push!(lines, "- " * join(keys, " | "))
     end
     return join(lines, "\n")
 end
 
-function print_dataset_keys(datasets=nothing; alt=true)
-    println(repr_datasets(datasets; alt=alt))
+function print_dataset_keys(db::Database; alt=true)
+    println(repr_datasets(db; alt=alt))
 end
 
-
-"""Search datasets by name. Compare against (by order of priority)
-
-1) dataset ID (key in DATASETS)
-2) "aliases" key
-3) "doi" key
-
-Also match DOI or aliases unless alt is false.
-If partial is true, also search partial matches are returned.
-
-Returns a list of datasets::Vector{Dict} that match the search criteria.
-"""
-function search_datasets(name; datasets=nothing, alt=true, partial=false)
-
-    datasets = get_datasets(datasets)
-
+function search_datasets(db::Database, name; alt=true, partial=false)
+    datasets = get_datasets(db)
     matches = []
     for (key, dataset) in pairs(datasets)
         if lowercase(key) == lowercase(name)
@@ -272,19 +316,15 @@ function search_datasets(name; datasets=nothing, alt=true, partial=false)
             push!(matches, dataset)
         end
     end
-
     return matches
-
 end
 
-"""Like search_datasets, but returns the first result or raises an error if no or multiple datasets are found.
-"""
-function search_dataset(name; check_unique=true, raise=true, datasets=nothing, kwargs...)
-    results = search_datasets(name; datasets=datasets, kwargs...)
+function search_dataset(db::Database, name; check_unique=true, raise=true, kwargs...)
+    results = search_datasets(db, name; kwargs...)
     if length(results) == 0
         error("""No dataset found for: `$name`.
-        Available datasets: $(join(keys(get_datasets(datasets)), ", "))
-        $(repr_datasets(datasets))
+        Available datasets: $(join(keys(get_datasets(db)), ", "))
+        $(repr_datasets(db))
         """)
     elseif (check_unique && length(results) > 1)
         message = "Multiple datasets found for $name:\n- $(join([join(list_alternative_keys(x), " | ") for x in results], "\n- "))"
@@ -297,29 +337,27 @@ function search_dataset(name; check_unique=true, raise=true, datasets=nothing, k
     return results[1]
 end
 
-"""Get the folder of a dataset by name. See search_dataset for more details on key-word arguments.
-"""
-function get_dataset_folder(name; kwargs...)
-    return search_dataset(name; kwargs...)["folder"]
+function get_dataset_folder(db::Database, name; kwargs...)
+    return search_dataset(db, name; kwargs...).folder
 end
 
-function download_dataset(name; extract=nothing, datasets=nothing, kwargs...)
-    datasets = get_datasets(datasets)
+function download_dataset(db::Database, name; extract=true, kwargs...)
+    datasets = get_datasets(db)
     if ! haskey(datasets, name)
-        dataset = search_dataset(name; datasets=datasets, kwargs...)
+        dataset = search_dataset(db, name; kwargs...)
     end
     dataset = datasets[name]
-    download_dir = dataset["folder"]
+    download_dir = dataset.folder
 
-    if get(dataset, "type", nothing) == "git"
+    if typeof(dataset) == RepositoryEntry
         if !isdir(joinpath(download_dir, ".git"))
-            if get(dataset, "branch", nothing) !== nothing
-                run(`git clone -b $(dataset["branch"]) $(dataset["remote"]) $download_dir`)
+            if dataset.branch !== nothing
+                run(`git clone -b $(dataset.branch) $(dataset.remote) $download_dir`)
             else
-                run(`git clone $(dataset["remote"]) $download_dir`)
+                run(`git clone $(dataset.remote) $download_dir`)
             end
-            if get(dataset, "ref", nothing) !== nothing
-                run(`git -C $download_dir reset --hard $(dataset["ref"])`)
+            if dataset.ref !== nothing
+                run(`git -C $download_dir reset --hard $(dataset.ref)`)
             end
         end
         return download_dir
@@ -328,11 +366,11 @@ function download_dataset(name; extract=nothing, datasets=nothing, kwargs...)
     if !isdir(download_dir)
         mkpath(download_dir)
     end
-    for url in dataset["downloads"]
+    for url in dataset.downloads
         download_path = joinpath(download_dir, basename(url))
         if !isfile(download_path)
             Downloads.download(url, download_path)
-            if (extract === nothing ? GLOBAL_STATE["EXTRACT"] : extract) && any(endswith(download_path, formats) for formats in COMPRESSED_FORMATS)
+            if (extract && any(endswith(download_path, formats) for formats in COMPRESSED_FORMATS))
                 extract_file(download_path)
             end
         end
@@ -340,64 +378,47 @@ function download_dataset(name; extract=nothing, datasets=nothing, kwargs...)
     return download_dir
 end
 
-function download_datasets(names=nothing; datasets=nothing, kwargs...)
-    datasets = get_datasets(datasets)
+function download_datasets(db::Database, names=nothing; kwargs...)
+    datasets = get_datasets(db)
     if names === nothing
         names = keys(datasets)
     end
     for name in names
-        download_dataset(name; datasets=datasets, kwargs...)
+        download_dataset(db, name; kwargs...)
     end
 end
 
-function register_datasets(datasets::Dict; kwargs...)
+function register_datasets(db::Database, datasets::Dict; kwargs...)
     for (name, info_) in pairs(datasets)
         info = Dict(Symbol(k) => v for (k, v) in info_)
         if haskey(info, :remote)
             remote = pop!(info, :remote)
-            register_repository(name, remote; info..., kwargs...)
+            register_repository(db, name, remote; info..., kwargs...)
         else
-            register_dataset(name; info..., kwargs...)
+            register_dataset(db, name; info..., kwargs...)
         end
     end
 end
 
-function register_datasets_toml(filepath; kwargs...)
+function register_datasets_toml(db::Database, filepath; kwargs...)
     config = TOML.parsefile(filepath)
-    register_datasets(config; kwargs...)
+    register_datasets(db, config; kwargs...)
 end
 
-function _clean_datasets(datasets::Dict)
-    datasets_clean = Dict()
-    for (name, info) in pairs(datasets)
-        datasets_clean[name] = Dict()
-        for (key, value) in pairs(info)
-            if (key == "folder")
-                continue
-            end
-            if value !== nothing && value !== [] && value !== Dict() && value !== ""
-                datasets_clean[name][key] = value
-            end
-        end
-    end
-    return datasets_clean
-end
 
-function write_datasets_toml(filepath, datasets::Union{Nothing,Dict}=nothing)
-    datasets = get_datasets(datasets)
-    datasets_clean = _clean_datasets(datasets)
-    open(filepath, "w") do io
-        TOML.print(io, datasets_clean)
-    end
-end
-
-function register_datasets(filepath::String; kwargs...)
+function register_datasets(db::Database, filepath::String; kwargs...)
     ext = splitext(filepath)[2]
     if ext == ".toml"
-        register_datasets_toml(filepath; kwargs...)
+        register_datasets_toml(db, filepath; kwargs...)
     else
         error("Only toml file type supported. Got: $ext")
     end
+end
+
+function read(filepath::String; datasets_path::String=DEFAULT_DATASETS_PATH, kwargs...)
+    db = Database(datasets_path=datasets_path, datasets=Dict{String,AbstractEntry}())
+    register_datasets(db, filepath)
+    return db
 end
 
 end # module
