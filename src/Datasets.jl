@@ -7,10 +7,10 @@ export Database, DatasetEntry, RepositoryEntry, AbstractEntry
 export register_dataset, register_repository, register_datasets
 export search_datasets, search_dataset, get_dataset_folder
 export download_dataset, download_datasets
-export write_datasets_toml
 export set_datasets_path, set_datasets, get_datasets_path, get_datasets
 export repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_keys
-export repr_short, string_short, read
+export repr_short, string_short
+export read, write
 
 DEFAULT_DATASETS_PATH = "datasets"
 
@@ -137,7 +137,7 @@ function TOML.print(db::Database; folder=false, kwargs...)
     return TOML.print(to_dict(db; folder=folder); kwargs...)
 end
 
-function write_datasets_toml(db::Database, filepath::String; kwargs...)
+function write(db::Database, filepath::String; kwargs...)
     open(filepath, "w") do io
         TOML.print(io, db; kwargs...)
     end
