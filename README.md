@@ -47,55 +47,72 @@ df = CSV.read(joinpath(folder, "LGM_foraminifera_assemblages_20240110.csv"), Dat
 
 ## Pre-compilation vs run-time: mind the global state when used inside a module
 
-If `Datasets` is initialized inside a module with pre-compilation (i.e. with a Project.toml on its own),
-the global datasets storage in the `Datasets` module during pre-compilation is different from run-time.
-In other words, if `register_datasets` is actually called at import time (and not simply defined inside
-some function), everything will work as it should until pre-compilation is over, at which point the global
-state inside `Datasets` will be wiped out, as if it was not yet initialized,
-and any subsequent call of `download_dataset` or `get_dataset_folder` will fail.
-Note this does not occur if the module is simply imported via `include()`, where no pre-compilation takes place,
-or if pre-compilation is disabled.
+Here we're dealing with the following situation: in a julia project (i.e. with a Project.toml) you have
+a DataModule that relies on `Datasets.jl`. It imports it, register the relevant datasets, perhaps even
+download the required files. What usually happens is the DataModule module is pre-compiled, and its state is cached and later re-used. However, `Datasets`'s global state is not part of the cache, so any work done there is wiped out. Given the default behaviour of "hiding" the database object inside `Datasets`' global, any initialization done during pre-compilation will be lost, i.e. any Datasets' work done at or executed from the module's top-level.
 
 Several strategies can be used to overcome this problem:
 
-1. Move the storage to your module state: Define a `DATASETS = Dict()` in your module, to be used as storage instead of
+1. Move the storage to your module state: Define a `DATASETS = Dict()` in your module, to be used as storage  instead of
    the GLOBAL_STATE in `Datasets`, and always pass  `datasets=DATASETS` to functions like `register_datasets` and `download_dataset(s)`.
    Your module state will persist (recommended option).
 
-2. Alternatively, initialize `Datasets` in the main / REPL, not in the module,
-and use the Datasets calls inside functions executed at run-time (not at the module top level).
-You may also define an `init_datasets` function, which is called during pre-compilation in your module
-(top-level, e.g. after import and export statements) and must be called again in the main script / REPL.
+```julia
+module DataModule
+export read_jonkers2024, TIERNEY2020
+using Datasets
+DATASETS = Dict()
+register_datasets(joinpath(@__DIR__, "..", "datasets.toml"),
+    datasets=DATASETS, datasets_path=expanduser("~/datasets"))
+TIERNEY2020 = download_dataset("tierney2020", datasets=DATASETS)
 
-Or something like this to make the most of the two options above:
+function read_jonkers2024()
+    folder = download_dataset("jonkers2024", datasets=DATASETS)
+    # ... do work with it
+end
+end # module
+```
+
+2. Alternatively, if you want to stick to global storage, you avoid doing anything during pre-compilation and use the handy `__init__()` function that is not run
+during pre-compilation and initializes module at run-time.
 
 ```julia
 module DataModule
-
-export init_datasets, read_jonkers2024
-
+export read_jonkers2024, TIERNEY2020
 using Datasets
 
-DATASETS = Dict()
-
-function init_datasets(datasets_path=expanduser("~/datasets"))
-    set_datasets_path(datasets_path)
-    set_datasets(DATASETS)
-    if length(DATASETS) == 0
-        register_datasets(joinpath(@__DIR__, "..", "datasets.toml"))
-    end
+"will be called at run-time when the module is loaded (not during pre-compulation)"
+function __init__()
+    global TIERNEY2020
+    set_datasets_path(expanduser("~/datasets"))
+    register_datasets(joinpath(@__DIR__, "..", "datasets.toml"))
+    TIERNEY2020 = download_dataset("tierney2020")
 end
 
-init_datasets()  # pre-compilation time: needs to be called again in main for Datasets function to work seemlessly at run-time (but not necessary for the functions defined here to work)
-
-TIERNEY2020_GITHUB = download_dataset("tierney2020")  # run at pre-compilation time, so will use initialized state
 
 function read_jonkers2024()
-    folder = download_dataset("jonkers2024", datasets=DATASETS)  # run-time --> use internal DATASETS (will never fail even when Datasets is not initialized)
-    return CSV.read(joinpath(folder, "LGM_foraminifera_assemblages_20240110.csv"), DataFrame, missingstring="NA")
+    folder = download_dataset("jonkers2024") # run-time (relies on __init__)
+    # ... do work with it
 end
 
+end # module
+```
+
+And of course, if initialization is needed during pre-compilation you can have a separate `init_datasets` function called at top-level and also called inside the module;
+
+```julia
+function init_datasets()
+    global TIERNEY2020
+    set_datasets_path(expanduser("~/datasets"))
+    register_datasets(joinpath(@__DIR__, "..", "datasets.toml"))
+    TIERNEY2020 = download_dataset("tierney2020")
 end
+
+function __init__()
+    init_datasets()  # called at run-time
+end
+
+init_datasets() # called during pre-compilation
 ```
 
 ## Advanced Examples
