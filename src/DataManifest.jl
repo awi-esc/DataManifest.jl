@@ -5,6 +5,7 @@ using URIParser
 import Downloads
 import Base: write, read
 
+export add
 export get_dataset_path
 export Database, DatasetEntry
 export register_dataset, register_datasets
@@ -267,6 +268,10 @@ function get_dataset_path(db::Database, name::String; kwargs...)
     return get_dataset_path(dataset, db.datasets_path)
 end
 
+function get_dataset_path(db::Database, entry::DatasetEntry; kwargs...)
+    return get_dataset_path(entry, db.datasets_path)
+end
+
 """
 Build a URI string from the metadata fields.
 """
@@ -332,7 +337,7 @@ function register_dataset(db::Database, uri::Union{String,Nothing}=nothing ;
     entry = init_dataset_entry(; uri=uri, kwargs...)
 
     if (name == "")
-        name = strip(entry.path, '/')
+        name = strip(entry.key)
         name = splitext(name)[1]
     end
 
@@ -341,7 +346,7 @@ function register_dataset(db::Database, uri::Union{String,Nothing}=nothing ;
         error("Dataset $name already exists. Set overwrite=true to overwrite.")
     end
     datasets[name] = entry
-    return datasets[name]
+    return (name => entry)
 end
 
 function extract_file(download_path)
@@ -367,6 +372,8 @@ function list_alternative_keys(dataset::DatasetEntry)
     if dataset.doi !== nothing
         push!(alternatives, dataset.doi)
     end
+    push!(alternatives, dataset.key)
+    push!(alternatives, dataset.path)
     return alternatives
 end
 
@@ -433,13 +440,9 @@ function search_dataset(db::Database, name::String; check_unique=true, raise=tru
     return results[1]
 end
 
-"Fetch data based on parsed fields"
-function download_dataset(db::Database, name::String; extract=true, kwargs...)
-    datasets = get_datasets(db)
-    if ! haskey(datasets, name)
-        dataset = search_dataset(db, name; kwargs...)
-    end
-    dataset = datasets[name]
+"Fetch dataset"
+function download_dataset(db::Database, dataset::DatasetEntry; extract=true)
+
     local_path = get_dataset_path(dataset, db.datasets_path)
 
     if isfile(local_path) || isdir(local_path)
@@ -490,6 +493,19 @@ function download_dataset(db::Database, name::String; extract=true, kwargs...)
     return local_path
 end
 
+"""Download a dataset by name, searching in alternative fields if necessary.
+"""
+function download_dataset(db::Database, name::String; extract=true, kwargs...)
+    datasets = get_datasets(db)
+    if !haskey(datasets, name)
+        dataset = search_dataset(db, name; kwargs...)
+    else
+        dataset = datasets[name]
+    end
+    return download_dataset(db, dataset; extract=extract)
+end
+
+
 function download_datasets(db::Database, names=nothing; kwargs...)
     datasets = get_datasets(db)
     if names === nothing
@@ -536,6 +552,16 @@ end
 
 function read(filepath::String, datasets_path::Union{String,Nothing}=nothing; kwargs...)
     return Database(filepath, datasets_path; kwargs...)
+end
+
+"""
+Add a dataset to the database, downloading it if necessary.
+If `name` is not provided, it will be inferred from the uri or dataset entries
+"""
+function add(db::Database, uri::Union{String,Nothing}=nothing ; kwargs...)
+    (name, entry) = register_dataset(db, uri; kwargs...)
+    download_dataset(db, name)
+    return (name => entry)
 end
 
 
