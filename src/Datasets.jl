@@ -5,7 +5,7 @@ using URIParser
 import Downloads
 import Base: write, read
 
-export load_dataset_entries, get_dataset_path
+export get_dataset_path
 export Database, DatasetEntry
 export register_dataset, register_datasets
 export search_datasets, search_dataset
@@ -322,24 +322,6 @@ function init_dataset_entry(;
     return entry
 end
 
-"""
-Load dataset entries from a TOML file.
-"""
-function load_dataset_entries(toml_file::String, datasets_path::Union{String,Nothing}=nothing)
-    raw = TOML.parsefile(toml_file)
-    entries = Dict{String,DatasetEntry}()
-
-    for (name, meta) in raw
-        entry = init_dataset_entry(; meta...)
-        entries = entries[name] = entry
-    end
-
-    return Database(
-        datasets=Dict{String,DatasetEntry}(),
-        datasets_path=joinpath(datasets_path || DEFAULT_DATASETS_PATH, "datasets"),
-    )
-end
-
 
 function register_dataset(db::Database, uri::Union{String,Nothing}=nothing ;
     name::String="",
@@ -542,14 +524,21 @@ function register_datasets(db::Database, filepath::String; kwargs...)
     end
 end
 
-function read(filepath::String, datasets_path::Union{String, Nothing}=nothing; kwargs...)
-    return read(filepath; datasets_path=datasets_path, kwargs...)
-end
 
-function read(filepath::String; datasets_path::Union{String, Nothing}=nothing, kwargs...)
-    db = Database(datasets_path=datasets_path, datasets=Dict{String,DatasetEntry}())
+"""Reading from file"""
+function Database(filepath::String, datasets_path::Union{String,Nothing}=nothing)
+    if datasets_path === nothing || datasets_path == ""
+        datasets_path = DEFAULT_DATASETS_PATH
+    end
+    db = Database(datasets_path=datasets_path)
     register_datasets(db, filepath)
     return db
 end
+
+
+function read(filepath::String, datasets_path::Union{String,Nothing}=nothing; kwargs...)
+    return Database(filepath, datasets_path; kwargs...)
+end
+
 
 end # module

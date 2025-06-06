@@ -38,12 +38,12 @@ ref = "v2.1"
 uri = "ssh://albedo1.dmawi.de:/albedo/work/projects/p_pool_clim_data/Paleodata/Tierney2020/LGM/recipe_cmip6_lgm_tos_20241114_151009/preproc/lgm/tos_CLIM"
 ```
 
-And read via the `Datasets.read` function, download via `download_dataset` or `download_datasets`
+And read via the `Datasets.Database` class (alias for reading `Datasets.read`), download via `download_dataset` or `download_datasets`
 
 ```julia
 using DataFrames
 using Datasets
-db = Datasets.read("datasets.yml") # or Datasets.read("datasets.yml", expanduser("~/datasets"))
+db = Database("datasets.toml") # or Database("datasets.toml", expanduser("~/datasets"))
 folder = download_dataset(db, "jonkers2024") # will download only if not present
 df = CSV.read(joinpath(folder, "LGM_foraminifera_assemblages_20240110.csv"), DataFrame)
 ```
@@ -55,7 +55,7 @@ Examples of the declarative syntax
 
 using Datasets
 
-db = Database(datasets_path="datasets") # the default
+db = Database(datasets_path="datasets") # the default is ~/.cache/Datasets
 
 register_dataset(db, "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip";
   name="herzschuh2023",
