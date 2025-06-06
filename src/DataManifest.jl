@@ -462,7 +462,7 @@ function download_dataset(db::Database, name::String; extract=true, kwargs...)
         end
     end
 
-    if scheme in ("git", "ssh+git")
+    if (scheme in ("git", "ssh+git") || (scheme == "https" && endswith(dataset.path, ".git")))
         # repo_url = occursin("@", host) ? "$host:$path" : "git@$host:$path"
         repo_url = dataset.uri
         if dataset.branch !== nothing
@@ -471,18 +471,16 @@ function download_dataset(db::Database, name::String; extract=true, kwargs...)
             run(`git clone --depth 1 $repo_url $local_path`)
         end
 
-    elseif scheme in ("http", "https")
-        Downloads.download(dataset.uri, local_path)
-
-    elseif scheme in ("ssh", "sshfs")
+    elseif scheme in ("ssh", "sshfs", "rsync")
         run(`rsync -arvzL $(dataset.host):$(dataset.path) $(dirname(local_path))/`)
 
     elseif scheme == "file"
         if (dataset.path != local_path)
             run(`rsync -arvzL  $(dataset.path) $(dirname(local_path))/`)
         end
+
     else
-        error("Unsupported scheme: $scheme")
+        Downloads.download(dataset.uri, local_path)
     end
 
     if (extract && any(endswith(local_path, ext) for ext in COMPRESSED_FORMATS))
