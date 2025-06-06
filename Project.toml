@@ -1,4 +1,4 @@
-name = "Datasets"
+name = "DataManifest"
 uuid = "b8ee69ef-a20a-4d38-bceb-a68d72817f72"
 authors = ["Mahé Perrette <mahe.perrette@gmail.com>"]
 version = "0.2.5"

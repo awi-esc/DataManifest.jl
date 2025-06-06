@@ -1,4 +1,4 @@
-module Datasets
+module DataManifest
 
 using TOML
 using URIParser
