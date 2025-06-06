@@ -238,14 +238,6 @@ function get_dataset_key(entry::DatasetEntry)
 
     clean_path = entry.path !== nothing ? strip(entry.path, '/') : ""
 
-    # if entry.doi !== nothing
-    #     key = joinpath(entry.doi, basename(clean_path))
-    #     # key = joinpath(entry.doi)
-    # elseif entry.scheme == "git" || occursin("git@", entry.uri)
-    #     key = joinpath(clean_path)
-    # else
-    #     key = joinpath(entry.host, clean_path)
-    # end
     key = joinpath(entry.host, clean_path)
 
     if (entry.version !== nothing)
@@ -337,8 +329,12 @@ function register_dataset(db::Database, uri::Union{String,Nothing}=nothing ;
     entry = init_dataset_entry(; uri=uri, kwargs...)
 
     if (name == "")
-        name = strip(entry.key)
-        name = splitext(name)[1]
+        if endswith(entry.path, ".git")
+            name = strip(entry.path[1:end-4], '/')
+        else
+            name = strip(entry.key)
+            name = splitext(name)[1]
+        end
     end
 
     datasets = get_datasets(db)
@@ -560,7 +556,7 @@ If `name` is not provided, it will be inferred from the uri or dataset entries
 """
 function add(db::Database, uri::Union{String,Nothing}=nothing ; kwargs...)
     (name, entry) = register_dataset(db, uri; kwargs...)
-    download_dataset(db, name)
+    download_dataset(db, entry)
     return (name => entry)
 end
 
