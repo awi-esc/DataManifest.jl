@@ -478,7 +478,7 @@ function download_dataset(db::Database, name::String; extract=true, kwargs...)
         run(`rsync -arvzL $(dataset.host):$(dataset.path) $(dirname(local_path))/`)
 
     elseif scheme == "file"
-        if (path != local_path)
+        if (dataset.path != local_path)
             run(`rsync -arvzL  $(dataset.host) $(dirname(local_path))/`)
         end
     else
