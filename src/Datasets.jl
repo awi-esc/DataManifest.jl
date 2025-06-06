@@ -479,7 +479,7 @@ function download_dataset(db::Database, name::String; extract=true, kwargs...)
 
     elseif scheme == "file"
         if (dataset.path != local_path)
-            run(`rsync -arvzL  $(dataset.host) $(dirname(local_path))/`)
+            run(`rsync -arvzL  $(dataset.path) $(dirname(local_path))/`)
         end
     else
         error("Unsupported scheme: $scheme")
