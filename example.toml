@@ -1,11 +1,14 @@
 [herzschuh2023]
 doi = "10.1594/PANGAEA.930512"
-downloads = ["https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"]
+uri = "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"
 
 [jonkers2024]
 doi = "10.1594/PANGAEA.962852"
-downloads = ["https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv"]
+uri = "https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv"
 
 [tierney2020]
-remote = "git@github.com:jesstierney/lgmDA.git"
+uri = "git@github.com:jesstierney/lgmDA.git"
 ref = "v2.1"
+
+[CMIP6_lgm_tos]
+uri = "ssh://albedo1.dmawi.de:/albedo/work/projects/p_pool_clim_data/Paleodata/Tierney2020/LGM/recipe_cmip6_lgm_tos_20241114_151009/preproc/lgm/tos_CLIM"

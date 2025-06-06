@@ -53,39 +53,45 @@ using Datasets
 
 db = Database(datasets_path="datasets") # the default
 
-register_dataset(db, "herzschuh2023"; doi="10.1594/PANGAEA.930512",
-    downloads=["https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"],
+register_dataset(db, "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip";
+  name="herzschuh2023",
+  doi="10.1594/PANGAEA.930512",
 )
 
-register_dataset(db, "jonkers2024"; doi="10.1594/PANGAEA.962852",
-    downloads=["https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv"],
+register_dataset(db, "https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv";
+name = "jonkers2024",
+doi="10.1594/PANGAEA.962852",
 )
 
-register_repository(db, "git@github.com:jesstierney/lgmDA.git"; name="tierney2020")
+register_dataset(db, "git@github.com:jesstierney/lgmDA.git")
+
+register_dataset(db, "ssh://albedo1.dmawi.de:/albedo/work/projects/p_forclima/preproc_data_esmvaltool/LGM/recipe_cmip6_lgm_tos_20241114_151009/preproc/lgm/tos_CLIM"; name="CMIP6_lgm_tos")
 
 println(db)
 ```
 yields:
 ```
 Database:
-- herzschuh2023 => 10.1594/PANGAEA.930512
-- jonkers2024 => 10.1594/PANGAEA.962852
-- tierney2020 => git@github.com:jesstierney/lgmDA.git
+- CMIP6_lgm_tos => albedo1.dmawi.de/albedo/work/projects/p_forclima/p...
+- herzschuh2023 => doi.pangaea.de/10.1594/PANGAEA.930512
+- jonkers2024 => download.pangaea.de/dataset/962852/files/LGM_foram...
+- jesstierney/lgmDA => github.com/jesstierney/lgmDA.git
 datasets_path: datasets
 ```
 ## Data Structure
 
 To be completed. But basically
 ```julia
-println(repr(db))
+db
 ```
 yields
 ```
 Database(
   datasets=Dict(
-    herzschuh2023 => DatasetEntry(doi="10.1594/PANGAEA.930512"...),
-    jonkers2024 => DatasetEntry(doi="10.1594/PANGAEA.962852"...),
-    tierney2020 => RepositoryEntry(remote="git@github.com:jesstierney/lgmDA.git"...),
+    CMIP6_lgm_tos => DatasetEntry(uri="ssh://albedo1.dmawi.de:/albedo/work/projects/p_forclima/preproc_data_esmvaltool/LGM/recipe_cmip6_lgm_tos_20241114_151009/preproc/lgm/tos_CLIM"...),
+    herzschuh2023 => DatasetEntry(uri="https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip", doi="10.1594/PANGAEA.930512"...),
+    jonkers2024 => DatasetEntry(uri="https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv", doi="10.1594/PANGAEA.962852"...),
+    jesstierney/lgmDA => DatasetEntry(uri="git@github.com:jesstierney/lgmDA.git"...),
   ),
   datasets_path="datasets"
 )
