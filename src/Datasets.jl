@@ -542,7 +542,11 @@ function register_datasets(db::Database, filepath::String; kwargs...)
     end
 end
 
-function Datasets.read(filepath::String; datasets_path::Union{String, Nothing}=nothing, kwargs...)
+function read(filepath::String, datasets_path::Union{String, Nothing}=nothing; kwargs...)
+    return read(filepath; datasets_path=datasets_path, kwargs...)
+end
+
+function read(filepath::String; datasets_path::Union{String, Nothing}=nothing, kwargs...)
     db = Database(datasets_path=datasets_path, datasets=Dict{String,DatasetEntry}())
     register_datasets(db, filepath)
     return db

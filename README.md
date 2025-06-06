@@ -23,15 +23,19 @@ Here is the most straightforward use, e.g. in a `datasets.toml` file:
 
 ```toml
 [herzschuh2023]
-downloads = ["https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"]
 doi = "10.1594/PANGAEA.930512"
+uri = "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"
 
 [jonkers2024]
-downloads = ["https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv"]
 doi = "10.1594/PANGAEA.962852"
+uri = "https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv"
 
 [tierney2020]
-remote = "git@github.com:jesstierney/lgmDA.git"
+uri = "git@github.com:jesstierney/lgmDA.git"
+ref = "v2.1"
+
+[CMIP6_lgm_tos]
+uri = "ssh://albedo1.dmawi.de:/albedo/work/projects/p_pool_clim_data/Paleodata/Tierney2020/LGM/recipe_cmip6_lgm_tos_20241114_151009/preproc/lgm/tos_CLIM"
 ```
 
 And read via the `Datasets.read` function, download via `download_dataset` or `download_datasets`
@@ -39,7 +43,7 @@ And read via the `Datasets.read` function, download via `download_dataset` or `d
 ```julia
 using DataFrames
 using Datasets
-db = Datasets.read("datasets.yml"; datasets_path=expanduser("~/datasets"))
+db = Datasets.read("datasets.yml") # or Datasets.read("datasets.yml", expanduser("~/datasets"))
 folder = download_dataset(db, "jonkers2024") # will download only if not present
 df = CSV.read(joinpath(folder, "LGM_foraminifera_assemblages_20240110.csv"), DataFrame)
 ```
