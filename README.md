@@ -106,8 +106,6 @@ write it to disk.
 write(db, "datasets.toml")
 ```
 
-At the time of writing it includes everyfield that has been parsed from the data `uri`, which is too much. In the future this will be reduced to the minimum (probably `uri=`, and perhaps `archive=` and `extract=`, if applicable).
-
 We are considering automatically writing to a projects' `datasets.toml` file by default when the `add` command is used (see [roadmap](#roadmap)).
 
 
