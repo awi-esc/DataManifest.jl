@@ -8,12 +8,18 @@ Currently DataManifest supports download from a set of URLs suited for repositor
 
 It provides declarative functions to register and download datasets, as well as a way to write to and read from an equivalent (and optional) `toml` config file.
 
+`DataManifest.jl` is still actively developped, with breaking changes until v1.0.0 is reached (see [roadmap](#roadmap) below).
+
 ## How to install?
 
-This package is not registerd, so you need to install it from URL:
-
+This package can be installed as:
 ```julia
 using Pkg
+Pkg.add("DataManifest")
+```
+and the bleeding edge can be installed directly via:
+
+```julia
 Pkg.add(url="https://github.com/awi-esc/DataManifest.jl")
 ```
 
@@ -38,15 +44,18 @@ ref = "v2.1"
 uri = "ssh://albedo1.dmawi.de:/albedo/work/projects/p_pool_clim_data/Paleodata/Tierney2020/LGM/recipe_cmip6_lgm_tos_20241114_151009/preproc/lgm/tos_CLIM"
 ```
 
-And read via the `DataManifest.Database` class (alias for reading `DataManifest.read`), download via `download_dataset` or `download_datasets`
+And read via the `DataManifest.Database` class (or alias `DataManifest.read`), download via `download_dataset` or `download_datasets`
 
 ```julia
-using DataFrames
 using DataManifest
 db = Database("datasets.toml") # or Database("datasets.toml", expanduser("~/datasets"))
-folder = download_dataset(db, "jonkers2024") # will download only if not present
-df = CSV.read(joinpath(folder, "LGM_foraminifera_assemblages_20240110.csv"), DataFrame)
+local_path = download_dataset(db, "jonkers2024") # will download only if not present
 ```
+which may return something like:
+```
+/home/perrette/.cache/Datasets/LGM_foraminifera_assemblages_20240110.csv
+```
+
 
 ## Advanced Examples
 
@@ -101,6 +110,12 @@ Database(
 )
 ```
 
+## Roadmap
+
+Before the package is stabilized, the following points must be addressed (implemented or rejected), mainly related to the `DataManifest.add()` function:
+- automatically update an actual data manifest file (instead of currently just reading from it, or writing on demand)?
+- perhaps use Project.toml to store the data when is used, like `Pkg.add`?
+- better handle the archives (.zip), e.g. download a full zenodo archive like `https://zenodo.org/api/records/15230504/files-archive`, from the "Download All" button on [this page](https://zenodo.org/records/15230504) -> must be up to the user to decide to extract (or not extract) a voluminous archive.
 
 ## Why DataManifest.jl ?
 
