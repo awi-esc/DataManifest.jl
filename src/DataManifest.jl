@@ -148,9 +148,7 @@ mutable struct Database
 
 end
 
-function getIndex(db::Database, name::String)
-    return search_dataset(db, name)
-end
+Base.getindex(db::Database, name::String) = search_dataset(db, name)
 
 function Base.:(==)(db1::Database, db2::Database)
     return db1.datasets == db2.datasets && db1.datasets_folder == db2.datasets_folder && db1.datasets_toml == db2.datasets_toml
@@ -381,6 +379,40 @@ function init_dataset_entry(;
 end
 
 
+function is_a_git_repo(entry::DatasetEntry)
+
+    segments = split(strip(entry.path, '/'), '/')
+
+    # the path needs to have at least two segments
+    if length(segments) < 2 || isempty(segments[1]) || isempty(segments[2])
+        return false
+    end
+
+    app = split(entry.host, ".")[1]
+
+    known_git_hosts = Set([
+        # Popular public Git hosts besides gitlab
+        "github.com",
+        "bitbucket.org",
+        "codeberg.org",
+        "gitea.com",
+        "sourcehut.org",
+        "git.savannah.gnu.org",
+        "git.kernel.org",
+
+        # CI/CD Git hosting platforms
+        "dev.azure.com"
+    ])
+
+    if entry.host in known_git_hosts || app == "gitlab"
+        return true
+    else
+        return joinpath(entry.host, entry.path)
+    end
+
+end
+
+
 function register_dataset(db::Database, uri::Union{String,Nothing}=nothing ;
     name::String="",
     overwrite::Bool=false,
@@ -391,12 +423,12 @@ function register_dataset(db::Database, uri::Union{String,Nothing}=nothing ;
     entry = init_dataset_entry(; uri=uri, kwargs...)
 
     if (name == "")
-        if endswith(entry.path, ".git")
-            name = strip(entry.path[1:end-4], '/')
+        if is_a_git_repo(entry)
+            name = join(split(strip(entry.path, '/'), '/')[1:2], '/')
         else
             name = strip(entry.key)
-            name = splitext(name)[1]
         end
+        name = splitext(name)[1]
     end
 
     datasets = get_datasets(db)
