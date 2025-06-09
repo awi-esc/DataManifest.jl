@@ -19,6 +19,7 @@ export write
 XDG_CACHE_HOME = get(ENV, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
 DEFAULT_DATASETS_PATH = joinpath(XDG_CACHE_HOME, "Datasets")
 COMPRESSED_FORMATS = ["zip", "tar.gz", "tar"]
+HIDE_STRUCT_FIELDS = [:host, :path, :scheme]
 
 @kwdef mutable struct DatasetEntry
     uri::Union{String,Nothing} = nothing
@@ -46,16 +47,22 @@ function Base.:(==)(a::DatasetEntry, b::DatasetEntry)
     return true
 end
 
-function to_dict(info::DatasetEntry; folder=true)
+function to_dict(info::DatasetEntry)
     output = Dict{String,Union{String,Vector{String}}}()
     for field in fieldnames(typeof(info))
         value = getfield(info, field)
-        if folder && field == :folder
+        if (field in HIDE_STRUCT_FIELDS)
             continue
         end
-        if value !== nothing && value != [] && value != Dict() && value != ""
-            output[String(field)] = value
+        if (value === nothing || value == [] || value == Dict() || value === "")
+            continue
         end
+        if (field == :key)
+            if value == build_dataset_key(info)
+                continue  # Skip the key if it matches the default key
+            end
+        end
+        output[String(field)] = value
     end
     return output
 end
@@ -116,12 +123,17 @@ end
     datasets_path::String = DEFAULT_DATASETS_PATH
 end
 
+function getIndex(db::Database, name::String)
+    return search_dataset(db, name)
+end
+
 function Base.:(==)(db1::Database, db2::Database)
     return db1.datasets == db2.datasets && db1.datasets_path == db2.datasets_path
 end
 
 function to_dict(db::Database; kwargs...)
     return Dict(key => to_dict(entry; kwargs...) for (key, entry) in pairs(db.datasets))
+           Dict("datasets_path" => db.datasets_path)
 end
 
 # This method controls the default string output,
@@ -153,12 +165,12 @@ function Base.show(io::IO, ::MIME"text/plain", db::Database)
     print(io, "  datasets_path=$(repr(db.datasets_path))\n)")
 end
 
-function TOML.print(io::IO, db::Database; folder=false, kwargs...)
-    return TOML.print(io, to_dict(db; folder=folder); kwargs...)
+function TOML.print(io::IO, db::Database; kwargs...)
+    return TOML.print(io, to_dict(db); kwargs...)
 end
 
-function TOML.print(db::Database; folder=false, kwargs...)
-    return TOML.print(to_dict(db; folder=folder); kwargs...)
+function TOML.print(db::Database; kwargs...)
+    return TOML.print(to_dict(db); kwargs...)
 end
 
 function write(db::Database, filepath::String; kwargs...)
@@ -228,14 +240,9 @@ function parse_uri_metadata(uri::String)
 end
 
 """
-Return local path for dataset entry, based on scheme, host, path and version.
+Build key for local path naming of a dataset entry, based on scheme, host, path and version.
 """
-function get_dataset_key(entry::DatasetEntry)
-
-    if entry.key !== ""
-        return entry.key
-    end
-
+function build_dataset_key(entry::DatasetEntry)
     clean_path = entry.path !== nothing ? strip(entry.path, '/') : ""
 
     key = joinpath(entry.host, clean_path)
@@ -245,6 +252,18 @@ function get_dataset_key(entry::DatasetEntry)
     end
 
     return strip(key, '/')
+end
+
+"""
+Return local path for dataset entry, based on scheme, host, path and version.
+"""
+function get_dataset_key(entry::DatasetEntry)
+
+    if entry.key !== ""
+        return entry.key
+    end
+
+    return build_dataset_key(entry)
 end
 
 function get_dataset_path(entry::DatasetEntry, datasets_path::Union{String,Nothing}=nothing)
