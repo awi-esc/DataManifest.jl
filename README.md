@@ -40,8 +40,7 @@ doi = "10.1594/PANGAEA.962852"
 uri = "https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv"
 
 [tierney2020]
-uri = "git@github.com:jesstierney/lgmDA.git"
-ref = "v2.1"
+uri = "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
 
 [CMIP6_lgm_tos]
 uri = "ssh://albedo1.dmawi.de:/albedo/work/projects/p_pool_clim_data/Paleodata/Tierney2020/LGM/recipe_cmip6_lgm_tos_20241114_151009/preproc/lgm/tos_CLIM"
@@ -122,17 +121,18 @@ This is still experimental, but `zip` and `tar` and `tar.gz` archives can (and b
 `DataManifest` currently stores most information via the `uri` field. The URI can refer to an http(s) path, a github repository (https or git@) or an `ssh` address (up to the user to have an up-to-date `.ssh/config` to specify passwords etc).
 Note `ssh` files are passed on to the shell's `rsync` command, git repositories to the shell's `git`, and all other uri schemes are passed to julia's `Downloads.download`. To have platform-independent dataset available on github, it is recommended to indicate a tarball archive so that `Downloads.download` is used instead of git.
 
-e.g. instead of
+e.g. instead of git-mediated
 
-```
+```toml
 [tierney2020]
 uri = "git@github.com:jesstierney/lgmDA.git"
 ref = "v2.1"
 ```
-prefer:
-```
+
+prefer Download.downloads mediated:
+```toml
 [tierney2020]
-uri=https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip
+uri="https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
 ```
 
 ### Low-level declarative syntax
@@ -154,7 +154,7 @@ name = "jonkers2024",
 doi="10.1594/PANGAEA.962852",
 )
 
-register_dataset(db, "git@github.com:jesstierney/lgmDA.git")
+register_dataset(db, "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"; name="jesstierney/lgmDA")
 
 register_dataset(db, "ssh://albedo1.dmawi.de:/albedo/work/projects/p_forclima/preproc_data_esmvaltool/LGM/recipe_cmip6_lgm_tos_20241114_151009/preproc/lgm/tos_CLIM"; name="CMIP6_lgm_tos")
 
