@@ -3,7 +3,7 @@ using DataManifest
 using TOML
 
 function setup_db()
-    db = Database(datasets_path="datasets-test")
+    db = Database(datasets_folder="datasets-test")
     rm("datasets-test"; force=true, recursive=true)
     # pop!(db.datasets, "CMIP6_lgm_tos") # remote the ssh:// entry
     register_dataset(db, "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip";
@@ -51,7 +51,7 @@ end
         @test String(take!(io)) isa String
         write(db, "test.toml")
         @test isfile("test.toml")
-        other = read("test.toml", "datasets-test")
+        other = read("test.toml", "datasets-test"; persist=false)
         @test other == db
     end
 
