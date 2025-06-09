@@ -25,10 +25,10 @@ Pkg.add(url="https://github.com/awi-esc/DataManifest.jl")
 
 ## Usage
 
-### Working from an existing data "manifest" `datasets.toml`:
+### Working from an existing data "manifest" `Datasets.toml`:
 
 
-Here is the most straightforward use. Have a `datasets.toml` file with the following content:
+Here is the most straightforward use. Have a `Datasets.toml` file with the following content:
 
 ```toml
 [herzschuh2023]
@@ -50,10 +50,10 @@ just read via the `DataManifest.Database` class (or alias `DataManifest.read`), 
 
 ```julia
 using DataManifest
-db = Database("datasets.toml") # or Database("datasets.toml", expanduser("~/datasets"))
+db = Database("Datasets.toml") # or Database("Datasets.toml", expanduser("~/datasets"))
 ```
 
-If you're working in a julia's environment with a `Project.toml` properly activated (via `julia --project` or `Pkg.activate(...)`), the default behaviour is to assume a `datasets.toml` exists next to `Project.toml`.
+If you're working in a julia's environment with a `Project.toml` properly activated (via `julia --project` or `Pkg.activate(...)`), the default behaviour is to assume a `Datasets.toml` exists next to `Project.toml`. Note that `datasets.toml` and `DataManifest.toml` are also supported, if they exist.
 
 ### Downloading the data and accessing files
 
@@ -86,9 +86,9 @@ The default folder is `$XDG_CACHE_HOME/Datasets/` or `.cache/Datasets/` if `XDG_
 Any other folder, such as a local folder, can be provided by passing `datasets_folder=` when initializing the `Database`.
 Note the datasets naming scheme is still pretty much "in flux" trying to balance clarity and uniqueness. When `version=0.2.5` parameter is provided, the name on disk will be appended with `...#0.2.5`.
 
-### Maintaining a local `datasets.toml`
+### Maintaining a local `Datasets.toml`
 
-The `Database` instance `db` is tied to a `datasets.toml` definition file by default, provided the `datasets_toml=` is passed as initialization or you work in an active project, unless `persist=false`.
+The `Database` instance `db` is tied to a `Datasets.toml` definition file by default, provided the `datasets_toml=` is passed as initialization or you work in an active project, unless `persist=false`.
 
 ```julia
 db = Database(persist=false)
@@ -106,7 +106,7 @@ Database(
 If db only exist in memory. It can be written explicitly to disk.
 
 ```julia
-write(db, "datasets.toml")
+write(db, "Datasets.toml")
 ```
 
 ### Bundle `add` command

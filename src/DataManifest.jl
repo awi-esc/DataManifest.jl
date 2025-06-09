@@ -609,8 +609,34 @@ function get_default_toml()
         return DEFAULT_DATASETS_TOML_PATH
     end
 
+    for envvar in ["DATAMANIFEST_TOML", "DATASETS_TOML"]
+        if envvar in keys(ENV) && ENV[envvar] != ""
+            env_toml = ENV[envvar]
+            if ! isfile(env_toml)
+                println("Warning: Environment variable $envvar points to a non-existing file: $env_toml.")
+            else
+            return env_toml
+        end
+    end
+
     if Base.current_project() !== nothing && Base.current_project() == Base.active_project()
-        return joinpath(dirname(Base.current_project()), "datasets.toml")
+        root = abspath(dirname(Base.current_project()))
+        currentdefault = joinpath(root, "Datasets.toml")
+        alternatives = [
+            joinpath(root, "DataManifest.toml"),
+            joinpath(root, "datasets.toml")
+        ]
+        if !isfile(currentdefault)
+            for alt in alternatives
+                if isfile(alt)
+                    currentdefault = alt
+                    return alt
+                end
+            end
+            # supports legacy datasets.toml files
+            return legacy
+        end
+        return currentdefault
     else
         println("Warning: the project is not activated. Cannot infer default datasets_toml path. In-memory database will be used.")
         return ""
