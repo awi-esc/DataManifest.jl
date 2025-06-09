@@ -86,15 +86,19 @@ Note the datasets naming scheme is still pretty much "in flux" trying to balance
 
 ### Maintaining a local `datasets.toml`
 
-The `Database` instance `db` can be tied to a `datasets.toml` definition file, if `datasets_toml` is passed as initialization
-and provided `persist=` is true (the default). Otherwise, db only exist in memory. In the latter case (e.g. if `persist=false`), it can be written explicitly to disk.
+The `Database` instance `db` can be tied to a `datasets.toml` definition file, if `datasets_toml` is passed as initialization.
+If the Database is read from a file, but subsequent changes should not be written to the file, you can use `persist=false`
+
+```julia
+db = Database("database.toml"; persist=false)
+```
+This will results in `db.datasets_toml == ""`
+
+Otherwise, db only exist in memory. It can be written explicitly to disk.
 
 ```julia
 write(db, "datasets.toml")
 ```
-
-We are considering automatically writing to a projects' `datasets.toml` file by default when the `add` command is used (see [roadmap](#roadmap)).
-
 
 ### Bundle `add` command
 
@@ -191,8 +195,6 @@ Database(
 ## Roadmap
 
 Before the package is stabilized, the following points must be addressed (implemented or rejected), mainly related to the `DataManifest.add()` function:
-- automatically update an actual data manifest file (instead of currently just reading from it, or writing on demand)?
-- perhaps use Project.toml to store the data when is used, like `Pkg.add`?
 - better handle the archives (.zip), e.g. download a full zenodo archive like `https://zenodo.org/api/records/15230504/files-archive`, from the "Download All" button on [this page](https://zenodo.org/records/15230504) -> must be up to the user to decide to extract (or not extract) a voluminous archive.
 
 ## Why DataManifest.jl ?
