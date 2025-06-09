@@ -119,10 +119,33 @@ function Base.show(io::IO, ::MIME"text/plain", x::DatasetEntry)
     print(io, Base.repr(x))
 end
 
-@kwdef struct Database
-    datasets::Dict{String,<:DatasetEntry} = Dict{String,DatasetEntry}()
-    datasets_toml::String = DEFAULT_DATASETS_TOML_PATH
-    datasets_folder::String = DEFAULT_DATASETS_FOLDER_PATH
+mutable struct Database
+    datasets::Dict{String,<:DatasetEntry}
+    datasets_toml::String
+    datasets_folder::String
+
+    function Database(;datasets_toml::String="", datasets_folder::String="", persist::Bool=true, kwargs...)
+        if datasets_folder == ""
+            datasets_folder = DEFAULT_DATASETS_FOLDER_PATH
+        end
+        if (datasets_toml == "" && persist)
+            datasets_toml = get_default_toml()
+        end
+        db = new(
+            Dict{String,DatasetEntry}(),
+            persist ? datasets_toml : "",
+            datasets_folder
+        )
+        if (isfile(datasets_toml))
+            register_datasets(db, datasets_toml)
+        end
+        return db
+    end
+
+    function Database(datasets_toml::String, datasets_folder::String=""; kwargs...)
+        return Database(; datasets_toml=datasets_toml, datasets_folder=datasets_folder, kwargs...)
+    end
+
 end
 
 function getIndex(db::Database, name::String)
@@ -581,25 +604,23 @@ function register_datasets(db::Database, datasets_toml::String; kwargs...)
     end
 end
 
+function get_default_toml()
+    if isfile(DEFAULT_DATASETS_TOML_PATH)
+        return DEFAULT_DATASETS_TOML_PATH
+    end
 
-"""Reading from file"""
-function Database(datasets_toml::String, datasets_folder::String=""; persist::Bool=true, kwargs...)
-    if datasets_folder == ""
-        datasets_folder = DEFAULT_DATASETS_FOLDER_PATH
+    if Base.current_project() !== nothing && Base.current_project() == Base.active_project()
+        return joinpath(dirname(Base.current_project()), "datasets.toml")
+    else
+        println("Warning: the project is not activated. Cannot infer default datasets_toml path. In-memory database will be used.")
+        return ""
     end
-    db = Database(;
-        datasets_folder=datasets_folder,
-        datasets_toml=persist ? datasets_toml : "",
-        kwargs...)
-    if (isfile(datasets_toml))
-        register_datasets(db, datasets_toml)
-    end
-    return db
 end
 
 
+"""Reading from file (legacy function --> now done by Database constructor)"""
 function read(datasets_toml::String, datasets_folder::String=""; kwargs...)
-    return Database(datasets_toml, datasets_folder; kwargs...)
+    return Database(; datasets_toml=datasets_toml, datasets_folder=datasets_folder, kwargs...)
 end
 
 """

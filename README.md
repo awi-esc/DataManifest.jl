@@ -28,7 +28,7 @@ Pkg.add(url="https://github.com/awi-esc/DataManifest.jl")
 ### Working from an existing data "manifest" `datasets.toml`:
 
 
-Here is the most straightforward use. If a `datasets.toml` file already exists:
+Here is the most straightforward use. Have a `datasets.toml` file with the following content:
 
 ```toml
 [herzschuh2023]
@@ -52,6 +52,8 @@ just read via the `DataManifest.Database` class (or alias `DataManifest.read`), 
 using DataManifest
 db = Database("datasets.toml") # or Database("datasets.toml", expanduser("~/datasets"))
 ```
+
+If you're working in a julia's environment with a `Project.toml` properly activated (via `julia --project` or `Pkg.activate(...)`), the default behaviour is to assume a `datasets.toml` exists next to `Project.toml`.
 
 ### Downloading the data and accessing files
 
@@ -86,15 +88,22 @@ Note the datasets naming scheme is still pretty much "in flux" trying to balance
 
 ### Maintaining a local `datasets.toml`
 
-The `Database` instance `db` can be tied to a `datasets.toml` definition file, if `datasets_toml` is passed as initialization.
-If the Database is read from a file, but subsequent changes should not be written to the file, you can use `persist=false`
+The `Database` instance `db` is tied to a `datasets.toml` definition file by default, provided the `datasets_toml=` is passed as initialization or you work in an active project, unless `persist=false`.
 
 ```julia
-db = Database("database.toml"; persist=false)
+db = Database(persist=false)
 ```
-This will results in `db.datasets_toml == ""`
+will result in:
+```
+Database(
+  datasets=Dict(
+  ),
+  datasets_folder="/home/perrette/.cache/Datasets"
+  datasets_toml="" (in-memory database)
+)
+```
 
-Otherwise, db only exist in memory. It can be written explicitly to disk.
+If db only exist in memory. It can be written explicitly to disk.
 
 ```julia
 write(db, "datasets.toml")
