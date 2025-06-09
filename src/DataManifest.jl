@@ -58,6 +58,11 @@ function to_dict(info::DatasetEntry)
         if (value === nothing || value == [] || value == Dict() || value === "")
             continue
         end
+        if (field == :key)
+            if value == build_dataset_key(info)
+                continue  # Skip the key if it matches the default key
+            end
+        end
         output[String(field)] = value
     end
     return output
