@@ -133,7 +133,7 @@ mutable struct Database
         end
         db = new(
             Dict{String,DatasetEntry}(),
-            persist ? abspath(datasets_toml) : "",
+            persist && datasets_toml != "" ? abspath(datasets_toml) : "",
             datasets_folder
         )
         if (isfile(datasets_toml))
