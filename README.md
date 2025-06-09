@@ -53,6 +53,19 @@ using DataManifest
 db = Database("Datasets.toml") # or Database("Datasets.toml", expanduser("~/datasets"))
 ```
 
+```
+Database(
+  datasets=Dict(
+    CMIP6_lgm_tos => DatasetEntry(uri="ssh:/albedo1.dmawi.de:/albedo/work/projects...),
+    herzschuh2023 => DatasetEntry(uri="https:/doi.pangaea.de/10.1594...),
+    jonkers2024 => DatasetEntry(uri="https:/download.pangaea.de/dataset/962852/files...),
+    tierney2020 => DatasetEntry(uri="https:/github.com/jesstierney/lgmDA/archive/refs...),
+  ),
+  datasets_folder="/home/perrette/.cache/Datasets"
+  datasets_toml="/abs/path/to/Datasets.toml"
+)
+```
+
 If you're working in a julia's environment with a `Project.toml` properly activated (via `julia --project` or `Pkg.activate(...)`), the default behaviour is to assume a `Datasets.toml` exists next to `Project.toml`. Note that `datasets.toml` and `DataManifest.toml` are also supported, if they exist.
 
 ### Downloading the data and accessing files
@@ -152,7 +165,7 @@ Examples of the declarative syntax.
 ```julia
 using DataManifest
 
-db = Database(datasets_folder="datasets") # the default is ~/.cache/DataManifest
+db = Database(datasets_folder="datasets", persist=false) # the default is ~/.cache/Datasets
 
 register_dataset(db, "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip";
   name="herzschuh2023",
@@ -178,6 +191,7 @@ Database:
 - jonkers2024 => download.pangaea.de/dataset/962852/files/LGM_foram...
 - jesstierney/lgmDA => github.com/jesstierney/lgmDA.git
 datasets_folder: datasets
+datasets_toml="" (in-memory database)
 ```
 
 The newer `DataManifest.add` command combines `register_dataset` and `download_dataset`.
@@ -198,12 +212,12 @@ Database(
     jesstierney/lgmDA => DatasetEntry(uri="git@github.com:jesstierney/lgmDA.git"...),
   ),
   datasets_folder="datasets"
+  datasets_toml="" (in-memory database)
 )
 ```
 
 ## Roadmap
 
-Before the package is stabilized, the following points must be addressed (implemented or rejected), mainly related to the `DataManifest.add()` function:
 - better handle the archives (.zip), e.g. download a full zenodo archive like `https://zenodo.org/api/records/15230504/files-archive`, from the "Download All" button on [this page](https://zenodo.org/records/15230504) -> must be up to the user to decide to extract (or not extract) a voluminous archive.
 
 ## Why DataManifest.jl ?

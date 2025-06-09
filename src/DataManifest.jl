@@ -133,7 +133,7 @@ mutable struct Database
         end
         db = new(
             Dict{String,DatasetEntry}(),
-            persist ? datasets_toml : "",
+            persist ? abspath(datasets_toml) : "",
             datasets_folder
         )
         if (isfile(datasets_toml))
@@ -614,7 +614,7 @@ function get_default_toml()
             env_toml = ENV[envvar]
             if ! isfile(env_toml)
                 println("Warning: Environment variable $envvar points to a non-existing file: $env_toml.")
-            else
+            end
             return env_toml
         end
     end
