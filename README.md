@@ -81,8 +81,20 @@ rm /home/perrette/.cache/Datasets/LGM_foraminifera_assemblages_20240110.csv
 ### Data naming on disk
 
 The default folder is `$XDG_CACHE_HOME/Datasets/` or `.cache/Datasets/` if `XDG_CACHE_HOME` environment variable is not defined (see [XDG specifications](https://specifications.freedesktop.org/basedir-spec/latest/)).
-Any other folder, such as a local folder, can be provided by passing `datasets_path=` when initializing the `Database`.
-Note the datasets naming scheme is still pretty much "in flux" trying to balance clarity and uniqueness. When a DOI is provided, it will be used in place of the remote address to build the path. When `version=0.2.5` parameter is provided, the name on disk will be appended with `...#0.2.5`.
+Any other folder, such as a local folder, can be provided by passing `datasets_folder=` when initializing the `Database`.
+Note the datasets naming scheme is still pretty much "in flux" trying to balance clarity and uniqueness. When `version=0.2.5` parameter is provided, the name on disk will be appended with `...#0.2.5`.
+
+### Maintaining a local `datasets.toml`
+
+The `Database` instance `db` can be tied to a `datasets.toml` definition file, if `datasets_toml` is passed as initialization
+and provided `persist=` is true (the default). Otherwise, db only exist in memory. In the latter case (e.g. if `persist=false`), it can be written explicitly to disk.
+
+```julia
+write(db, "datasets.toml")
+```
+
+We are considering automatically writing to a projects' `datasets.toml` file by default when the `add` command is used (see [roadmap](#roadmap)).
+
 
 ### Bundle `add` command
 
@@ -95,19 +107,6 @@ DataManifest.add(db, "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip";
 
 This command updates the in-memory database `db`, add the `herzschuh2023` item,
 and download its content to the default folder.
-
-
-### Maintaining a local `datasets.toml`
-
-At the moment the `Database` instance `db` exists only in memory, and it is up to the user to
-write it to disk.
-
-```julia
-write(db, "datasets.toml")
-```
-
-We are considering automatically writing to a projects' `datasets.toml` file by default when the `add` command is used (see [roadmap](#roadmap)).
-
 
 ### Archives
 
@@ -140,7 +139,7 @@ Examples of the declarative syntax.
 ```julia
 using DataManifest
 
-db = Database(datasets_path="datasets") # the default is ~/.cache/DataManifest
+db = Database(datasets_folder="datasets") # the default is ~/.cache/DataManifest
 
 register_dataset(db, "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip";
   name="herzschuh2023",
@@ -165,7 +164,7 @@ Database:
 - herzschuh2023 => doi.pangaea.de/10.1594/PANGAEA.930512
 - jonkers2024 => download.pangaea.de/dataset/962852/files/LGM_foram...
 - jesstierney/lgmDA => github.com/jesstierney/lgmDA.git
-datasets_path: datasets
+datasets_folder: datasets
 ```
 
 The newer `DataManifest.add` command combines `register_dataset` and `download_dataset`.
@@ -185,7 +184,7 @@ Database(
     jonkers2024 => DatasetEntry(uri="https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv", doi="10.1594/PANGAEA.962852"...),
     jesstierney/lgmDA => DatasetEntry(uri="git@github.com:jesstierney/lgmDA.git"...),
   ),
-  datasets_path="datasets"
+  datasets_folder="datasets"
 )
 ```
 

@@ -11,13 +11,14 @@ export Database, DatasetEntry
 export register_dataset, register_datasets
 export search_datasets, search_dataset
 export download_dataset, download_datasets
-export set_datasets_path, set_datasets, get_datasets_path, get_datasets
+export set_datasets_folder, set_datasets, get_datasets_folder, get_datasets
 export repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_keys
 export repr_short, string_short
 export write
 
 XDG_CACHE_HOME = get(ENV, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
-DEFAULT_DATASETS_PATH = joinpath(XDG_CACHE_HOME, "Datasets")
+DEFAULT_DATASETS_FOLDER_PATH = joinpath(XDG_CACHE_HOME, "Datasets")
+DEFAULT_DATASETS_TOML_PATH = ""
 COMPRESSED_FORMATS = ["zip", "tar.gz", "tar"]
 HIDE_STRUCT_FIELDS = [:host, :path, :scheme]
 
@@ -115,7 +116,9 @@ end
 
 @kwdef struct Database
     datasets::Dict{String,<:DatasetEntry} = Dict{String,DatasetEntry}()
-    datasets_path::String = DEFAULT_DATASETS_PATH
+    datasets_toml::String = DEFAULT_DATASETS_TOML_PATH
+    datasets_folder::String = DEFAULT_DATASETS_FOLDER_PATH
+    persist::Bool = true  # Whether to persist the database to disk when registering datasets (default: true)
 end
 
 function getIndex(db::Database, name::String)
@@ -123,12 +126,12 @@ function getIndex(db::Database, name::String)
 end
 
 function Base.:(==)(db1::Database, db2::Database)
-    return db1.datasets == db2.datasets && db1.datasets_path == db2.datasets_path
+    return db1.datasets == db2.datasets && db1.datasets_folder == db2.datasets_folder && db1.datasets_toml == db2.datasets_toml && db1.datasets_persist == db2.datasets_persist
 end
 
 function to_dict(db::Database; kwargs...)
     return Dict(key => to_dict(entry; kwargs...) for (key, entry) in pairs(db.datasets))
-           Dict("datasets_path" => db.datasets_path)
+           Dict("datasets_folder" => db.datasets_folder)
 end
 
 # This method controls the default string output,
@@ -145,7 +148,12 @@ function Base.show(io::IO, db::Database)
         s = trimstring(s, 80; path=false)
         print(io, s*"\n")
     end
-    print(io, "datasets_path: $(db.datasets_path)")
+    print(io, "datasets_folder: $(db.datasets_folder)\n")
+    if db.datasets_toml != "" && db.persist
+        print(io, "datasets_toml: $(db.datasets_toml)")
+    else
+        print(io, "datasets_toml: $(repr(db.datasets_toml)) (in-memory database)")
+    end
 end
 
 # This method controls the representation used by repr(x)
@@ -157,7 +165,12 @@ function Base.show(io::IO, ::MIME"text/plain", db::Database)
         print(io, "    $k => ", repr_short(v), ",\n")
     end
     print(io, "  ),\n")
-    print(io, "  datasets_path=$(repr(db.datasets_path))\n)")
+    print(io, "  datasets_folder=$(repr(db.datasets_folder))\n")
+    if db.datasets_toml != "" && db.persist
+        print(io, "  datasets_toml=$(repr(db.datasets_toml))\n)")
+    else
+        print(io, "  datasets_toml=\"\" (in-memory database)\n)")
+    end
 end
 
 function TOML.print(io::IO, db::Database; kwargs...)
@@ -168,27 +181,34 @@ function TOML.print(db::Database; kwargs...)
     return TOML.print(to_dict(db); kwargs...)
 end
 
-function write(db::Database, filepath::String; kwargs...)
-    open(filepath, "w") do io
+function write(db::Database, datasets_toml::String; kwargs...)
+    open(datasets_toml, "w") do io
         TOML.print(io, db; kwargs...)
     end
 end
 
 """Accessor functions for back-compatibility
 """
-function set_datasets_path(db::Database, path::String)
-    db.datasets_path = path
+function set_datasets_folder(db::Database, path::String)
+    db.datasets_folder = path
 end
 
 function set_datasets(db::Database, datasets::Dict{String,<:DatasetEntry})
     db.datasets = datasets
 end
 
-function get_datasets_path(db::Database, datasets_path::Union{String,Nothing}=nothing)
-    if datasets_path !== nothing
-        return datasets_path
+function get_datasets_folder(db::Database, datasets_folder::Union{String,Nothing}=nothing)
+    if datasets_folder !== nothing
+        return datasets_folder
     end
-    return db.datasets_path
+    return db.datasets_folder
+end
+
+function get_datasets_toml(db::Database, datasets_toml::Union{String,Nothing}=nothing)
+    if datasets_toml !== nothing
+        return datasets_toml
+    end
+    return db.datasets_toml
 end
 
 function get_datasets(db::Database)
@@ -261,21 +281,21 @@ function get_dataset_key(entry::DatasetEntry)
     return build_dataset_key(entry)
 end
 
-function get_dataset_path(entry::DatasetEntry, datasets_path::Union{String,Nothing}=nothing)
+function get_dataset_path(entry::DatasetEntry, datasets_folder::Union{String,Nothing}=nothing)
     return joinpath(
-        # datasets_path !== nothing ? datasets_path : DEFAULT_DATASETS_PATH,
-        something(datasets_path, DEFAULT_DATASETS_PATH),
+        # datasets_folder !== nothing ? datasets_folder : DEFAULT_DATASETS_FOLDER_PATH,
+        something(datasets_folder, DEFAULT_DATASETS_FOLDER_PATH),
         entry.key,
     )
 end
 
 function get_dataset_path(db::Database, name::String; kwargs...)
     dataset = search_dataset(db, name; kwargs...)
-    return get_dataset_path(dataset, db.datasets_path)
+    return get_dataset_path(dataset, db.datasets_folder)
 end
 
 function get_dataset_path(db::Database, entry::DatasetEntry; kwargs...)
-    return get_dataset_path(entry, db.datasets_path)
+    return get_dataset_path(entry, db.datasets_folder)
 end
 
 """
@@ -337,6 +357,7 @@ end
 function register_dataset(db::Database, uri::Union{String,Nothing}=nothing ;
     name::String="",
     overwrite::Bool=false,
+    persist::Union{Nothing,Bool}=nothing,
     kwargs...
     )
 
@@ -356,6 +377,16 @@ function register_dataset(db::Database, uri::Union{String,Nothing}=nothing ;
         error("Dataset $name already exists. Set overwrite=true to overwrite.")
     end
     datasets[name] = entry
+
+    if persist === nothing
+        persist = db.persist
+    end
+
+    if persist && db.datasets_toml != ""
+        # If the database is set to persist, write it to disk
+        write(db, db.datasets_toml)
+    end
+
     return (name => entry)
 end
 
@@ -453,9 +484,10 @@ end
 "Fetch dataset"
 function download_dataset(db::Database, dataset::DatasetEntry; extract=true)
 
-    local_path = get_dataset_path(dataset, db.datasets_path)
+    local_path = get_dataset_path(dataset, db.datasets_folder)
 
     if isfile(local_path) || isdir(local_path)
+        println("Dataset already exists at: $local_path")
         return local_path
     end
 
@@ -527,22 +559,23 @@ function download_datasets(db::Database, names=nothing; kwargs...)
 end
 
 function register_datasets(db::Database, datasets::Dict; kwargs...)
-    for (name, info_) in pairs(datasets)
+    for (i, (name, info_)) in enumerate(pairs(datasets))
         info = Dict(Symbol(k) => v for (k, v) in info_)
-        register_dataset(db; name=name, info..., kwargs...)
+        persist_on_last_iteration = db.persist && (i == length(datasets))
+        register_dataset(db; name=name, persist=persist_on_last_iteration, info..., kwargs...)
     end
 end
 
-function register_datasets_toml(db::Database, filepath; kwargs...)
-    config = TOML.parsefile(filepath)
+function register_datasets_toml(db::Database, datasets_toml ; kwargs...)
+    config = TOML.parsefile(datasets_toml)
     register_datasets(db, config; kwargs...)
 end
 
 
-function register_datasets(db::Database, filepath::String; kwargs...)
-    ext = splitext(filepath)[2]
+function register_datasets(db::Database, datasets_toml::String; kwargs...)
+    ext = splitext(datasets_toml)[2]
     if ext == ".toml"
-        register_datasets_toml(db, filepath; kwargs...)
+        register_datasets_toml(db, datasets_toml; kwargs...)
     else
         error("Only toml file type supported. Got: $ext")
     end
@@ -550,27 +583,35 @@ end
 
 
 """Reading from file"""
-function Database(filepath::String, datasets_path::Union{String,Nothing}=nothing)
-    if datasets_path === nothing || datasets_path == ""
-        datasets_path = DEFAULT_DATASETS_PATH
+function Database(datasets_toml::String, datasets_folder::String=""; persist::Bool=true, kwargs...)
+    if datasets_folder == ""
+        datasets_folder = DEFAULT_DATASETS_FOLDER_PATH
     end
-    db = Database(datasets_path=datasets_path)
-    register_datasets(db, filepath)
+    db = Database(;
+        datasets_folder=datasets_folder,
+        datasets_toml=persist ? datasets_toml : "",
+        persist=persist,
+        kwargs...)
+    if (isfile(datasets_toml))
+        register_datasets(db, datasets_toml)
+    end
     return db
 end
 
 
-function read(filepath::String, datasets_path::Union{String,Nothing}=nothing; kwargs...)
-    return Database(filepath, datasets_path; kwargs...)
+function read(datasets_toml::String, datasets_folder::String=""; kwargs...)
+    return Database(datasets_toml, datasets_folder; kwargs...)
 end
 
 """
 Add a dataset to the database, downloading it if necessary.
 If `name` is not provided, it will be inferred from the uri or dataset entries
 """
-function add(db::Database, uri::Union{String,Nothing}=nothing ; kwargs...)
+function add(db::Database, uri::Union{String,Nothing}=nothing ; download=true, kwargs...)
     (name, entry) = register_dataset(db, uri; kwargs...)
-    download_dataset(db, entry)
+    if download
+        download_dataset(db, entry)
+    end
     return (name => entry)
 end
 
