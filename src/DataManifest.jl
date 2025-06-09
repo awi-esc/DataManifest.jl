@@ -323,6 +323,12 @@ function get_dataset_path(db::Database, entry::DatasetEntry; kwargs...)
     return get_dataset_path(entry, db.datasets_folder)
 end
 
+function get_dataset_path(name::String; kwargs...)
+    db = Database()
+    return get_dataset_path(db, name; kwargs...)
+end
+
+
 """
 Build a URI string from the metadata fields.
 """
@@ -613,6 +619,32 @@ function download_datasets(db::Database, names=nothing; kwargs...)
     end
 end
 
+function get_default_database()
+    db = Database()
+    if db.datasets_toml != ""
+        println("Info: using database: $(string(db))")
+    else
+        println("Warning: using in-memory database. No datasets will be persisted.")
+    end
+    return db
+end
+
+function download_dataset(name::String; kwargs...)
+    db = get_default_database()
+    return download_dataset(db, name; kwargs...)
+end
+
+function download_datasets(names=nothing; kwargs...)
+    db = get_default_database()
+    return download_datasets(db, names; kwargs...)
+end
+
+function register_dataset(uri=String; kwargs...)
+    db = get_default_database()
+    return register_dataset(db, uri; kwargs...)
+end
+
+
 function register_datasets(db::Database, datasets::Dict; kwargs...)
     for (i, (name, info_)) in enumerate(pairs(datasets))
         info = Dict(Symbol(k) => v for (k, v) in info_)
@@ -691,6 +723,12 @@ function add(db::Database, uri::Union{String,Nothing}=nothing ; download=true, k
         download_dataset(db, entry)
     end
     return (name => entry)
+end
+
+
+function add(uri::Union{String,Nothing}=nothing; kwargs...)
+    db = get_default_database()
+    return add(db, uri; kwargs...)
 end
 
 
