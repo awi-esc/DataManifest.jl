@@ -1,3 +1,5 @@
+[![CI](https://github.com/awi-esc/DataManifest.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/awi-esc/DataManifest.jl/actions/workflows/ci.yml)
+
 # DataManifest.jl
 
 Keep track of datasets used in a project.

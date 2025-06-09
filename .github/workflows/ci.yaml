@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v1
+        with:
+          version: '1.11'
+
+      - name: Install dependencies
+        run: julia --project --threads auto -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Run tests
+        run: julia --project --threads auto -e 'using Pkg; Pkg.test()'
