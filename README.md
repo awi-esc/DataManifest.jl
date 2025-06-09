@@ -1,4 +1,4 @@
-[![CI](https://github.com/awi-esc/DataManifest.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/awi-esc/DataManifest.jl/actions/workflows/ci.yml)
+[![CI](https://github.com/awi-esc/DataManifest.jl/actions/workflows/ci.yaml/badge.svg)](https://github.com/awi-esc/DataManifest.jl/actions/workflows/ci.yaml)
 
 # DataManifest.jl
 
