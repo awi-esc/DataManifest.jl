@@ -118,7 +118,6 @@ end
     datasets::Dict{String,<:DatasetEntry} = Dict{String,DatasetEntry}()
     datasets_toml::String = DEFAULT_DATASETS_TOML_PATH
     datasets_folder::String = DEFAULT_DATASETS_FOLDER_PATH
-    persist::Bool = true  # Whether to persist the database to disk when registering datasets (default: true)
 end
 
 function getIndex(db::Database, name::String)
@@ -126,7 +125,7 @@ function getIndex(db::Database, name::String)
 end
 
 function Base.:(==)(db1::Database, db2::Database)
-    return db1.datasets == db2.datasets && db1.datasets_folder == db2.datasets_folder && db1.datasets_toml == db2.datasets_toml && db1.datasets_persist == db2.datasets_persist
+    return db1.datasets == db2.datasets && db1.datasets_folder == db2.datasets_folder && db1.datasets_toml == db2.datasets_toml
 end
 
 function to_dict(db::Database; kwargs...)
@@ -149,7 +148,7 @@ function Base.show(io::IO, db::Database)
         print(io, s*"\n")
     end
     print(io, "datasets_folder: $(db.datasets_folder)\n")
-    if db.datasets_toml != "" && db.persist
+    if db.datasets_toml != ""
         print(io, "datasets_toml: $(db.datasets_toml)")
     else
         print(io, "datasets_toml: $(repr(db.datasets_toml)) (in-memory database)")
@@ -166,7 +165,7 @@ function Base.show(io::IO, ::MIME"text/plain", db::Database)
     end
     print(io, "  ),\n")
     print(io, "  datasets_folder=$(repr(db.datasets_folder))\n")
-    if db.datasets_toml != "" && db.persist
+    if db.datasets_toml != ""
         print(io, "  datasets_toml=$(repr(db.datasets_toml))\n)")
     else
         print(io, "  datasets_toml=\"\" (in-memory database)\n)")
@@ -357,7 +356,7 @@ end
 function register_dataset(db::Database, uri::Union{String,Nothing}=nothing ;
     name::String="",
     overwrite::Bool=false,
-    persist::Union{Nothing,Bool}=nothing,
+    persist::Bool=true,
     kwargs...
     )
 
@@ -377,10 +376,6 @@ function register_dataset(db::Database, uri::Union{String,Nothing}=nothing ;
         error("Dataset $name already exists. Set overwrite=true to overwrite.")
     end
     datasets[name] = entry
-
-    if persist === nothing
-        persist = db.persist
-    end
 
     if persist && db.datasets_toml != ""
         # If the database is set to persist, write it to disk
@@ -561,7 +556,7 @@ end
 function register_datasets(db::Database, datasets::Dict; kwargs...)
     for (i, (name, info_)) in enumerate(pairs(datasets))
         info = Dict(Symbol(k) => v for (k, v) in info_)
-        persist_on_last_iteration = db.persist && (i == length(datasets))
+        persist_on_last_iteration = i == length(datasets)
         register_dataset(db; name=name, persist=persist_on_last_iteration, info..., kwargs...)
     end
 end
@@ -590,7 +585,6 @@ function Database(datasets_toml::String, datasets_folder::String=""; persist::Bo
     db = Database(;
         datasets_folder=datasets_folder,
         datasets_toml=persist ? datasets_toml : "",
-        persist=persist,
         kwargs...)
     if (isfile(datasets_toml))
         register_datasets(db, datasets_toml)
