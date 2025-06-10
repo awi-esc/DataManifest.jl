@@ -157,7 +157,7 @@ e.g. instead of git-mediated
 ```toml
 [tierney2020]
 uri = "git@github.com:jesstierney/lgmDA.git"
-ref = "v2.1"
+version = "v2.1"
 ```
 
 prefer Download.downloads mediated:
