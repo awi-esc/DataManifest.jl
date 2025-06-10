@@ -622,9 +622,9 @@ end
 function get_default_database()
     db = Database()
     if db.datasets_toml != ""
-        println("Info: using database: $(string(db))")
+        println("""Using database: $(length(db.datasets_toml) > 60 ? "..." : "")$(db.datasets_toml[end-60:end])""")
     else
-        println("Warning: using in-memory database. No datasets will be persisted.")
+        error("Please activate a julia environment or pass a Database instance explicity.")
     end
     return db
 end
