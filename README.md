@@ -124,6 +124,12 @@ When the database exists only in memory, it can nonetheless be written explicitl
 write(db, "Datasets.toml")
 ```
 
+### Checksum
+
+By default, the sha-256 checksum is computed upon download, unless `Database.skip_checksum === false` or `DatasetEntry.skip_checksum === false`. If the checksum turns out to be
+different from the datasets's definition file, an error is raised.
+
+
 ### Bundle `add` command
 
 ```julia
