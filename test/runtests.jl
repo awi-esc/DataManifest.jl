@@ -57,8 +57,8 @@ end
 
     @testset "Download (optional, may skip if offline)" begin
         try
-            folder = download_dataset(db, "jonkers2024")
-            @test isdir(folder)
+            local_path = download_dataset(db, "jonkers2024")
+            @test isfile(local_path)
         catch e
             @info "Skipping download_dataset test (offline or error): $e"
         end
