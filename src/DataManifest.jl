@@ -2,6 +2,8 @@ module DataManifest
 
 using TOML
 using URIParser
+using Logging
+
 import Downloads
 import Base: write, read
 
@@ -15,6 +17,10 @@ export set_datasets_folder, set_datasets, get_datasets_folder, get_datasets
 export repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_keys
 export repr_short, string_short
 export write
+
+function __init__()
+    global_logger(ConsoleLogger(Info; show_limited=true, right_justify=0))
+end
 
 XDG_CACHE_HOME = get(ENV, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
 DEFAULT_DATASETS_FOLDER_PATH = joinpath(XDG_CACHE_HOME, "Datasets")
@@ -439,7 +445,7 @@ function update_entry(db::Database, oldname::String, oldentry::DatasetEntry, new
     end
 
     if (oldentry == newentry && oldname == newname)
-        @info("Dataset entry already exists.")
+        @info("Dataset entry [$newname] already exists.")
         return (oldname => oldentry)
     end
 
