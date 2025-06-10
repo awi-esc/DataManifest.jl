@@ -3,7 +3,7 @@ module DataManifest
 using TOML
 using URIParser
 using Logging
-
+using SHA
 import Downloads
 import Base: write, read
 
@@ -43,6 +43,61 @@ function warn(msg::String)
     end
 end
 
+function sha256_file(file_path)
+    # Open the file in binary read mode
+    open(file_path, "r") do file
+        # Initialize a SHA-256 context
+        ctx = SHA256_CTX()
+
+        # Read the file in chunks and update the hash context
+        buffer = Vector{UInt8}(undef, 1024) # Create a buffer to read chunks of the file
+        while !eof(file)
+            bytes_read = readbytes!(file, buffer)
+            update!(ctx, buffer[1:bytes_read])
+        end
+
+        # Finalize the hash and convert to hexadecimal
+        file_hash = bytes2hex(digest!(ctx))
+        return file_hash
+    end
+end
+
+
+function sha256_folder(folder_path)
+    # Initialize a SHA-256 context
+    ctx = SHA256_CTX()
+
+    # Walk through the directory
+    for (root, dirs, files) in walkdir(folder_path)
+        for file in files
+            file_path = joinpath(root, file)
+
+            # Open the file and read it in binary mode
+            open(file_path, "r") do f
+                # Update the hash context with the file contents
+                while !eof(f)
+                    data = read(f, 1024) # Read in chunks of 1024 bytes
+                    update!(ctx, data)
+                end
+            end
+        end
+    end
+
+    # Finalize the hash
+    folder_hash = bytes2hex(digest!(ctx))
+    return folder_hash
+end
+
+function sha256_path(path::String)
+    if isfile(path)
+        return sha256_file(path)
+    elseif isdir(path)
+        return sha256_folder(path)
+    else
+        error("Path does not exist: $path")
+    end
+end
+
 XDG_CACHE_HOME = get(ENV, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
 DEFAULT_DATASETS_FOLDER_PATH = joinpath(XDG_CACHE_HOME, "Datasets")
 DEFAULT_DATASETS_TOML_PATH = ""
@@ -59,7 +114,8 @@ HIDE_STRUCT_FIELDS = [:host, :path, :scheme]
     doi::Union{String,Nothing} = nothing
     aliases::Vector{String} = Vector{String}()
     key::String = "" # Unique key for the dataset, usually the doi or a unique name
-
+    sha256::String = ""
+    skip_checksum::Bool = false  # Whether to skip SHA-256 checksum checks for this dataset
 end
 
 
@@ -68,6 +124,9 @@ function Base.:(==)(a::DatasetEntry, b::DatasetEntry)
         return false
     end
     for field in fieldnames(typeof(a))
+        if (field in [:sha256, :skip_checksum])
+            continue  # Skip sha256 field for equality check
+        end
         if getfield(a, field) != getfield(b, field)
             return false
         end
@@ -76,13 +135,13 @@ function Base.:(==)(a::DatasetEntry, b::DatasetEntry)
 end
 
 function to_dict(entry::DatasetEntry)
-    output = Dict{String,Union{String,Vector{String}}}()
+    output = Dict{String,Union{String,Vector{String},Bool}}()
     for field in fieldnames(typeof(entry))
         value = getfield(entry, field)
         if (field in HIDE_STRUCT_FIELDS)
             continue
         end
-        if (value === nothing || value == [] || value == Dict() || value === "")
+        if (value === nothing || value == [] || value == Dict() || value === "" || value == false)
             continue
         end
         if (field == :key)
@@ -150,8 +209,12 @@ mutable struct Database
     datasets::Dict{String,<:DatasetEntry}
     datasets_toml::String
     datasets_folder::String
+    skip_checksum::Bool  # Whether to check SHA-256 checksums for datasets
+    skip_checksum_folders::Bool # Whether to skip SHA-256 checksums for folders
 
-    function Database(;datasets_toml::String="", datasets_folder::String="", persist::Bool=true, kwargs...)
+    function Database(;datasets_toml::String="", datasets_folder::String="",
+        persist::Bool=true, skip_checksum::Bool=true, skip_checksum_folders::Bool=false,
+        datasets::Dict{String,<:DatasetEntry}=Dict{String,DatasetEntry}(), kwargs...)
         if datasets_folder == ""
             datasets_folder = DEFAULT_DATASETS_FOLDER_PATH
         end
@@ -159,13 +222,16 @@ mutable struct Database
             datasets_toml = get_default_toml()
         end
         db = new(
-            Dict{String,DatasetEntry}(),
+            datasets,
             persist && datasets_toml != "" ? abspath(datasets_toml) : "",
-            datasets_folder
+            datasets_folder,
+            skip_checksum,
+            skip_checksum_folders,
         )
         if (isfile(datasets_toml))
-            register_datasets(db, datasets_toml)
+            register_datasets(db, datasets_toml; kwargs...)
         end
+
         return db
     end
 
@@ -234,8 +300,16 @@ function TOML.print(db::Database; kwargs...)
 end
 
 function write(db::Database, datasets_toml::String; kwargs...)
+
+    # ensure any error in TOML conversion won't leave an empty file
+    toml_string = sprint(TOML.print, db; kwargs...)
+
+    if (toml_string === nothing)
+        error("Failed to convert Database to TOML string.")
+    end
+
     open(datasets_toml, "w") do io
-        TOML.print(io, db; kwargs...)
+        write(io, toml_string)
     end
 end
 
@@ -654,6 +728,42 @@ function search_dataset(db::Database, name::String; raise=true, kwargs...)
     return results[1]
 end
 
+function verify_checksum(db:: Database, dataset::DatasetEntry)
+
+    local_path = get_dataset_path(db, dataset)
+
+    if db.skip_checksum || dataset.skip_checksum
+        return true  # No SHA-256 checksum provided, skip check
+    end
+
+    if (!isfile(local_path) && !isdir(local_path))
+        return true  # File or directory does not exist, skip check
+    end
+
+    if (isdir(local_path) && db.skip_checksum_folders)
+        return true  # Skip SHA-256 check for folders if configured
+    end
+
+    checksum = sha256_path(local_path)
+
+    if dataset.sha256 == ""
+        dataset.sha256 = checksum
+        _maybe_persist_database(db)  # Persist the updated dataset entry
+        return true  # No SHA-256 checksum provided, simply update
+    end
+
+    if dataset.sha256 != checksum
+        message = "Checksum mismatch for dataset at $local_path. Expected: $(dataset.sha256), got: $checksum. Possible resolutions:"
+        message *= "\n- remove the file"
+        message *= "\n- reset the `sha256` field"
+        message *= "\n- use a different `key`"
+        message *= "\n- remove Entry checksum checks (`dataset.skip_checksum = true`)"
+        message *= "\n- remove Database checksum checks (`db.skip_checksum = true`)"
+        error(message)
+    end
+
+end
+
 "Fetch dataset"
 function download_dataset(db::Database, dataset::DatasetEntry; extract=true)
 
@@ -661,6 +771,7 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract=true)
 
     if isfile(local_path) || isdir(local_path)
         info("Dataset already exists at: $local_path")
+        verify_checksum(db, dataset)
         return local_path
     end
 
@@ -700,6 +811,8 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract=true)
     else
         Downloads.download(dataset.uri, local_path)
     end
+
+    verify_checksum(db, dataset)
 
     if (extract && any(endswith(local_path, ext) for ext in COMPRESSED_FORMATS))
         extract_file(local_path)
