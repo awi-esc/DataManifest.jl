@@ -10,7 +10,8 @@ function setup_db()
         name="herzschuh2023", doi="10.1594/PANGAEA.930512")
     register_dataset(db, "https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv";
         name="jonkers2024", doi="10.1594/PANGAEA.962852")
-    register_dataset(db, "https://github.com/jesstierney/lgmDA.git")
+    # register_dataset(db, "https://github.com/jesstierney/lgmDA.git")
+    register_dataset(db, "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip")
     reporoot = abspath(joinpath(@__DIR__, ".."))
     register_dataset(db, "file://$(reporoot)/test-data/data_file.txt"; name="CMIP6_lgm_tos")
     return db
@@ -62,6 +63,7 @@ end
         catch e
             @info "Skipping download_dataset test (offline or error): $e"
         end
+        delete!(db.datasets, "jesstierney/lgmDA")  # large dataset: skip download
         try
             download_datasets(db)
             @test true
