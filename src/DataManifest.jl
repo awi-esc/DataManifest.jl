@@ -105,13 +105,13 @@ COMPRESSED_FORMATS = ["zip", "tar.gz", "tar"]
 HIDE_STRUCT_FIELDS = [:host, :path, :scheme]
 
 @kwdef mutable struct DatasetEntry
-    uri::Union{String,Nothing} = nothing
-    host::Union{String,Nothing} = nothing
-    path::Union{String,Nothing} = nothing
-    scheme::Union{String,Nothing} = nothing
-    version::Union{String,Nothing} = nothing
-    branch::Union{String,Nothing} = nothing # for git repositories
-    doi::Union{String,Nothing} = nothing
+    uri::String = ""
+    host::String = ""
+    path::String = ""
+    scheme::String = ""
+    version::String = ""
+    branch::String = "" # for git repositories
+    doi::String = ""
     aliases::Vector{String} = Vector{String}()
     key::String = "" # Unique key for the dataset, usually the doi or a unique name
     sha256::String = ""
@@ -323,15 +323,15 @@ function set_datasets(db::Database, datasets::Dict{String,<:DatasetEntry})
     db.datasets = datasets
 end
 
-function get_datasets_folder(db::Database, datasets_folder::Union{String,Nothing}=nothing)
-    if datasets_folder !== nothing
+function get_datasets_folder(db::Database, datasets_folder::String="")
+    if datasets_folder != ""
         return datasets_folder
     end
     return db.datasets_folder
 end
 
-function get_datasets_toml(db::Database, datasets_toml::Union{String,Nothing}=nothing)
-    if datasets_toml !== nothing
+function get_datasets_toml(db::Database, datasets_toml::String="")
+    if datasets_toml !== ""
         return datasets_toml
     end
     return db.datasets_toml
@@ -367,15 +367,15 @@ function parse_uri_metadata(uri::String)
         end
     end
 
-    version = get(query, "version", nothing)
-    ref = get(query, "ref", nothing)
+    version = get(query, "version", "")
+    ref = get(query, "ref", "")
 
     return (
         uri=uri,
         scheme=scheme,
         host=host,
         path=path,
-        version=fragment !== "" ? fragment : (version !==nothing ? version : ref),
+        version=fragment !== "" ? fragment : (version !=="" ? version : ref),
     )
 
 end
@@ -384,11 +384,11 @@ end
 Build key for local path naming of a dataset entry, based on scheme, host, path and version.
 """
 function build_dataset_key(entry::DatasetEntry)
-    clean_path = entry.path !== nothing ? strip(entry.path, '/') : ""
+    clean_path = entry.path !== "" ? strip(entry.path, '/') : ""
 
     key = joinpath(entry.host, clean_path)
 
-    if (entry.version !== nothing)
+    if (entry.version !== "")
         key = key * "#$(entry.version)"
     end
 
@@ -407,10 +407,9 @@ function get_dataset_key(entry::DatasetEntry)
     return build_dataset_key(entry)
 end
 
-function get_dataset_path(entry::DatasetEntry, datasets_folder::Union{String,Nothing}=nothing)
+function get_dataset_path(entry::DatasetEntry, datasets_folder::String="")
     return joinpath(
-        # datasets_folder !== nothing ? datasets_folder : DEFAULT_DATASETS_FOLDER_PATH,
-        something(datasets_folder, DEFAULT_DATASETS_FOLDER_PATH),
+        datasets_folder !== "" ? datasets_folder : DEFAULT_DATASETS_FOLDER_PATH,
         entry.key,
     )
 end
@@ -434,13 +433,13 @@ end
 Build a URI string from the metadata fields.
 """
 function build_uri(meta::DatasetEntry)
-    uri = meta.uri !== nothing ? meta.uri : ""
+    uri = meta.uri !== "" ? meta.uri : ""
     if uri == ""
         uri = "$(meta.scheme)://$(meta.host)"
-        if meta.path !== nothing
+        if meta.path !== ""
             uri *= "/$(strip(meta.path, '/'))"
         end
-        if meta.version !== nothing
+        if meta.version !== ""
             uri *= "#$(meta.version)"
         end
     end
@@ -451,7 +450,7 @@ end
 """
 function init_dataset_entry(;
     downloads::Vector{String}=Vector{String}(),
-    ref::Union{Nothing,String}=nothing,
+    ref::String="",
     kwargs...)
 
     entry = DatasetEntry(; kwargs...)
@@ -459,7 +458,7 @@ function init_dataset_entry(;
     if length(downloads) > 0
         warning("The `downloads` field is deprecated. Use `uri` instead.")
 
-        if (entry.uri !== nothing)
+        if (entry.uri !== "")
             error("Cannot provide both uri and downloads")
         end
 
@@ -470,12 +469,12 @@ function init_dataset_entry(;
         entry.uri = downloads[1] # Use the first download URL as the URI
     end
 
-    if (entry.uri !== nothing)
+    if (entry.uri !== "")
         parsed = parse_uri_metadata(entry.uri)
-        entry.host = parsed.host !== nothing ? parsed.host : entry.host
-        entry.path = parsed.path !== nothing ? parsed.path : entry.path
-        entry.scheme = parsed.scheme !== nothing ? parsed.scheme : entry.scheme
-        entry.version = parsed.version !== nothing ? parsed.version : (entry.version !== nothing ? entry.version : ref)
+        entry.host = parsed.host !== "" ? parsed.host : entry.host
+        entry.path = parsed.path !== "" ? parsed.path : entry.path
+        entry.scheme = parsed.scheme !== "" ? parsed.scheme : entry.scheme
+        entry.version = parsed.version !== "" ? parsed.version : (entry.version !== "" ? entry.version : ref)
     else
         entry.uri = build_uri(entry)
     end
@@ -596,7 +595,7 @@ function update_entry(db::Database, oldname::String, oldentry::DatasetEntry, new
 end
 
 
-function register_dataset(db::Database, uri::Union{String,Nothing}=nothing ;
+function register_dataset(db::Database, uri::String="" ;
     name::String="",
     overwrite::Bool=false,
     persist::Bool=true,
@@ -660,7 +659,7 @@ function list_alternative_keys(dataset::DatasetEntry)
             push!(alternatives, alias)
         end
     end
-    if dataset.doi !== nothing
+    if dataset.doi !== ""
         push!(alternatives, dataset.doi)
     end
     push!(alternatives, dataset.key)
@@ -801,7 +800,7 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract=true)
     if (scheme in ("git", "ssh+git") || (scheme == "https" && endswith(dataset.path, ".git")))
         # repo_url = occursin("@", host) ? "$host:$path" : "git@$host:$path"
         repo_url = dataset.uri
-        if dataset.branch !== nothing
+        if dataset.branch !== ""
             run(`git clone --depth 1 --branch $(dataset.branch) $repo_url $local_path`)
         else
             run(`git clone --depth 1 $repo_url $local_path`)
@@ -841,7 +840,7 @@ function download_dataset(db::Database, name::String; extract=true, kwargs...)
 end
 
 
-function download_datasets(db::Database, names=nothing; kwargs...)
+function download_datasets(db::Database, names::Union{Nothing,Vector{<:Any}}=nothing; kwargs...)
     datasets = get_datasets(db)
     if names === nothing
         names = keys(datasets)
@@ -949,7 +948,7 @@ end
 Add a dataset to the database, downloading it if necessary.
 If `name` is not provided, it will be inferred from the uri or dataset entries
 """
-function add(db::Database, uri::Union{String,Nothing}=nothing ; download=true, kwargs...)
+function add(db::Database, uri::String ; download=true, kwargs...)
     (name, entry) = register_dataset(db, uri; kwargs...)
     if download
         download_dataset(db, entry)
@@ -958,7 +957,7 @@ function add(db::Database, uri::Union{String,Nothing}=nothing ; download=true, k
 end
 
 
-function add(uri::Union{String,Nothing}=nothing; kwargs...)
+function add(uri::String=""; kwargs...)
     db = get_default_database()
     return add(db, uri; kwargs...)
 end
