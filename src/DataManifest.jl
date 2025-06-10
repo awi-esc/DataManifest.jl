@@ -18,8 +18,29 @@ export repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_ke
 export repr_short, string_short
 export write
 
-function __init__()
-    global_logger(ConsoleLogger(Info; show_limited=true, right_justify=0))
+_console_logger = ConsoleLogger(Info; show_limited=true, right_justify=0)
+
+function meta_formatter(level::LogLevel, _module, group, id, file, line)
+    color, prefix, suffix = _console_logger.meta_formatter(level, _module, group, id, file, line)
+    return (
+        color,
+        "DataManifest",
+        suffix,
+    )
+end
+
+logger = ConsoleLogger(Info; show_limited=true, right_justify=0, meta_formatter=meta_formatter)
+
+function info(msg::String)
+    with_logger(logger) do
+        @info(msg)
+    end
+end
+
+function warn(msg::String)
+    with_logger(logger) do
+        @warn(msg)
+    end
 end
 
 XDG_CACHE_HOME = get(ENV, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
@@ -54,10 +75,10 @@ function Base.:(==)(a::DatasetEntry, b::DatasetEntry)
     return true
 end
 
-function to_dict(info::DatasetEntry)
+function to_dict(entry::DatasetEntry)
     output = Dict{String,Union{String,Vector{String}}}()
-    for field in fieldnames(typeof(info))
-        value = getfield(info, field)
+    for field in fieldnames(typeof(entry))
+        value = getfield(entry, field)
         if (field in HIDE_STRUCT_FIELDS)
             continue
         end
@@ -65,7 +86,7 @@ function to_dict(info::DatasetEntry)
             continue
         end
         if (field == :key)
-            if value == build_dataset_key(info)
+            if value == build_dataset_key(entry)
                 continue  # Skip the key if it matches the default key
             end
         end
@@ -427,7 +448,7 @@ end
 
 function _maybe_persist_database(db::Database, persist::Bool=true)
     if persist && db.datasets_toml != ""
-        @info("""Write database to $(length(db.datasets_toml) > 60 ? "..."  : "")$(db.datasets_toml[max(end-60, 1):end])""")
+        info("""Write database to $(length(db.datasets_toml) > 60 ? "..."  : "")$(db.datasets_toml[max(end-60, 1):end])""")
         write(db, db.datasets_toml)
     end
 end
@@ -445,7 +466,7 @@ function update_entry(db::Database, oldname::String, oldentry::DatasetEntry, new
     end
 
     if (oldentry == newentry && oldname == newname)
-        @info("Dataset entry [$newname] already exists.")
+        info("Dataset entry [$newname] already exists.")
         return (oldname => oldentry)
     end
 
@@ -453,7 +474,7 @@ function update_entry(db::Database, oldname::String, oldentry::DatasetEntry, new
         if (! overwrite)
             error("Dataset entry already exists with name $oldname. Pass `overwrite=true` to update with new name $newname.")
         else
-            @warn("Rename $(oldname) => $(newname)")
+            warn("Rename $(oldname) => $(newname)")
             delete!(db.datasets, oldname)  # Remove the existing entry if overwriting
             db.datasets[newname] = newentry  # No change here
             _maybe_persist_database(db, persist)
@@ -480,7 +501,7 @@ function update_entry(db::Database, oldname::String, oldentry::DatasetEntry, new
     end
 
     if (overwrite)
-        @warn("$message\n\nOverwriting with new entry $newname =>\n$newentry")
+        warn("$message\n\nOverwriting with new entry $newname =>\n$newentry")
         if (haskey(db.datasets, oldname))
             delete!(db.datasets, oldname)
         end
@@ -627,7 +648,7 @@ function search_dataset(db::Database, name::String; raise=true, kwargs...)
         if raise
             error(message)
         else
-            @warn(message)
+            warn(message)
         end
     end
     return results[1]
@@ -639,7 +660,7 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract=true)
     local_path = get_dataset_path(dataset, db.datasets_folder)
 
     if isfile(local_path) || isdir(local_path)
-        @info("Dataset already exists at: $local_path")
+        info("Dataset already exists at: $local_path")
         return local_path
     end
 
@@ -713,7 +734,7 @@ end
 function get_default_database()
     db = Database()
     if db.datasets_toml != ""
-        @info("""Using database: $(length(db.datasets_toml) > 60 ? "..." : "")$(db.datasets_toml[max(end-60, 1):end])""")
+        info("""Using database: $(length(db.datasets_toml) > 60 ? "..." : "")$(db.datasets_toml[max(end-60, 1):end])""")
     else
         error("Please activate a julia environment or pass a Database instance explicity.")
     end
@@ -768,7 +789,7 @@ function get_default_toml()
         if envvar in keys(ENV) && ENV[envvar] != ""
             env_toml = ENV[envvar]
             if ! isfile(env_toml)
-                @warn("Environment variable $envvar points to a non-existing file: $env_toml.")
+                warn("Environment variable $envvar points to a non-existing file: $env_toml.")
             end
             return env_toml
         end
@@ -793,7 +814,7 @@ function get_default_toml()
         end
         return currentdefault
     else
-        @warn("The project is not activated. Cannot infer default datasets_toml path. In-memory database will be used.")
+        warn("The project is not activated. Cannot infer default datasets_toml path. In-memory database will be used.")
         return ""
     end
 end
