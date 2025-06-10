@@ -118,7 +118,7 @@ Database(
 )
 ```
 
-If db only exist in memory. It can be written explicitly to disk.
+When the database exists only in memory, it can nonetheless be written explicitly to disk:
 
 ```julia
 write(db, "Datasets.toml")
@@ -133,7 +133,7 @@ DataManifest.add(db, "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip";
   doi="10.1594/PANGAEA.930512")
 ```
 
-This command updates the in-memory database `db`, add the `herzschuh2023` item,
+This command updates the database `db`, add the `herzschuh2023` item,
 and download its content to the default folder.
 
 ### Archives
