@@ -41,7 +41,7 @@ uri = "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"
 doi = "10.1594/PANGAEA.962852"
 uri = "https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv"
 
-[tierney2020]
+[jesstierney/lgmDA]
 uri = "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
 
 [CMIP6_lgm_tos]
@@ -179,7 +179,7 @@ name = "jonkers2024",
 doi="10.1594/PANGAEA.962852",
 )
 
-register_dataset(db, "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"; name="jesstierney/lgmDA")
+register_dataset(db, "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip")
 
 register_dataset(db, "ssh://albedo1.dmawi.de:/albedo/work/projects/p_forclima/preproc_data_esmvaltool/LGM/recipe_cmip6_lgm_tos_20241114_151009/preproc/lgm/tos_CLIM"; name="CMIP6_lgm_tos")
 

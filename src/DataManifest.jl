@@ -148,7 +148,7 @@ mutable struct Database
 
 end
 
-Base.getindex(db::Database, name::String) = search_dataset(db, name)
+Base.getindex(db::Database, name::String) = search_dataset(db, name)[2]
 
 function Base.:(==)(db1::Database, db2::Database)
     return db1.datasets == db2.datasets && db1.datasets_folder == db2.datasets_folder && db1.datasets_toml == db2.datasets_toml
@@ -315,7 +315,7 @@ function get_dataset_path(entry::DatasetEntry, datasets_folder::Union{String,Not
 end
 
 function get_dataset_path(db::Database, name::String; kwargs...)
-    dataset = search_dataset(db, name; kwargs...)
+    (name, dataset) = search_dataset(db, name; kwargs...)
     return get_dataset_path(dataset, db.datasets_folder)
 end
 
@@ -419,10 +419,80 @@ function is_a_git_repo(entry::DatasetEntry)
 end
 
 
+function _maybe_persist_database(db::Database, persist::Bool=true)
+    if persist && db.datasets_toml != ""
+        @info("""Write database to $(length(db.datasets_toml) > 60 ? "..."  : "")$(db.datasets_toml[max(end-60, 1):end])""")
+        write(db, db.datasets_toml)
+    end
+end
+
+
+function update_entry(db::Database, oldname::String, oldentry::DatasetEntry, newname::String, newentry::DatasetEntry;
+    overwrite::Bool=false, persist::Bool=true)
+
+    # check the dataset is the same, in a broad sense (elimiate false positives as much as possible)
+    if (oldentry.key != newentry.key
+        && oldentry.uri != newentry.uri
+        && oldentry.version != newentry.version
+        && oldname != newname)
+        error("At least one the name or any of the following fields must match to update: key, uri")
+    end
+
+    if (oldentry == newentry && oldname == newname)
+        @info("Dataset entry already exists.")
+        return (oldname => oldentry)
+    end
+
+    if (oldentry == newentry)
+        if (! overwrite)
+            error("Dataset entry already exists with name $oldname. Pass `overwrite=true` to update with new name $newname.")
+        else
+            @warn("Rename $(oldname) => $(newname)")
+            delete!(db.datasets, oldname)  # Remove the existing entry if overwriting
+            db.datasets[newname] = newentry  # No change here
+            _maybe_persist_database(db, persist)
+            return (newname => newentry)
+        end
+    end
+
+    # we have oldentry != newentry
+    message = "Possible duplcate found $oldname =>\n$oldentry"
+
+    # check dataset path on disk
+    # TODO: check hash when files (no folders) ?
+    existing_datapath = get_dataset_path(oldentry, db.datasets_folder)
+    new_datapath = get_dataset_path(newentry, db.datasets_folder)
+    if (existing_datapath != new_datapath && isfile(existing_datapath))
+        if (newentry.version == oldentry.version)
+            # If the versions are the same, we can just point the new key to the existing dataset
+            message *= "\nExisting dataset found at $existing_datapath. Please move or cleanup the dataset manually if needed."
+            message *= "\n    mv $existing_datapath $new_datapath"
+            message *= "\nOr specify `key=$(oldentry.key)` to point to the existing dataset on disk."
+        else
+            message *= "\nExisting dataset found at\n    $existing_datapath\n(versions differ). Cleanup manually if needed."
+        end
+    end
+
+    if (overwrite)
+        @warn("$message\n\nOverwriting with new entry $newname =>\n$newentry")
+        if (haskey(db.datasets, oldname))
+            delete!(db.datasets, oldname)
+        end
+        db.datasets[newname] = newentry
+        _maybe_persist_database(db, persist)
+        return (newname => newentry)
+    else
+        error("$message\n\nPlease manually remove the old entry or set `overwrite=true` to update with dataset $newname =>\n$newentry or pass `check_duplicate=false` to register nonetheless")
+    end
+
+end
+
+
 function register_dataset(db::Database, uri::Union{String,Nothing}=nothing ;
     name::String="",
     overwrite::Bool=false,
     persist::Bool=true,
+    check_duplicate::Bool=true,
     kwargs...
     )
 
@@ -437,11 +507,21 @@ function register_dataset(db::Database, uri::Union{String,Nothing}=nothing ;
         name = splitext(name)[1]
     end
 
-    datasets = get_datasets(db)
-    if haskey(datasets, name) && !overwrite
-        error("Dataset $name already exists. Set overwrite=true to overwrite.")
+    # search by key
+    if check_duplicate
+        existing_entry = search_dataset(db, entry.key, raise=false) # return nothing if not found
+    else
+        existing_entry = nothing
     end
-    datasets[name] = entry
+
+    if (existing_entry !== nothing)
+        return update_entry(db, existing_entry[1], existing_entry[2], name, entry; overwrite=overwrite, persist=persist)
+
+    elseif haskey(db.datasets, name) && check_duplicate
+        return update_entry(db, name, db.datasets[name], name, entry; overwrite=overwrite, persist=persist)
+    end
+
+    db.datasets[name] = entry
 
     if persist && db.datasets_toml != ""
         # If the database is set to persist, write it to disk
@@ -450,6 +530,7 @@ function register_dataset(db::Database, uri::Union{String,Nothing}=nothing ;
 
     return (name => entry)
 end
+
 
 function extract_file(download_path)
     download_dir = dirname(download_path)
@@ -512,31 +593,35 @@ function search_datasets(db::Database, name::String ; alt=true, partial=false)
     matches = []
     for (key, dataset) in pairs(datasets)
         if lowercase(key) == lowercase(name)
-            push!(matches, dataset)
+            push!(matches, key => dataset)
         elseif alt && lowercase(name) in map(lowercase, list_alternative_keys(dataset))
-            push!(matches, dataset)
+            push!(matches, key => dataset)
         elseif partial && occursin(lowercase(name), lowercase(key))
-            push!(matches, dataset)
+            push!(matches, key => dataset)
         elseif alt && partial && any(x -> occursin(lowercase(name), lowercase(x)), list_alternative_keys(dataset))
-            push!(matches, dataset)
+            push!(matches, key => dataset)
         end
     end
     return matches
 end
 
-function search_dataset(db::Database, name::String; check_unique=true, raise=true, kwargs...)
+function search_dataset(db::Database, name::String; raise=true, kwargs...)
     results = search_datasets(db, name; kwargs...)
     if length(results) == 0
-        error("""No dataset found for: `$name`.
-        Available datasets: $(join(keys(get_datasets(db)), ", "))
-        $(repr_datasets(db))
-        """)
-    elseif (check_unique && length(results) > 1)
+        if raise
+            error("""No dataset found for: `$name`.
+            Available datasets: $(join(keys(get_datasets(db)), ", "))
+            $(repr_datasets(db))
+            """)
+        else
+            return nothing
+        end
+    elseif (length(results) > 1)
         message = "Multiple datasets found for $name:\n- $(join([join(list_alternative_keys(x), " | ") for x in results], "\n- "))"
         if raise
             error(message)
         else
-            warn(message)
+            @warn(message)
         end
     end
     return results[1]
@@ -548,7 +633,7 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract=true)
     local_path = get_dataset_path(dataset, db.datasets_folder)
 
     if isfile(local_path) || isdir(local_path)
-        println("Dataset already exists at: $local_path")
+        @info("Dataset already exists at: $local_path")
         return local_path
     end
 
@@ -601,7 +686,7 @@ end
 function download_dataset(db::Database, name::String; extract=true, kwargs...)
     datasets = get_datasets(db)
     if !haskey(datasets, name)
-        dataset = search_dataset(db, name; kwargs...)
+        (idx, dataset) = search_dataset(db, name; kwargs...)
     else
         dataset = datasets[name]
     end
@@ -622,7 +707,7 @@ end
 function get_default_database()
     db = Database()
     if db.datasets_toml != ""
-        println("""Using database: $(length(db.datasets_toml) > 60 ? "..." : "")$(db.datasets_toml[end-60:end])""")
+        @info("""Using database: $(length(db.datasets_toml) > 60 ? "..." : "")$(db.datasets_toml[max(end-60, 1):end])""")
     else
         error("Please activate a julia environment or pass a Database instance explicity.")
     end
@@ -677,7 +762,7 @@ function get_default_toml()
         if envvar in keys(ENV) && ENV[envvar] != ""
             env_toml = ENV[envvar]
             if ! isfile(env_toml)
-                println("Warning: Environment variable $envvar points to a non-existing file: $env_toml.")
+                @warn("Environment variable $envvar points to a non-existing file: $env_toml.")
             end
             return env_toml
         end
@@ -702,7 +787,7 @@ function get_default_toml()
         end
         return currentdefault
     else
-        println("Warning: the project is not activated. Cannot infer default datasets_toml path. In-memory database will be used.")
+        @warn("The project is not activated. Cannot infer default datasets_toml path. In-memory database will be used.")
         return ""
     end
 end

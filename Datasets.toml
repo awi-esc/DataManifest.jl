@@ -9,5 +9,5 @@ doi = "10.1594/PANGAEA.930512"
 uri = "https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv"
 doi = "10.1594/PANGAEA.962852"
 
-[tierney2020]
+["jesstierney/lgmDA"]
 uri = "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
