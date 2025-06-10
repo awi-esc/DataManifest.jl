@@ -544,6 +544,10 @@ function update_entry(db::Database, oldname::String, oldentry::DatasetEntry, new
         return (oldname => oldentry)
     end
 
+    # verify checksums before proceeding
+    verify_checksum(db, oldentry; persist=false)
+    verify_checksum(db, newentry; persist=false)
+
     if (oldentry == newentry)
         if (! overwrite)
             error("Dataset entry already exists with name $oldname. Pass `overwrite=true` to update with new name $newname.")
@@ -557,21 +561,24 @@ function update_entry(db::Database, oldname::String, oldentry::DatasetEntry, new
     end
 
     # we have oldentry != newentry
-    message = "Possible duplcate found $oldname =>\n$oldentry"
+    message = "Possible duplicate found $oldname =>\n$oldentry"
 
     # check dataset path on disk
-    # TODO: check hash when files (no folders) ?
     existing_datapath = get_dataset_path(oldentry, db.datasets_folder)
     new_datapath = get_dataset_path(newentry, db.datasets_folder)
-    if (existing_datapath != new_datapath && isfile(existing_datapath))
-        if (newentry.version == oldentry.version)
-            # If the versions are the same, we can just point the new key to the existing dataset
-            message *= "\nExisting dataset found at $existing_datapath. Please move or cleanup the dataset manually if needed."
-            message *= "\n    mv $existing_datapath $new_datapath"
-            message *= "\nOr specify `key=$(oldentry.key)` to point to the existing dataset on disk."
+    if (existing_datapath != new_datapath && (isfile(existing_datapath) | isdir(existing_datapath)))
+        if (isfile(new_datapath) | isdir(new_datapath))
+            message *= "\n\nBoth old and new datasets exist on disk at:"
+            message *= "\n    $existing_datapath SHA-256: $(oldentry.sha256)"
+            message *= "\n    $new_datapath SHA-256: $(newentry.sha256)"
         else
-            message *= "\nExisting dataset found at\n    $existing_datapath\n(versions differ). Cleanup manually if needed."
+            message *= "\nExisting dataset found at"
+            message *= "\n    $existing_datapath\n."
         end
+        message *= "\n\nCleanup manually if needed."
+        message *= "Note you may explicitly specify the keys to point to a dataset, e.g."
+        message *= "\n    key=\"$(oldentry.key)\""
+        message *= "\n    key=\"$(newentry.key)\""
     end
 
     if (overwrite)
@@ -728,7 +735,7 @@ function search_dataset(db::Database, name::String; raise=true, kwargs...)
     return results[1]
 end
 
-function verify_checksum(db:: Database, dataset::DatasetEntry)
+function verify_checksum(db:: Database, dataset::DatasetEntry; persist::Bool=true)
 
     local_path = get_dataset_path(db, dataset)
 
@@ -748,7 +755,7 @@ function verify_checksum(db:: Database, dataset::DatasetEntry)
 
     if dataset.sha256 == ""
         dataset.sha256 = checksum
-        _maybe_persist_database(db)  # Persist the updated dataset entry
+        _maybe_persist_database(db, persist)  # Persist the updated dataset entry
         return true  # No SHA-256 checksum provided, simply update
     end
 
