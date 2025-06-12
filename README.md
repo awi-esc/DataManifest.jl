@@ -164,6 +164,7 @@ prefer Download.downloads mediated:
 ```toml
 [tierney2020]
 uri="https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
+extract=true
 ```
 
 ### Low-level declarative syntax
@@ -178,6 +179,7 @@ db = Database(datasets_folder="datasets", persist=false) # the default is ~/.cac
 register_dataset(db, "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip";
   name="herzschuh2023",
   doi="10.1594/PANGAEA.930512",
+  extract=true,
 )
 
 register_dataset(db, "https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv";
@@ -185,7 +187,7 @@ name = "jonkers2024",
 doi="10.1594/PANGAEA.962852",
 )
 
-register_dataset(db, "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip")
+register_dataset(db, "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip", extract=true)
 
 register_dataset(db, "ssh://albedo1.dmawi.de:/albedo/work/projects/p_forclima/preproc_data_esmvaltool/LGM/recipe_cmip6_lgm_tos_20241114_151009/preproc/lgm/tos_CLIM"; name="CMIP6_lgm_tos")
 
@@ -226,7 +228,7 @@ Database(
 
 ## Roadmap
 
-- better handle the archives (.zip), e.g. download a full zenodo archive like `https://zenodo.org/api/records/15230504/files-archive`, from the "Download All" button on [this page](https://zenodo.org/records/15230504) -> must be up to the user to decide to extract (or not extract) a voluminous archive.
+Nothing at this point. After some time of usage and feedbacks, the roadmap will be updated, and eventually I'll make the v1.0.0 release.
 
 ## Why DataManifest.jl ?
 
