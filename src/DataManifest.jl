@@ -103,6 +103,7 @@ XDG_CACHE_HOME = get(ENV, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
 DEFAULT_DATASETS_FOLDER_PATH = joinpath(XDG_CACHE_HOME, "Datasets")
 DEFAULT_DATASETS_TOML_PATH = ""
 COMPRESSED_FORMATS = ["zip", "tar.gz", "tar"]
+KNOWN_EXTENSIONS = ["."*fmt for fmt in COMPRESSED_FORMATS]  # Known compressed file extensions
 HIDE_STRUCT_FIELDS = [:host, :path, :scheme]
 
 @kwdef mutable struct DatasetEntry
@@ -117,6 +118,8 @@ HIDE_STRUCT_FIELDS = [:host, :path, :scheme]
     key::String = "" # Unique key for the dataset, usually the doi or a unique name
     sha256::String = ""
     skip_checksum::Bool = false  # Whether to skip SHA-256 checksum checks for this dataset
+    extract::Bool = false  # Whether to extract the dataset after downloading. If true, the key will point to the extracted folder
+    format::String = ""  # For now used for archive in combination with the extract flag. zip or tar etc.. useful if the uri's path does not end with a known extension
 end
 
 
@@ -147,6 +150,11 @@ function to_dict(entry::DatasetEntry)
         end
         if (field == :key)
             if value == build_dataset_key(entry)
+                continue  # Skip the key if it matches the default key
+            end
+        end
+        if (field == :format)
+            if value == guess_file_format(entry)
                 continue  # Skip the key if it matches the default key
             end
         end
@@ -370,12 +378,14 @@ function parse_uri_metadata(uri::String)
 
     version = get(query, "version", "")
     ref = get(query, "ref", "")
+    format = get(query, "format", "")
 
     return (
         uri=uri,
         scheme=scheme,
         host=host,
         path=path,
+        format=format,
         version=fragment !== "" ? fragment : (version !=="" ? version : ref),
     )
 
@@ -384,8 +394,9 @@ end
 """
 Build key for local path naming of a dataset entry, based on scheme, host, path and version.
 """
-function build_dataset_key(entry::DatasetEntry)
-    clean_path = entry.path !== "" ? strip(entry.path, '/') : ""
+function build_dataset_key(entry::DatasetEntry, path::String="")
+
+    clean_path = rstrip(path == "" ? entry.path : path, '/')
 
     key = joinpath(entry.host, clean_path)
 
@@ -408,24 +419,35 @@ function get_dataset_key(entry::DatasetEntry)
     return build_dataset_key(entry)
 end
 
-function get_dataset_path(entry::DatasetEntry, datasets_folder::String="")
+function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extract::Union{Bool,Nothing}=nothing)
+
+    if (extract === nothing)
+        extract = entry.extract
+    end
+
+    key = entry.key
+
+    if extract
+        key = get_extract_path(key)
+    end
+
     return joinpath(
         datasets_folder !== "" ? datasets_folder : DEFAULT_DATASETS_FOLDER_PATH,
-        entry.key,
+        key,
     )
 end
 
-function get_dataset_path(db::Database, name::String; kwargs...)
+function get_dataset_path(db::Database, name::String; extract=nothing, kwargs...)
     (name, dataset) = search_dataset(db, name; kwargs...)
-    return get_dataset_path(dataset, db.datasets_folder)
+    return get_dataset_path(dataset, db.datasets_folder; extract=extract)
 end
 
 function get_dataset_path(db::Database, entry::DatasetEntry; kwargs...)
-    return get_dataset_path(entry, db.datasets_folder)
+    return get_dataset_path(entry, db.datasets_folder; kwargs...)
 end
 
 function get_dataset_path(name::String; kwargs...)
-    db = Database()
+    db = get_default_database()
     return get_dataset_path(db, name; kwargs...)
 end
 
@@ -445,6 +467,21 @@ function build_uri(meta::DatasetEntry)
         end
     end
     return uri
+end
+
+function guess_file_format(entry::DatasetEntry)
+    base, ext = splitext(rstrip(entry.path, '/'))
+    if ext == ".gz"
+        base, ext2 = splitext(base)
+        if ext2 == ".tar"
+            ext = ext2 * ext  # Combine extensions if needed
+        end
+    end
+    if ext in KNOWN_EXTENSIONS
+        return lstrip(ext, '.')
+    else
+        return ""
+    end
 end
 
 """
@@ -475,10 +512,19 @@ function init_dataset_entry(;
         entry.host = parsed.host !== "" ? parsed.host : entry.host
         entry.path = parsed.path !== "" ? parsed.path : entry.path
         entry.scheme = parsed.scheme !== "" ? parsed.scheme : entry.scheme
+        entry.format = parsed.format !== "" ? parsed.format : entry.format
         entry.version = parsed.version !== "" ? parsed.version : (entry.version !== "" ? entry.version : ref)
     else
         entry.uri = build_uri(entry)
     end
+
+    if (entry.format == "")
+        entry.format = guess_file_format(entry)
+    else
+        entry.format = lstrip(entry.format, '.')
+    end
+
+    entry.extract = entry.extract && (entry.format in COMPRESSED_FORMATS)
 
     entry.key = entry.key !== "" ? entry.key : get_dataset_key(entry)
 
@@ -639,17 +685,27 @@ function register_dataset(db::Database, uri::String="" ;
     return (name => entry)
 end
 
+function get_extract_path(path::String)
+    for format in COMPRESSED_FORMATS
+        if endswith(path, ".$format")
+            return path[1:end-length(format)-1]  # Remove the format suffix
+        end
+        if occursin("?format=$format", path)
+            return rstrip(replace(path, "?format=$format", "?"), '?')  # Remove the format query parameter
+        end
+    end
+    return path * ".d"  # Default extraction path
+end
 
-function extract_file(download_path)
-    download_dir = dirname(download_path)
-    if endswith(download_path, ".zip") || occursin("?format=zip", download_path)
+function extract_file(download_path, download_dir, format)
+    if format == "zip"
         run(`unzip -o $download_path -d $download_dir`)
-    elseif endswith(download_path, ".tar.gz")
+    elseif format == "tar.gz"
         run(`tar -xzf $download_path -C $download_dir`)
-    elseif endswith(download_path, ".tar")
+    elseif format == "tar"
         run(`tar -xf $download_path -C $download_dir`)
     else
-        error("Unknown file type: $download_path")
+        error("Unknown format: $format")
     end
 end
 
@@ -735,12 +791,17 @@ function search_dataset(db::Database, name::String; raise=true, kwargs...)
     return results[1]
 end
 
-function verify_checksum(db:: Database, dataset::DatasetEntry; persist::Bool=true)
+function verify_checksum(db:: Database, dataset::DatasetEntry; persist::Bool=true, extract::Union{Nothing, Bool}=nothing)
+
+    if (extract !== nothing && extract != dataset.extract)
+        warn("dataset.extract=$(dataset.extract) but required extract=$extract. Skip verifying checksum.")
+        return
+    end
 
     local_path = get_dataset_path(db, dataset)
 
     if db.skip_checksum || dataset.skip_checksum
-        return true  # No SHA-256 checksum provided, skip check
+        return true  # No SHA-256 checksum required, skip check
     end
 
     if (!isfile(local_path) && !isdir(local_path))
@@ -771,18 +832,11 @@ function verify_checksum(db:: Database, dataset::DatasetEntry; persist::Bool=tru
 
 end
 
-"Fetch dataset"
-function download_dataset(db::Database, dataset::DatasetEntry; extract=true)
+"""Download a dataset to the specified path (no extraction, no checks).
+"""
+function _download_dataset(dataset::DatasetEntry, download_path::String)
 
-    local_path = get_dataset_path(dataset, db.datasets_folder)
-
-    if isfile(local_path) || isdir(local_path)
-        info("Dataset already exists at: $local_path")
-        verify_checksum(db, dataset)
-        return local_path
-    end
-
-    mkpath(dirname(local_path))
+    mkpath(dirname(download_path))
 
     scheme = dataset.scheme
 
@@ -802,35 +856,58 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract=true)
         # repo_url = occursin("@", host) ? "$host:$path" : "git@$host:$path"
         repo_url = dataset.uri
         if dataset.branch !== ""
-            run(`git clone --depth 1 --branch $(dataset.branch) $repo_url $local_path`)
+            run(`git clone --depth 1 --branch $(dataset.branch) $repo_url $download_path`)
         else
-            run(`git clone --depth 1 $repo_url $local_path`)
+            run(`git clone --depth 1 $repo_url $download_path`)
         end
 
     elseif scheme in ("ssh", "sshfs", "rsync")
-        run(`rsync -arvzL $(dataset.host):$(dataset.path) $(dirname(local_path))/`)
+        run(`rsync -arvzL $(dataset.host):$(dataset.path) $(dirname(download_path))/`)
 
     elseif scheme == "file"
-        if (dataset.path != local_path)
-            run(`rsync -arvzL  $(dataset.path) $(dirname(local_path))/`)
+        if (dataset.path != download_path)
+            run(`rsync -arvzL  $(dataset.path) $(dirname(download_path))/`)
         end
 
     else
-        Downloads.download(dataset.uri, local_path)
+        Downloads.download(dataset.uri, download_path)
     end
 
-    verify_checksum(db, dataset)
+end
 
-    if (extract && any(endswith(local_path, ext) for ext in COMPRESSED_FORMATS))
-        extract_file(local_path)
+
+"Fetch dataset"
+function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{Nothing,Bool}=nothing)
+
+    local_path = get_dataset_path(dataset, db.datasets_folder; extract=extract)
+    download_path = get_dataset_path(dataset, db.datasets_folder; extract=false)
+
+    if isfile(local_path) || isdir(local_path)
+        info("Dataset already exists at: $local_path")
+        verify_checksum(db, dataset; extract=extract)
+        return local_path
     end
+
+    if ! (isfile(download_path) || isdir(download_path))
+        info("Downloading dataset: $(dataset.uri) to $download_path")
+        _download_dataset(dataset, download_path)
+    else
+        info("Dataset already exists at: $download_path")
+    end
+
+    if (dataset.extract)
+        info("Extracting dataset to: $local_path")
+        extract_file(download_path, local_path, dataset.format)
+    end
+
+    verify_checksum(db, dataset; extract=extract)
 
     return local_path
 end
 
 """Download a dataset by name, searching in alternative fields if necessary.
 """
-function download_dataset(db::Database, name::String; extract=true, kwargs...)
+function download_dataset(db::Database, name::String; extract=nothing, kwargs...)
     datasets = get_datasets(db)
     if !haskey(datasets, name)
         (idx, dataset) = search_dataset(db, name; kwargs...)

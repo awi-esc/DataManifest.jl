@@ -4,8 +4,10 @@ sha256 = "7f28454b5c399226f923be60393ecbb2983c15538f9733864e5ce0f9f4b83601"
 
 [herzschuh2023]
 uri = "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"
-skip_checksum = true
+format = "zip"
+sha256 = "4e40e43ac0f1ddea125cb5314eee46e332aacbcb18aff7efbf59f1d8b1d84a13"
 doi = "10.1594/PANGAEA.930512"
+extract = true
 
 [jonkers2024]
 uri = "https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv"
@@ -14,4 +16,5 @@ doi = "10.1594/PANGAEA.962852"
 
 ["jesstierney/lgmDA"]
 uri = "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
-sha256 = "6cb042a77fb9d175eca9cd3a7e22e6f4e2ec413180d7902a59669f273ee08c81"
+sha256 = "da5f85235baf7f858f1b52ed73405f5d4ed28a8f6da92e16070f86b724d8bb25"
+extract = true
