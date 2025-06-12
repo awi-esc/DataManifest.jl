@@ -213,7 +213,7 @@ mutable struct Database
     skip_checksum_folders::Bool # Whether to skip SHA-256 checksums for folders
 
     function Database(;datasets_toml::String="", datasets_folder::String="",
-        persist::Bool=true, skip_checksum::Bool=true, skip_checksum_folders::Bool=false,
+        persist::Bool=true, skip_checksum::Bool=false, skip_checksum_folders::Bool=false,
         datasets::Dict{String,<:DatasetEntry}=Dict{String,DatasetEntry}(), kwargs...)
         if datasets_folder == ""
             datasets_folder = DEFAULT_DATASETS_FOLDER_PATH
