@@ -1036,9 +1036,9 @@ end
 Add a dataset to the database, downloading it if necessary.
 If `name` is not provided, it will be inferred from the uri or dataset entries
 """
-function add(db::Database, uri::String ; download=true, kwargs...)
+function add(db::Database, uri::String ; skip_download::Bool=false, kwargs...)
     (name, entry) = register_dataset(db, uri; kwargs...)
-    if download
+    if ! skip_download
         download_dataset(db, entry)
     end
     return (name => entry)
