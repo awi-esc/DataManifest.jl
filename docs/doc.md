@@ -1,4 +1,4 @@
-# Examples
+# Documentation
 
 Be sure you checked the [README](/README.md) first.
 
