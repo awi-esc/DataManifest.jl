@@ -27,8 +27,43 @@ Pkg.add(url="https://github.com/awi-esc/DataManifest.jl")
 
 ## Usage
 
-### Working from an existing data "manifest" `Datasets.toml`:
+### Getting started
 
+Let's assume you work in an activated package (`using Pkg; Pkg.activate(...)`) with a `Project.toml`. 
+The simplest way to add a dataset is as follow:
+
+```julia
+using DataManifest;
+DataManifest.add("https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"; extract=true, name="jesstierney/lgmDA")
+```
+will generate `Datasets.toml` next to your `Project.toml` with the content
+
+```toml
+["jesstierney/lgmDA"]
+uri = "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
+sha256 = "da5f85235baf7f858f1b52ed73405f5d4ed28a8f6da92e16070f86b724d8bb25"
+extract = true
+```
+
+which can be accessed via 
+```julia
+get_dataset_path("jesstierney/lgmDA")  # defaults to ~/.cache/Datasets/...
+``` 
+
+If you're not working in an activated environment, or want to be more explicit for your readers, you can specify the paths and simply prefix every command with the loaded database:
+```julia
+db = Database("datasets.toml", "my-data-folder") 
+DataManifest.add(db, ...)
+path = get_datasets_path(db, ...)
+```
+
+or even work with in-memory database (the toml, not the data), if you don't mind about checksums etc
+```julia
+db = Database(datasets_folder="my-data-folder", persist=false)
+add(db, ...) # will simply download things and update db without writing any toml to disk
+```
+
+### Working from an existing data "manifest" `Datasets.toml`:
 
 Here is the most straightforward use. Have a `Datasets.toml` file with the following content:
 
@@ -36,6 +71,7 @@ Here is the most straightforward use. Have a `Datasets.toml` file with the follo
 [herzschuh2023]
 doi = "10.1594/PANGAEA.930512"
 uri = "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip"
+extract = true
 
 [jonkers2024]
 doi = "10.1594/PANGAEA.962852"
@@ -43,6 +79,7 @@ uri = "https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assembl
 
 [jesstierney/lgmDA]
 uri = "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
+extract = true
 
 [CMIP6_lgm_tos]
 uri = "ssh://albedo1.dmawi.de:/albedo/work/projects/p_pool_clim_data/Paleodata/Tierney2020/LGM/recipe_cmip6_lgm_tos_20241114_151009/preproc/lgm/tos_CLIM"
@@ -99,7 +136,10 @@ rm /home/perrette/.cache/Datasets/LGM_foraminifera_assemblages_20240110.csv
 
 The default folder is `$XDG_CACHE_HOME/Datasets/` or `.cache/Datasets/` if `XDG_CACHE_HOME` environment variable is not defined (see [XDG specifications](https://specifications.freedesktop.org/basedir-spec/latest/)).
 Any other folder, such as a local folder, can be provided by passing `datasets_folder=` when initializing the `Database`.
-Note the datasets naming scheme is still pretty much "in flux" trying to balance clarity and uniqueness. When `version=0.2.5` parameter is provided, the name on disk will be appended with `...#0.2.5`.
+Note the datasets naming scheme is still pretty much "in flux" (though hopefully stabilizing by now), trying to balance clarity and uniqueness. 
+When `version=0.2.5` parameter is provided, the name on disk will be appended with `...#0.2.5`.
+
+It is also possible to provide a preferred name on disk via `key=...` to add. The local path will then be provided by `joinpath(datasets_folder, key)` (absolute paths also supported). If `extract=true` is specified, the dataset path for the extracted archive will be either stripped from the archive extension, if the local path ends with the matching archive extension (e.g. ".zip" for the "zip" format), or appended with `.d` in non-obivous case (e.g. no extension, version string `#...`).
 
 ### Maintaining a local `Datasets.toml`
 
@@ -129,23 +169,11 @@ write(db, "Datasets.toml")
 By default, the sha-256 checksum is computed upon download, unless `Database.skip_checksum === false` or `DatasetEntry.skip_checksum === false`. If the checksum turns out to be
 different from the datasets's definition file, an error is raised.
 
-
-### Bundle `add` command
-
-```julia
-db = Database()
-DataManifest.add(db, "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip";
-  name="herzschuh2023",
-  doi="10.1594/PANGAEA.930512")
-```
-
-This command updates the database `db`, add the `herzschuh2023` item,
-and download its content to the default folder.
-
 ### Archives
 
-This is still experimental, but `zip` and `tar` and `tar.gz` archives can (and by default are) automatically extracted upon download. See [#roadmap](roadmap).
-
+A few archive format (currently `zip` and `tar` and `tar.gz`) can be automatically extracted upon download.
+Just set `extract=true` to the `register_dataset()` or `add()` command, or add it to your toml definition file.
+Note when `extract=true`, the method `get_dataset_path` returns the path to the extracted folder, and the checksum will also be performed on the extracted folder.
 
 ### URI
 
