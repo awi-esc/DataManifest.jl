@@ -396,7 +396,7 @@ Build key for local path naming of a dataset entry, based on scheme, host, path 
 """
 function build_dataset_key(entry::DatasetEntry, path::String="")
 
-    clean_path = rstrip(path == "" ? entry.path : path, '/')
+    clean_path = strip(path == "" ? entry.path : path, '/')
 
     key = joinpath(entry.host, clean_path)
 
