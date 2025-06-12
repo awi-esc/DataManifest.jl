@@ -118,6 +118,7 @@ HIDE_STRUCT_FIELDS = [:host, :path, :scheme]
     key::String = "" # Unique key for the dataset, usually the doi or a unique name
     sha256::String = ""
     skip_checksum::Bool = false  # Whether to skip SHA-256 checksum checks for this dataset
+    skip_download::Bool = false  # skip download (e.g. to keep local files out of the download folder)
     extract::Bool = false  # Whether to extract the dataset after downloading. If true, the key will point to the extracted folder
     format::String = ""  # For now used for archive in combination with the extract flag. zip or tar etc.. useful if the uri's path does not end with a known extension
 end
@@ -420,6 +421,10 @@ function get_dataset_key(entry::DatasetEntry)
 end
 
 function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extract::Union{Bool,Nothing}=nothing)
+
+    if (entry.skip_download)
+        return entry.uri
+    end
 
     if (extract === nothing)
         extract = entry.extract
@@ -878,6 +883,11 @@ end
 
 "Fetch dataset"
 function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{Nothing,Bool}=nothing)
+
+    if (dataset.skip_download)
+        info("Skipping download for dataset: $(dataset.uri) (skip_download=true)")
+        return get_dataset_path(dataset, db.datasets_folder; extract=extract)
+    end
 
     local_path = get_dataset_path(dataset, db.datasets_folder; extract=extract)
     download_path = get_dataset_path(dataset, db.datasets_folder; extract=false)
