@@ -17,6 +17,7 @@ export set_datasets_folder, set_datasets, get_datasets_folder, get_datasets
 export repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_keys
 export repr_short, string_short
 export write
+export verify_checksum
 
 _console_logger = ConsoleLogger(Info; show_limited=true, right_justify=0)
 
