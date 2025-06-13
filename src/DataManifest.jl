@@ -5,9 +5,8 @@ using URIParser
 using Logging
 using SHA
 import Downloads
-import Base: write, read
+import Base: write
 
-export add
 export get_dataset_path
 export Database, DatasetEntry
 export register_dataset, register_datasets
@@ -18,6 +17,7 @@ export repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_ke
 export repr_short, string_short
 export write
 export verify_checksum
+export add_dataset, read_dataset
 
 _console_logger = ConsoleLogger(Info; show_limited=true, right_justify=0)
 
@@ -1221,7 +1221,7 @@ end
 
 
 """Reading from file (legacy function --> now done by Database constructor)"""
-function read(datasets_toml::String, datasets_folder::String=""; kwargs...)
+function read_dataset(datasets_toml::String, datasets_folder::String=""; kwargs...)
     return Database(; datasets_toml=datasets_toml, datasets_folder=datasets_folder, kwargs...)
 end
 
@@ -1273,5 +1273,6 @@ function add(uri::String=""; kwargs...)
     return add(db, uri; kwargs...)
 end
 
+add_dataset = add # Alias for export
 
 end # module
