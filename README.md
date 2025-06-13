@@ -27,8 +27,6 @@ Pkg.add(url="https://github.com/awi-esc/DataManifest.jl")
 
 ## Usage
 
-### Getting started
-
 Let's assume you work in an activated package (`using Pkg; Pkg.activate(...)`) with a `Project.toml`.
 The simplest way to add a dataset is as follow:
 
@@ -44,8 +42,7 @@ uri = "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
 sha256 = "da5f85235baf7f858f1b52ed73405f5d4ed28a8f6da92e16070f86b724d8bb25"
 extract = true
 ```
-
-which can be accessed via
+and download and extract the corresponding dataset, which can be accessed via
 ```julia
 get_dataset_path("jesstierney/lgmDA")  # defaults to ~/.cache/Datasets/...
 ```
