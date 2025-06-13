@@ -60,7 +60,7 @@ db = Database(datasets_folder="my-data-folder", persist=false)
 add(db, ...) # will simply download things and update db without writing any toml to disk
 ```
 
-### Documentation
+## Documentation
 
 See the [full documentation](/docs/doc.md) and the [API](/docs/api.md).
 
