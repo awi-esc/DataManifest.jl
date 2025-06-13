@@ -111,3 +111,111 @@ A `Database` object.
 
 **Note:**
 For all functions, if the `db::Database` argument is omitted, the default database is used, which requires that a Julia project is activated and a datasets TOML file is available or can be inferred.
+
+
+
+## `search_datasets`
+
+```
+search_datasets([db::Database], name::String; alt=true, partial=false) -> Vector{Pair{String, DatasetEntry}}
+```
+
+Search for datasets in the database by name or alternative keys, returning all matches as a vector of `(name => entry)` pairs.
+
+- If `db` is not provided, the default database is used (requires an activated Julia project).
+- The search is **case-insensitive** and proceeds in the following order:
+
+### Search Logic and Field Priority
+
+1. **Exact match on dataset name** (the main key in the database).
+2. **Exact match on alternative keys** (if `alt=true`):
+    - Any value in the `aliases` field (alternative names).
+    - The `doi` field (if present).
+    - The `key` field (unique key for the dataset).
+    - The `path` field.
+3. **Partial match on dataset name** (if `partial=true`):
+   Checks if `name` is a substring of any dataset name.
+4. **Partial match on alternative keys** (if `alt=true` and `partial=true`):
+   Checks if `name` is a substring of any value in the alternative keys listed above.
+
+All matches found in the above order are returned.
+
+**Arguments:**
+- `db::Database` (optional): The database to search in.
+- `name::String`: The name, alias, DOI, key, or path of the dataset.
+- `alt::Bool`: Whether to search alternative keys (default: `true`).
+- `partial::Bool`: Whether to allow partial (substring) matches (default: `false`).
+
+**Returns:**
+A vector of `(name => entry)` pairs for all matching datasets.
+
+---
+
+## `search_dataset`
+
+```
+search_dataset([db::Database], name::String; raise=true, alt=true, partial=false) -> Tuple{String, DatasetEntry}
+```
+
+Search for a dataset by name or alternative keys in the database, returning the first match as a tuple `(name, entry)`.
+
+- The search logic and field priority are the same as in [`search_datasets`](#search_datasets).
+- If no match is found and `raise=true` (default), an error is thrown. If `raise=false`, returns `nothing`.
+- If multiple matches are found, an error is thrown (or a warning if `raise=false`).
+
+**Arguments:**
+- `db::Database` (optional): The database to search in.
+- `name::String`: The name, alias, DOI, key, or path of the dataset.
+- `raise::Bool`: Whether to throw an error if no match or multiple matches are found (default: `true`).
+- `alt::Bool`: Whether to search alternative keys (default: `true`).
+- `partial::Bool`: Whether to allow partial (substring) matches (default: `false`).
+
+**Returns:**
+A tuple `(name, entry)` where `entry` is the found `DatasetEntry`.
+
+**Note:**
+You can also access a dataset entry directly by name using indexing syntax:
+```julia
+entry = db["dataset_name"]
+```
+This is equivalent to `search_dataset(db, "dataset_name")[2]`.
+
+---
+
+## `DatasetEntry`
+
+```
+@kwdef mutable struct DatasetEntry
+    uri::String = ""
+    version::String = ""
+    branch::String = ""           # For git repositories
+    doi::String = ""
+    aliases::Vector{String} = []
+    key::String = ""              # Unique key for the dataset, usually the DOI or a unique name
+    sha256::String = ""
+    skip_checksum::Bool = false   # Whether to skip SHA-256 checksum checks for this dataset
+    skip_download::Bool = false   # Skip download (e.g. to keep local files out of the download folder)
+    extract::Bool = false         # Whether to extract the dataset after downloading
+    format::String = ""           # File format (e.g., "zip", "tar")
+end
+```
+
+A `DatasetEntry` holds metadata and configuration for a dataset.
+
+**Fields:**
+- `uri::String`: The dataset URI (required).
+- `version::String`: Version or tag for the dataset.
+- `branch::String`: Branch for git repositories.
+- `doi::String`: DOI for the dataset.
+- `aliases::Vector{String}`: Alternative names for the dataset.
+- `key::String`: Unique key for the dataset.
+- `sha256::String`: SHA-256 checksum.
+- `skip_checksum::Bool`: Skip checksum verification for this dataset.
+- `skip_download::Bool`: Skip downloading this dataset.
+- `extract::Bool`: Extract the dataset after download.
+- `format::String`: File format (e.g., "zip", "tar").
+
+**Note:**
+Fields such as `host`, `path`, and `scheme` are internal and not documented here.
+
+---
