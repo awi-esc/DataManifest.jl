@@ -62,7 +62,7 @@ add(db, ...) # will simply download things and update db without writing any tom
 
 ### Documentation
 
-See the [full documentation](/docs/doc.md) and (TODO) the [API](/docs/api.md).
+See the [full documentation](/docs/doc.md) and the [API](/docs/api.md).
 
 
 ## Roadmap
