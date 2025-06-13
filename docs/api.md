@@ -185,7 +185,7 @@ This is equivalent to `search_dataset(db, "dataset_name")[2]`.
 ## `DatasetEntry`
 
 ```
-@kwdef mutable struct DatasetEntry
+struct DatasetEntry
     uri::String = ""
     version::String = ""
     branch::String = ""           # For git repositories
@@ -201,6 +201,7 @@ end
 ```
 
 A `DatasetEntry` holds metadata and configuration for a dataset.
+It is initialized via the `add` method (and internally, `register_dataset` and `init_dataset_entry`).
 
 **Fields:**
 - `uri::String`: The dataset URI (required).
