@@ -52,7 +52,7 @@ end
         @test String(take!(io)) isa String
         write(db, "test.toml")
         @test isfile("test.toml")
-        other = read("test.toml", "datasets-test"; persist=false)
+        other = read_dataset("test.toml", "datasets-test"; persist=false)
         @test other == db
     end
 
