@@ -567,8 +567,6 @@ function guess_file_format(entry::DatasetEntry)
     end
 end
 
-"""
-"""
 function init_dataset_entry(;
     downloads::Vector{String}=Vector{String}(),
     ref::String="",
@@ -725,6 +723,23 @@ function update_entry(db::Database, oldname::String, oldentry::DatasetEntry, new
 end
 
 
+"""
+    register_dataset([db::Database], uri::String; name::String="", overwrite::Bool=false, persist::Bool=true,
+        check_duplicate::Bool=true, version::String="", branch::String="", doi::String="",
+        aliases::Vector{String}=String[], key::String="", sha256::String="", skip_checksum::Bool=false,
+        skip_download::Bool=false, extract::Bool=false, format::String="") -> Pair{String, DatasetEntry}
+
+Register a dataset in the database, without downloading it.
+
+- If `db` is not provided, the default database is used (requires an activated Julia project).
+- If `name` is not provided, it is inferred from the URI or dataset entry.
+- All keyword arguments (except for internal fields) correspond to fields in `DatasetEntry`.
+- Duplicate entries are checked by default; set `check_duplicate=false` to disable.
+- If an entry with the same name or key exists, it is updated or overwritten according to the `overwrite` flag.
+
+# Returns
+A pair `(name => entry)` where `entry` is the registered `DatasetEntry`.
+"""
 function register_dataset(db::Database, uri::String="" ;
     name::String="",
     overwrite::Bool=false,
@@ -984,8 +999,7 @@ function verify_checksum(db:: Database, dataset::DatasetEntry; persist::Bool=tru
 
 end
 
-"""Download a dataset to the specified path (no extraction, no checks).
-"""
+
 function _download_dataset(dataset::DatasetEntry, download_path::String)
 
     mkpath(dirname(download_path))
@@ -1028,7 +1042,22 @@ function _download_dataset(dataset::DatasetEntry, download_path::String)
 end
 
 
-"Fetch dataset"
+"""
+    download_dataset([db::Database], name::String; extract::Union{Nothing,Bool}=nothing, kwargs...) -> String
+    download_dataset([db::Database], entry::DatasetEntry; extract::Union{Nothing,Bool}=nothing) -> String
+    download_dataset(name::String; extract::Union{Nothing,Bool}=nothing, kwargs...) -> String
+
+Download a dataset by name or entry, and return the local path.
+
+- If `db` is not provided, the default database is used (requires an activated Julia project).
+- You can provide either the dataset name or a `DatasetEntry` object.
+- If the dataset is already present, it is not downloaded again.
+- If `extract=true`, the dataset is extracted after download (if applicable).
+- Checksum verification is performed unless disabled.
+
+# Returns
+The local path as a `String`.
+"""
 function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{Nothing,Bool}=nothing)
 
     if (dataset.skip_download)
@@ -1062,7 +1091,24 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
     return local_path
 end
 
-"""Download a dataset by name, searching in alternative fields if necessary.
+"""
+    download_datasets([db::Database], names::Union{Nothing,Vector{<:Any}}=nothing; kwargs...) -> Nothing
+    download_datasets(names::Union{Nothing,Vector{<:Any}}=nothing; kwargs...) -> Nothing
+
+Download multiple datasets by name.
+
+- If `db` is not provided, the default database is used (requires an activated Julia project).
+- If `names` is `nothing`, all datasets in the database are downloaded.
+- Each dataset is downloaded using [`download_dataset`](@ref), with the same keyword arguments.
+- If a dataset is already present, it is not downloaded again.
+
+# Arguments
+- `db::Database` (optional): The database to use.
+- `names::Union{Nothing,Vector{<:Any}}`: List of dataset names to download. If `nothing`, downloads all datasets.
+- `kwargs...`: Additional keyword arguments passed to [`download_dataset`](@ref).
+
+# Returns
+Nothing.
 """
 function download_dataset(db::Database, name::String; extract=nothing, kwargs...)
     datasets = get_datasets(db)

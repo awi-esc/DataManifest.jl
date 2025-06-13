@@ -14,39 +14,97 @@ add([db::Database], uri::String="";
     key::String="",
     sha256::String="",
     skip_checksum::Bool=false,
+    extract::Bool=false,
+    format::String=""
+) -> Pair{String, DatasetEntry}
+```
+
+Add a dataset to the database and optionally download it.
+
+This is a convenience function that calls [`register_dataset`](#register_dataset) to register the dataset, and then [`download_dataset`](#download_dataset) unless `skip_download=true`.
+
+See [`register_dataset`](#register_dataset) and [`download_dataset`](#download_dataset) for details on arguments and behavior.
+
+**Returns:**
+A pair `(name => entry)` where `entry` is the registered `DatasetEntry`.
+
+---
+
+## `register_dataset`
+
+```
+register_dataset([db::Database], uri::String="";
+    name::String="",
+    overwrite::Bool=false,
+    persist::Bool=true,
+    check_duplicate::Bool=true,
+    version::String="",
+    branch::String="",
+    doi::String="",
+    aliases::Vector{String}=String[],
+    key::String="",
+    sha256::String="",
+    skip_checksum::Bool=false,
     skip_download::Bool=false,
     extract::Bool=false,
     format::String=""
 ) -> Pair{String, DatasetEntry}
 ```
 
-Add a dataset to the database, downloading it if necessary.
+Register a dataset in the database, without downloading it.
 
 - If `db` is not provided, the default database is used (requires an activated Julia project).
 - If `name` is not provided, it is inferred from the URI or dataset entry.
 - All keyword arguments (except for internal fields) correspond to fields in `DatasetEntry`.
-- If `skip_download` is `false` (default), the dataset will be downloaded after registration.
-
-**Arguments:**
-- `db::Database` (optional): The database to add the dataset to.
-- `uri::String`: The dataset URI.
-- `name::String`: Name for the dataset.
-- `overwrite::Bool`: Overwrite existing entry if present.
-- `persist::Bool`: Persist changes to disk.
-- `check_duplicate::Bool`: Check for duplicate entries.
-- `skip_download::Bool`: Skip downloading the dataset after registration.
-- `version::String`: Version or tag for the dataset.
-- `branch::String`: Branch for git repositories.
-- `doi::String`: DOI for the dataset.
-- `aliases::Vector{String}`: Alternative names for the dataset.
-- `key::String`: Unique key for the dataset.
-- `sha256::String`: SHA-256 checksum.
-- `skip_checksum::Bool`: Skip checksum verification.
-- `extract::Bool`: Extract the dataset after download.
-- `format::String`: File format (e.g., "zip", "tar").
+- Duplicate entries are checked by default; set `check_duplicate=false` to disable.
+- If an entry with the same name or key exists, it is updated or overwritten according to the `overwrite` flag.
 
 **Returns:**
 A pair `(name => entry)` where `entry` is the registered `DatasetEntry`.
+
+---
+
+## `download_dataset`
+
+```
+download_dataset([db::Database], name::String; extract::Union{Nothing,Bool}=nothing, kwargs...) -> String
+download_dataset([db::Database], entry::DatasetEntry; extract::Union{Nothing,Bool}=nothing) -> String
+download_dataset(name::String; extract::Union{Nothing,Bool}=nothing, kwargs...) -> String
+```
+
+Download a dataset by name or entry, and return the local path.
+
+- If `db` is not provided, the default database is used (requires an activated Julia project).
+- You can provide either the dataset name or a `DatasetEntry` object.
+- If the dataset is already present, it is not downloaded again.
+- If `extract=true`, the dataset is extracted after download (if applicable).
+- Checksum verification is performed unless disabled.
+
+**Returns:**
+The local path as a `String`.
+---
+
+## `download_datasets`
+
+```
+download_datasets([db::Database], names::Union{Nothing,Vector{<:Any}}=nothing; kwargs...) -> Nothing
+download_datasets(names::Union{Nothing,Vector{<:Any}}=nothing; kwargs...) -> Nothing
+```
+
+Download multiple datasets by name.
+
+- If `db` is not provided, the default database is used (requires an activated Julia project).
+- If `names` is `nothing`, all datasets in the database are downloaded.
+- Each dataset is downloaded using [`download_dataset`](#download_dataset), with the same keyword arguments.
+- If a dataset is already present, it is not downloaded again.
+
+**Arguments:**
+- `db::Database` (optional): The database to use.
+- `names::Union{Nothing,Vector{<:Any}}`: List of dataset names to download. If `nothing`, downloads all datasets.
+- `kwargs...`: Additional keyword arguments passed to [`download_dataset`](#download_dataset).
+
+**Returns:**
+Nothing.
 
 ---
 
