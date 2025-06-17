@@ -224,7 +224,7 @@ Search for a dataset by name or alternative keys in the database, returning the 
 **Arguments:**
 - `db::Database` (optional): The database to search in.
 - `name::String`: The name, alias, DOI, key, or path of the dataset.
-- `raise::Bool`: Whether to throw an error if no match or multiple matches are found (default: `true`).
+- `raise::Bool`: Whether to throw an error if no match are found, or a warning if multiple matches are found (default: `true`).
 - `alt::Bool`: Whether to search alternative keys (default: `true`).
 - `partial::Bool`: Whether to allow partial (substring) matches (default: `false`).
 
