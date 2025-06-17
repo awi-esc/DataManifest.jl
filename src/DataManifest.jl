@@ -820,9 +820,9 @@ function list_alternative_keys(dataset::DatasetEntry)
     push!(alternatives, dataset.key)
     push!(alternatives, dataset.path)
     strip_ext = name -> split(name, '.')[1]  # Split by '.' and take the first part (e.g. a.tar.gz -> a)
-    if "/" in dataset.path
+    if '/' in dataset.path
         # If the path contains a '/', we can also use the last segment as an alternative key
-        alternatives = push!(alternatives, strip_ext(split(dataset.path, `/`)[end]))
+        push!(alternatives, strip_ext(split(dataset.path, '/')[end]))
     end
     return alternatives
 end
