@@ -879,29 +879,31 @@ function search_datasets(db::Database, name::String ; alt=true, partial=false)
     datasets = get_datasets(db)
     matches = []
 
+    in_results = (key -> key in Set(e[1] for e in matches))
+
     # first check for exact matches in the keys
     for (key, dataset) in pairs(datasets)
-        if lowercase(key) == lowercase(name)
+        if lowercase(key) == lowercase(name) && !in_results(key)
             push!(matches, key => dataset)
         end
     end
 
     # then check for exact matches in the alternative keys
     for (key, dataset) in pairs(datasets)
-        if alt && lowercase(name) in map(lowercase, list_alternative_keys(dataset))
+        if alt && lowercase(name) in map(lowercase, list_alternative_keys(dataset)) && !in_results(key)
             push!(matches, key => dataset)
         end
     end
 
     # repeat the steps above for partial matches
     for (key, dataset) in pairs(datasets)
-        if partial && occursin(lowercase(name), lowercase(key))
+        if partial && occursin(lowercase(name), lowercase(key)) && !in_results(key)
             push!(matches, key => dataset)
         end
     end
 
     for (key, dataset) in pairs(datasets)
-        if alt && partial && any(x -> occursin(lowercase(name), lowercase(x)), list_alternative_keys(dataset))
+        if alt && partial && any(x -> occursin(lowercase(name), lowercase(x)), list_alternative_keys(dataset)) && !in_results(key)
             push!(matches, key => dataset)
         end
     end
