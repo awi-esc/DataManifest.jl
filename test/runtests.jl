@@ -44,6 +44,8 @@ end
     @testset "Path" begin
         path = get_dataset_path(db, "herzschuh2023")
         @test path == "datasets-test/doi.pangaea.de/10.1594/PANGAEA.930512"
+        path = get_dataset_path(db, "lgmDA", partial=true)
+        @test path == "datasets-test/github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
     end
 
     @testset "TOML" begin

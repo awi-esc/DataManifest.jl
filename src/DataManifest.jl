@@ -948,7 +948,7 @@ function search_dataset(db::Database, name::String; raise=true, kwargs...)
             return nothing
         end
     elseif (length(results) > 1)
-        message = "Multiple datasets found for $name:\n- $(join([join(list_alternative_keys(x), " | ") for x in results], "\n- "))"
+        message = "Multiple datasets found for $name:\n- $(join([join(list_alternative_keys(x), " | ") for (name,x) in results], "\n- "))"
         if raise
             error(message)
         else
