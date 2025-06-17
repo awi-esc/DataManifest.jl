@@ -823,8 +823,13 @@ function list_alternative_keys(dataset::DatasetEntry)
     if '/' in dataset.path
         # If the path contains a '/', we can also use the last segment as an alternative key
         push!(alternatives, strip_ext(split(dataset.path, '/')[end]))
+    unique_names = []
+    for alt in alternatives
+        if !isempty(alt) && !(alt in unique_names)
+            push!(unique_names, alt)
+        end
     end
-    return alternatives
+    return unique_names
 end
 
 function list_dataset_keys(db::Database; alt=true, flat=false)
