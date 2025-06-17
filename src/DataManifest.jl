@@ -641,7 +641,7 @@ function is_a_git_repo(entry::DatasetEntry)
     if entry.host in known_git_hosts || app == "gitlab"
         return true
     else
-        return joinpath(entry.host, entry.path)
+        return false
     end
 
 end
