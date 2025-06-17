@@ -819,6 +819,10 @@ function list_alternative_keys(dataset::DatasetEntry)
     end
     push!(alternatives, dataset.key)
     push!(alternatives, dataset.path)
+    if "/" in dataset.path
+        # If the path contains a '/', we can also use the last segment as an alternative key
+        alternatives = push!(alternatives, split(dataset.path, `/`)[end])
+    end
     return alternatives
 end
 
