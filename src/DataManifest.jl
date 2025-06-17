@@ -819,10 +819,10 @@ function list_alternative_keys(dataset::DatasetEntry)
     end
     push!(alternatives, dataset.key)
     push!(alternatives, dataset.path)
-    strip_ext = name -> split(name, '.')[1]  # Split by '.' and take the first part (e.g. a.tar.gz -> a)
-    if '/' in dataset.path
-        # If the path contains a '/', we can also use the last segment as an alternative key
-        push!(alternatives, strip_ext(split(dataset.path, '/')[end]))
+    if is_a_git_repo(dataset)
+        repo_name = split(strip(dataset.path, '/'), '/')[2]
+        push!(alternatives, repo_name)
+    end
     unique_names = []
     for alt in alternatives
         if !isempty(alt) && !(alt in unique_names)
