@@ -103,7 +103,7 @@ XDG_CACHE_HOME = get(ENV, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
 DEFAULT_DATASETS_FOLDER_PATH = joinpath(XDG_CACHE_HOME, "Datasets")
 DEFAULT_DATASETS_TOML_PATH = ""
 COMPRESSED_FORMATS = ["zip", "tar.gz", "tar"]
-KNOWN_EXTENSIONS = ["."*fmt for fmt in COMPRESSED_FORMATS]  # Known compressed file extensions
+KNOWN_EXTENSIONS = ["."*fmt for fmt in COMPRESSED_FORMATS]
 HIDE_STRUCT_FIELDS = [:host, :path, :scheme]
 
 """
@@ -819,9 +819,10 @@ function list_alternative_keys(dataset::DatasetEntry)
     end
     push!(alternatives, dataset.key)
     push!(alternatives, dataset.path)
+    strip_ext = name -> split(name, '.')[1]  # Split by '.' and take the first part (e.g. a.tar.gz -> a)
     if "/" in dataset.path
         # If the path contains a '/', we can also use the last segment as an alternative key
-        alternatives = push!(alternatives, split(dataset.path, `/`)[end])
+        alternatives = push!(alternatives, strip_ext(split(dataset.path, `/`)[end]))
     end
     return alternatives
 end
