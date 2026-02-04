@@ -359,12 +359,13 @@ function Base.show(io::IO, ::MIME"text/plain", db::Database)
     end
 end
 
-function TOML.print(io::IO, db::Database; kwargs...)
-    return TOML.print(io, to_dict(db); kwargs...)
+# Serialize Database to TOML. By default keys are sorted alphabetically for deterministic output (version-control friendly).
+function TOML.print(io::IO, db::Database; sorted=true, kwargs...)
+    return TOML.print(io, to_dict(db); sorted=sorted, kwargs...)
 end
 
-function TOML.print(db::Database; kwargs...)
-    return TOML.print(to_dict(db); kwargs...)
+function TOML.print(db::Database; sorted=true, kwargs...)
+    return TOML.print(to_dict(db); sorted=sorted, kwargs...)
 end
 
 function write(db::Database, datasets_toml::String; kwargs...)
