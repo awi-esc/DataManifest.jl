@@ -1,7 +1,7 @@
 module DataManifest
 
 using TOML
-using URIParser
+using URIs
 using Logging
 using SHA
 import Downloads
@@ -19,7 +19,7 @@ export write
 export verify_checksum
 export add_dataset, read_dataset
 
-_console_logger = ConsoleLogger(Info; show_limited=true, right_justify=0)
+_console_logger = ConsoleLogger(Logging.Info; show_limited=true, right_justify=0)
 
 function meta_formatter(level::LogLevel, _module, group, id, file, line)
     color, prefix, suffix = _console_logger.meta_formatter(level, _module, group, id, file, line)
@@ -30,7 +30,7 @@ function meta_formatter(level::LogLevel, _module, group, id, file, line)
     )
 end
 
-logger = ConsoleLogger(Info; show_limited=true, right_justify=0, meta_formatter=meta_formatter)
+logger = ConsoleLogger(Logging.Info; show_limited=true, right_justify=0, meta_formatter=meta_formatter)
 
 function info(msg::String)
     with_logger(logger) do
@@ -422,20 +422,13 @@ function parse_uri_metadata(uri::String)
     end
 
     parsed = URI(uri)
-    host = parsed.host
-    scheme = parsed.scheme
-    path = rstrip(parsed.path, '/')
-    fragment = parsed.fragment
+    host = String(parsed.host)
+    scheme = String(parsed.scheme)
+    path = rstrip(String(parsed.path), '/')
+    fragment = String(parsed.fragment)
 
     # Parse query parameters like ?version=xxx or ?ref=xxx
-    query = Dict{String,String}()
-    for q in split(parsed.query, "&")
-        kv = split(q, "=")
-        if length(kv) == 2
-            query[kv[1]] = kv[2]
-        end
-    end
-
+    query = queryparams(parsed)
     version = get(query, "version", "")
     ref = get(query, "ref", "")
     format = get(query, "format", "")
