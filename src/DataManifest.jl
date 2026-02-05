@@ -790,6 +790,7 @@ function get_extract_path(path::String)
 end
 
 function extract_file(download_path, download_dir, format)
+    mkpath(download_dir)
     if format == "zip"
         run(`unzip -o $download_path -d $download_dir`)
     elseif format == "tar.gz"
