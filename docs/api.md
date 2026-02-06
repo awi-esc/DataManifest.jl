@@ -86,6 +86,19 @@ The local path as a `String`.
 
 ---
 
+## `requires` (DatasetEntry field)
+
+The `requires` field specifies other datasets that must be present before this one. Each entry is resolved by name, DOI, or key via `search_dataset`. When downloading, dependencies are fetched first (in topological order). `overwrite` applies only to the main dataset, not to dependencies. Circular dependencies raise an error.
+
+**TOML example:**
+```toml
+[datasets.downstream]
+uri = "https://..."
+requires = ["upstream_dataset", "10.1594/PANGAEA.123456"]
+```
+
+---
+
 ## `delete_dataset`
 
 ```

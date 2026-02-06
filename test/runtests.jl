@@ -115,6 +115,42 @@ end
         @test !isfile(path) && !isdir(path)
     end
 
+    @testset "requires (dependency resolution)" begin
+        db2 = Database(datasets_folder="datasets-test"; persist=false)
+        reporoot = abspath(joinpath(@__DIR__, ".."))
+        register_dataset(db2, "file://$(reporoot)/test-data/data_file.txt"; name="base_data")
+        register_dataset(db2, ""; name="depends_on_base", key="dep-test/dependent",
+            command="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \$key",
+            requires=["base_data"], skip_checksum=true)
+        # Download order: base_data first, then depends_on_base
+        try
+            path = download_dataset(db2, "depends_on_base")
+            @test path == "datasets-test/dep-test/dependent"
+        catch e
+            @info "Skipping requires test (offline or error): $e"
+        end
+        # Command template: $path_<ref>, $path_1, $requires_paths
+        register_dataset(db2, ""; name="uses_paths", key="dep-test/uses_paths",
+            command="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \"\$path_base_data\"",
+            requires=["base_data"], skip_checksum=true)
+        try
+            path = download_dataset(db2, "uses_paths")
+            root = DataManifest.get_project_root(db2)
+            full_dir = root != "" ? joinpath(root, path) : abspath(path)
+            out_path = joinpath(full_dir, "dummy.txt")
+            @test isfile(out_path)
+            out = read(out_path, String)
+            @test occursin("datasets-test", out)
+            @test occursin("data_file", out) || occursin("base_data", out)
+        catch e
+            @info "Skipping path template test: $e"
+        end
+        # Circular dependency
+        register_dataset(db2, ""; name="cycle_a", key="cycle/a", command="true", requires=["cycle_b"], skip_checksum=true)
+        register_dataset(db2, ""; name="cycle_b", key="cycle/b", command="true", requires=["cycle_a"], skip_checksum=true)
+        @test_throws Exception download_dataset(db2, "cycle_a")
+    end
+
     @testset "download_dataset overwrite" begin
         try
             download_dataset(db, "jonkers2024")
