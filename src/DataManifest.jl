@@ -119,6 +119,7 @@ HIDE_STRUCT_FIELDS = [:host, :path, :scheme]
         skip_download::Bool = false   # Skip download (e.g. to keep local files out of the download folder)
         extract::Bool = false         # Whether to extract the dataset after downloading
         format::String = ""           # File format (e.g., "zip", "tar")
+        command::String = ""          # When set, run this command instead of built-in download
     end
 
 A `DatasetEntry` holds metadata and configuration for a dataset.
@@ -136,6 +137,7 @@ It is initialized via the `add` method (and internally, `register_dataset` and `
 - `skip_download::Bool`: Skip downloading this dataset.
 - `extract::Bool`: Extract the dataset after download.
 - `format::String`: File format (e.g., "zip", "tar").
+- `command::String`: When set, run this command instead of built-in download. Template placeholders: `\$download_path`, `\$uri`, `\$key`, `\$version`, `\$doi`, `\$format`, `\$branch`.
 
 # Note
 Fields such as `host`, `path`, and `scheme` are internal and not documented here.
@@ -155,6 +157,7 @@ Fields such as `host`, `path`, and `scheme` are internal and not documented here
     skip_download::Bool = false  # skip download (e.g. to keep local files out of the download folder)
     extract::Bool = false  # Whether to extract the dataset after downloading. If true, the key will point to the extracted folder
     format::String = ""  # For now used for archive in combination with the extract flag. zip or tar etc.. useful if the uri's path does not end with a known extension
+    command::String = ""  # When set, run this command instead of built-in download
 end
 
 
@@ -1005,7 +1008,27 @@ function verify_checksum(db:: Database, dataset::DatasetEntry; persist::Bool=tru
 end
 
 
+function expand_command_template(template::String, entry::DatasetEntry, download_path::String)::String
+    result = template
+    result = replace(result, "\$download_path" => download_path)
+    result = replace(result, "\$uri" => entry.uri)
+    result = replace(result, "\$key" => entry.key)
+    result = replace(result, "\$version" => entry.version)
+    result = replace(result, "\$doi" => entry.doi)
+    result = replace(result, "\$format" => entry.format)
+    result = replace(result, "\$branch" => entry.branch)
+    return result
+end
+
+
 function _download_dataset(dataset::DatasetEntry, download_path::String)
+
+    if dataset.command !== ""
+        mkpath(download_path)
+        cmd_expanded = expand_command_template(dataset.command, dataset, download_path)
+        run(Cmd(split(cmd_expanded)))
+        return
+    end
 
     mkpath(dirname(download_path))
 

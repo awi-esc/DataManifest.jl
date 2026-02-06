@@ -255,6 +255,7 @@ struct DatasetEntry
     skip_download::Bool = false   # Skip download (e.g. to keep local files out of the download folder)
     extract::Bool = false         # Whether to extract the dataset after downloading
     format::String = ""           # File format (e.g., "zip", "tar")
+    command::String = ""          # When set, run this command instead of built-in download
 end
 ```
 
@@ -273,6 +274,7 @@ It is initialized via the `add` method (and internally, `register_dataset` and `
 - `skip_download::Bool`: Skip downloading this dataset.
 - `extract::Bool`: Extract the dataset after download.
 - `format::String`: File format (e.g., "zip", "tar").
+- `command::String`: When set, run this command instead of built-in download. Template placeholders: `$download_path`, `$uri`, `$key`, `$version`, `$doi`, `$format`, `$branch`.
 
 **Note:**
 Fields such as `host`, `path`, and `scheme` are internal and not documented here.

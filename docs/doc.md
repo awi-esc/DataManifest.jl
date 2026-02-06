@@ -134,6 +134,16 @@ uri="https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
 extract=true
 ```
 
+## Command-based entries
+
+When `command` is set, it runs instead of the built-in download. Use template placeholders `$download_path`, `$uri`, `$key`, `$version`, `$doi`, `$format`, `$branch`. Complex logic (pipes, redirects) should go in a script.
+
+```toml
+[my_dataset]
+key = "project/data-v1"
+command = "julia scripts/fetch.jl $key $download_path"
+```
+
 ## Low-level declarative syntax
 
 Examples of the declarative syntax.
