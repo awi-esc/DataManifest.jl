@@ -77,7 +77,7 @@ Download a dataset by name or entry, and return the local path.
 - If `db` is not provided, the default database is used (requires an activated Julia project).
 - You can provide either the dataset name or a `DatasetEntry` object.
 - If the dataset is already present, it is not downloaded again (unless `overwrite=true`).
-- If `overwrite=true`, removes existing files and re-downloads regardless of presence.
+- If `overwrite=true`, skips existence checks and re-downloads (overwrites in place; git and extracted dirs require removal first).
 - If `extract=true`, the dataset is extracted after download (if applicable).
 - Checksum verification is performed unless disabled.
 
