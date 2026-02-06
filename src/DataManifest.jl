@@ -23,7 +23,7 @@ export repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_ke
 export repr_short, string_short
 export write
 export verify_checksum
-export add_dataset, read_dataset
+export add_dataset, read_dataset, delete_dataset
 
 # ConsoleLogger API: show_limited/right_justify added in Julia 1.9
 function _meta_formatter(level::LogLevel, _module, group, id, file, line)
@@ -781,6 +781,52 @@ function register_dataset(db::Database, uri::String="" ;
     return (name => entry)
 end
 
+function _remove_dataset_from_disk(db::Database, entry::DatasetEntry)
+    if entry.skip_download
+        return  # Path is entry.uri, likely external - don't remove
+    end
+    download_path = get_dataset_path(entry, db.datasets_folder; extract=false)
+    if entry.extract
+        local_path = get_dataset_path(entry, db.datasets_folder; extract=true)
+        if isdir(local_path)
+            rm(local_path; force=true, recursive=true)
+        end
+    end
+    if isfile(download_path)
+        rm(download_path; force=true)
+    elseif isdir(download_path)
+        rm(download_path; force=true, recursive=true)
+    end
+end
+
+"""
+    delete_dataset([db::Database], name::String; keep_cache::Bool=false, persist::Bool=true)
+    delete_dataset(name::String; keep_cache::Bool=false, persist::Bool=true)
+
+Remove a dataset from the database (and optionally from disk).
+
+- Removes the entry from `datasets_toml` (or in-memory db).
+- If `keep_cache=false` (default), also removes the dataset files/directories from disk.
+- If `keep_cache=true`, keeps the dataset on disk but removes the entry from the database.
+- For extracted datasets, removes both the archive and the extracted directory when `keep_cache=false`.
+"""
+function delete_dataset(db::Database, name::String; keep_cache::Bool=false, persist::Bool=true)
+    (resolved_name, entry) = search_dataset(db, name)
+    if !keep_cache
+        _remove_dataset_from_disk(db, entry)
+    end
+    delete!(db.datasets, resolved_name)
+    if persist && db.datasets_toml != ""
+        write(db, db.datasets_toml)
+    end
+    return nothing
+end
+
+function delete_dataset(name::String; kwargs...)
+    db = get_default_database()
+    return delete_dataset(db, name; kwargs...)
+end
+
 function get_extract_path(path::String)
     for format in COMPRESSED_FORMATS
         if endswith(path, ".$format")
@@ -1102,14 +1148,15 @@ Download a dataset by name or entry, and return the local path.
 
 - If `db` is not provided, the default database is used (requires an activated Julia project).
 - You can provide either the dataset name or a `DatasetEntry` object.
-- If the dataset is already present, it is not downloaded again.
+- If the dataset is already present, it is not downloaded again (unless `overwrite=true`).
+- If `overwrite=true`, removes existing files and re-downloads regardless of presence.
 - If `extract=true`, the dataset is extracted after download (if applicable).
 - Checksum verification is performed unless disabled.
 
 # Returns
 The local path as a `String`.
 """
-function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{Nothing,Bool}=nothing)
+function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{Nothing,Bool}=nothing, overwrite::Bool=false)
 
     if (dataset.skip_download)
         info("Skipping download for dataset: $(dataset.uri) (skip_download=true)")
@@ -1118,6 +1165,10 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
 
     local_path = get_dataset_path(dataset, db.datasets_folder; extract=extract)
     download_path = get_dataset_path(dataset, db.datasets_folder; extract=false)
+
+    if overwrite
+        _remove_dataset_from_disk(db, dataset)
+    end
 
     if isfile(local_path) || isdir(local_path)
         info("Dataset already exists at: $local_path")
@@ -1162,14 +1213,14 @@ Download multiple datasets by name.
 # Returns
 Nothing.
 """
-function download_dataset(db::Database, name::String; extract=nothing, kwargs...)
+function download_dataset(db::Database, name::String; extract=nothing, overwrite::Bool=false, kwargs...)
     datasets = get_datasets(db)
     if !haskey(datasets, name)
         (idx, dataset) = search_dataset(db, name; kwargs...)
     else
         dataset = datasets[name]
     end
-    return download_dataset(db, dataset; extract=extract)
+    return download_dataset(db, dataset; extract=extract, overwrite=overwrite)
 end
 
 

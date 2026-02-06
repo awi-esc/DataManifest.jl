@@ -67,21 +67,39 @@ A pair `(name => entry)` where `entry` is the registered `DatasetEntry`.
 ## `download_dataset`
 
 ```
-download_dataset([db::Database], name::String; extract::Union{Nothing,Bool}=nothing, kwargs...) -> String
-download_dataset([db::Database], entry::DatasetEntry; extract::Union{Nothing,Bool}=nothing) -> String
-download_dataset(name::String; extract::Union{Nothing,Bool}=nothing, kwargs...) -> String
+download_dataset([db::Database], name::String; extract::Union{Nothing,Bool}=nothing, overwrite::Bool=false, kwargs...) -> String
+download_dataset([db::Database], entry::DatasetEntry; extract::Union{Nothing,Bool}=nothing, overwrite::Bool=false) -> String
+download_dataset(name::String; extract::Union{Nothing,Bool}=nothing, overwrite::Bool=false, kwargs...) -> String
 ```
 
 Download a dataset by name or entry, and return the local path.
 
 - If `db` is not provided, the default database is used (requires an activated Julia project).
 - You can provide either the dataset name or a `DatasetEntry` object.
-- If the dataset is already present, it is not downloaded again.
+- If the dataset is already present, it is not downloaded again (unless `overwrite=true`).
+- If `overwrite=true`, removes existing files and re-downloads regardless of presence.
 - If `extract=true`, the dataset is extracted after download (if applicable).
 - Checksum verification is performed unless disabled.
 
 **Returns:**
 The local path as a `String`.
+
+---
+
+## `delete_dataset`
+
+```
+delete_dataset([db::Database], name::String; keep_cache::Bool=false, persist::Bool=true)
+delete_dataset(name::String; keep_cache::Bool=false, persist::Bool=true)
+```
+
+Remove a dataset from the database (and optionally from disk).
+
+- Removes the entry from `datasets_toml` (or in-memory db).
+- If `keep_cache=false` (default), also removes the dataset files/directories from disk.
+- If `keep_cache=true`, keeps the dataset on disk but removes the entry from the database.
+- For extracted datasets, removes both the archive and the extracted directory when `keep_cache=false`.
+
 ---
 
 ## `download_datasets`

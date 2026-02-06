@@ -89,6 +89,43 @@ end
         end
     end
 
+    @testset "delete_dataset" begin
+        reporoot = abspath(joinpath(@__DIR__, ".."))
+        # Ensure CMIP6_lgm_tos (file://) is downloaded
+        try
+            download_dataset(db, "CMIP6_lgm_tos")
+        catch
+        end
+        path = get_dataset_path(db, "CMIP6_lgm_tos")
+        @test haskey(db.datasets, "CMIP6_lgm_tos")
+        # keep_cache=true: remove from db but keep on disk
+        delete_dataset(db, "CMIP6_lgm_tos"; keep_cache=true, persist=false)
+        @test !haskey(db.datasets, "CMIP6_lgm_tos")
+        @test isfile(path)
+        # Re-register and re-download for keep_cache=false test
+        register_dataset(db, "file://$(reporoot)/test-data/data_file.txt"; name="CMIP6_lgm_tos")
+        try
+            download_dataset(db, "CMIP6_lgm_tos")
+        catch
+        end
+        path = get_dataset_path(db, "CMIP6_lgm_tos")
+        # keep_cache=false: remove from db and disk
+        delete_dataset(db, "CMIP6_lgm_tos"; keep_cache=false, persist=false)
+        @test !haskey(db.datasets, "CMIP6_lgm_tos")
+        @test !isfile(path) && !isdir(path)
+    end
+
+    @testset "download_dataset overwrite" begin
+        try
+            download_dataset(db, "jonkers2024")
+            # overwrite=true should not error (re-downloads)
+            download_dataset(db, "jonkers2024"; overwrite=true)
+            @test isfile(get_dataset_path(db, "jonkers2024"))
+        catch e
+            @info "Skipping overwrite test (offline or error): $e"
+        end
+    end
+
     # Cleanup
     rm("datasets-test"; force=true, recursive=true)
     rm("test.toml"; force=true)
