@@ -62,11 +62,13 @@ end
     end
 
     @testset "Command-based entry (templating)" begin
-        script_path = joinpath(@__DIR__, "write_dummy.jl")
-        command = "julia --startup-file=no $script_path \$download_path \$key"
-        register_dataset(db, ""; name="cmd_dataset", key="cmd-test/templating", command=command, skip_checksum=true)
-        local_path = download_dataset(db, "cmd_dataset")
-        expected_file = joinpath(local_path, "dummy.txt")
+        # Use a db with datasets_toml so project_root is the package dir (not the test env)
+        pkg_root = abspath(joinpath(@__DIR__, ".."))
+        db_cmd = Database(joinpath(pkg_root, "Datasets.toml"), "datasets-test"; persist=false)
+        register_dataset(db_cmd, ""; name="cmd_dataset", key="cmd-test/templating", command="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \$key", skip_checksum=true)
+        local_path = download_dataset(db_cmd, "cmd_dataset")
+        # File is under project_root when command runs with dir=project_root
+        expected_file = joinpath(pkg_root, local_path, "dummy.txt")
         @test isfile(expected_file)
         @test read(expected_file, String) == "cmd-test/templating"
     end
