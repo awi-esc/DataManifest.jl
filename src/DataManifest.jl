@@ -1083,7 +1083,7 @@ function expand_command_template(template::String, entry::DatasetEntry, download
 end
 
 
-function _download_dataset(dataset::DatasetEntry, download_path::String; project_root::String="")
+function _download_dataset(dataset::DatasetEntry, download_path::String; project_root::String="", overwrite::Bool=false)
 
     if dataset.command !== ""
         target_path = (project_root != "" && !isabspath(download_path)) ?
@@ -1116,7 +1116,10 @@ function _download_dataset(dataset::DatasetEntry, download_path::String; project
     end
 
     if (scheme in ("git", "ssh+git") || (scheme == "https" && endswith(dataset.path, ".git")))
-        # repo_url = occursin("@", host) ? "$host:$path" : "git@$host:$path"
+        # git clone requires an empty directory; remove first when overwriting
+        if overwrite && isdir(download_path)
+            rm(download_path; force=true, recursive=true)
+        end
         repo_url = dataset.uri
         if dataset.branch !== ""
             run(`git clone --depth 1 --branch $(dataset.branch) $repo_url $download_path`)
@@ -1149,7 +1152,7 @@ Download a dataset by name or entry, and return the local path.
 - If `db` is not provided, the default database is used (requires an activated Julia project).
 - You can provide either the dataset name or a `DatasetEntry` object.
 - If the dataset is already present, it is not downloaded again (unless `overwrite=true`).
-- If `overwrite=true`, removes existing files and re-downloads regardless of presence.
+- If `overwrite=true`, skips existence checks and re-downloads (overwrites in place; git requires removing the destination first).
 - If `extract=true`, the dataset is extracted after download (if applicable).
 - Checksum verification is performed unless disabled.
 
@@ -1166,25 +1169,25 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
     local_path = get_dataset_path(dataset, db.datasets_folder; extract=extract)
     download_path = get_dataset_path(dataset, db.datasets_folder; extract=false)
 
-    if overwrite
-        _remove_dataset_from_disk(db, dataset)
-    end
-
-    if isfile(local_path) || isdir(local_path)
+    if !overwrite && (isfile(local_path) || isdir(local_path))
         info("Dataset already exists at: $local_path")
         verify_checksum(db, dataset; extract=extract)
         return local_path
     end
 
-    if ! (isfile(download_path) || isdir(download_path))
+    if overwrite || !(isfile(download_path) || isdir(download_path))
         info("Downloading dataset: $(dataset.uri) to $download_path")
         project_root = get_project_root(db)
-        _download_dataset(dataset, download_path; project_root=project_root)
-    else
+        _download_dataset(dataset, download_path; project_root=project_root, overwrite=overwrite)
+    elseif !overwrite
         info("Dataset already exists at: $download_path")
     end
 
     if (dataset.extract)
+        # Remove extracted dir when overwriting so we don't leave stale files
+        if overwrite && isdir(local_path)
+            rm(local_path; force=true, recursive=true)
+        end
         info("Extracting dataset to: $local_path")
         extract_file(download_path, local_path, dataset.format)
     end
