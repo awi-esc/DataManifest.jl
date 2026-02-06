@@ -7,6 +7,12 @@ using SHA
 import Downloads
 import Base: write
 
+# Compat: Julia 1.10's Cmd(exec) only accepts Vector{String}; Julia 1.11+ accepts Vector{<:AbstractString}
+# (e.g. split returns Vector{SubString{String}}). Overload for older versions.
+if VERSION < v"1.11"
+    Base.Cmd(exec::Vector{<:AbstractString}) = Base.Cmd(String.(exec))
+end
+
 export get_dataset_path
 export Database, DatasetEntry
 export register_dataset, register_datasets
@@ -19,23 +25,13 @@ export write
 export verify_checksum
 export add_dataset, read_dataset
 
-# ConsoleLogger API: show_limited/right_justify kwargs added in Julia 1.9
-_console_logger = VERSION >= v"1.9" ?
-    ConsoleLogger(Logging.Info; show_limited=true, right_justify=0) :
-    ConsoleLogger(stderr, Logging.Info)
-
-function meta_formatter(level::LogLevel, _module, group, id, file, line)
-    color, prefix, suffix = _console_logger.meta_formatter(level, _module, group, id, file, line)
-    return (
-        color,
-        "DataManifest",
-        suffix,
-    )
+# ConsoleLogger API: show_limited/right_justify added in Julia 1.9
+function _meta_formatter(level::LogLevel, _module, group, id, file, line)
+    _base = ConsoleLogger(Logging.Info; show_limited=true, right_justify=0)
+    color, prefix, suffix = _base.meta_formatter(level, _module, group, id, file, line)
+    return (color, "DataManifest", suffix)
 end
-
-logger = VERSION >= v"1.9" ?
-    ConsoleLogger(Logging.Info; show_limited=true, right_justify=0, meta_formatter=meta_formatter) :
-    ConsoleLogger(stderr, Logging.Info, meta_formatter)
+logger = ConsoleLogger(Logging.Info; show_limited=true, right_justify=0, meta_formatter=_meta_formatter)
 
 function info(msg::String)
     with_logger(logger) do
