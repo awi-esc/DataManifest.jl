@@ -142,7 +142,7 @@ It is initialized via the `add` method (and internally, `register_dataset` and `
 - `skip_download::Bool`: Skip downloading this dataset.
 - `extract::Bool`: Extract the dataset after download.
 - `format::String`: File format (e.g., "zip", "tar").
-- `command::String`: When set, run this command instead of built-in download. Template placeholders: `\$download_path`, `\$uri`, `\$key`, `\$version`, `\$doi`, `\$format`, `\$branch`.
+- `command::String`: When set, run this command instead of built-in download. Template placeholders: `\$download_path`, `\$project_root`, `\$uri`, `\$key`, `\$version`, `\$doi`, `\$format`, `\$branch`. The command runs with working directory set to the project root when available.
 
 # Note
 Fields such as `host`, `path`, and `scheme` are internal and not documented here.
@@ -1013,9 +1013,24 @@ function verify_checksum(db:: Database, dataset::DatasetEntry; persist::Bool=tru
 end
 
 
-function expand_command_template(template::String, entry::DatasetEntry, download_path::String)::String
+function get_project_root(db::Database)::String
+    if db.datasets_toml != ""
+        return abspath(dirname(db.datasets_toml))
+    end
+    if Base.current_project() !== nothing
+        return abspath(dirname(Base.current_project()))
+    end
+    return ""
+end
+
+function expand_command_template(template::String, entry::DatasetEntry, download_path::String, project_root::String="")::String
+    if occursin("\$project_root", template) && project_root == ""
+        error("Command template contains \$project_root but project root could not be determined. " *
+              "Use an activated Julia project or a Database with datasets_toml set.")
+    end
     result = template
     result = replace(result, "\$download_path" => download_path)
+    result = replace(result, "\$project_root" => project_root)
     result = replace(result, "\$uri" => entry.uri)
     result = replace(result, "\$key" => entry.key)
     result = replace(result, "\$version" => entry.version)
@@ -1026,12 +1041,19 @@ function expand_command_template(template::String, entry::DatasetEntry, download
 end
 
 
-function _download_dataset(dataset::DatasetEntry, download_path::String)
+function _download_dataset(dataset::DatasetEntry, download_path::String; project_root::String="")
 
     if dataset.command !== ""
-        mkpath(download_path)
-        cmd_expanded = expand_command_template(dataset.command, dataset, download_path)
-        run(Cmd(split(cmd_expanded)))
+        target_path = (project_root != "" && !isabspath(download_path)) ?
+            joinpath(project_root, download_path) : download_path
+        mkpath(target_path)
+        cmd_expanded = expand_command_template(dataset.command, dataset, download_path, project_root)
+        cmd = Cmd(split(cmd_expanded))
+        if project_root != ""
+            run(setenv(cmd; dir=project_root))
+        else
+            run(cmd)
+        end
         return
     end
 
@@ -1109,7 +1131,8 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
 
     if ! (isfile(download_path) || isdir(download_path))
         info("Downloading dataset: $(dataset.uri) to $download_path")
-        _download_dataset(dataset, download_path)
+        project_root = get_project_root(db)
+        _download_dataset(dataset, download_path; project_root=project_root)
     else
         info("Dataset already exists at: $download_path")
     end

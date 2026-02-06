@@ -136,7 +136,7 @@ extract=true
 
 ## Command-based entries
 
-When `command` is set, it runs instead of the built-in download. Use template placeholders `$download_path`, `$uri`, `$key`, `$version`, `$doi`, `$format`, `$branch`. Complex logic (pipes, redirects) should go in a script.
+When `command` is set, it runs instead of the built-in download, with working directory set to the project root (when available) for reproducibility. Use template placeholders `$download_path`, `$project_root`, `$uri`, `$key`, `$version`, `$doi`, `$format`, `$branch`. If `$project_root` is used but cannot be determined (no activated project, in-memory database), an error is thrown. Complex logic (pipes, redirects) should go in a script.
 
 ```toml
 [my_dataset]
