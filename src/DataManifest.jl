@@ -138,7 +138,8 @@ It is initialized via the `add` method (and internally, `register_dataset` and `
 - `skip_download::Bool`: Skip downloading this dataset.
 - `extract::Bool`: Extract the dataset after download.
 - `format::String`: File format (e.g., "zip", "tar").
-- `command::String`: When set, run this command instead of built-in download. Template placeholders: `\$download_path`, `\$project_root`, `\$uri`, `\$key`, `\$version`, `\$doi`, `\$format`, `\$branch`. The command runs with working directory set to the project root when available.
+- `command::String`: When set, run this command instead of built-in download. Template placeholders: `\$download_path`, `\$project_root`, `\$uri`, `\$key`, `\$version`, `\$doi`, `\$format`, `\$branch`. For `requires`: `\$path_<ref>` (ref sanitized: `/` and `.` → `_`), `\$path_1`, `\$path_2`, ... (by index), `\$requires_paths` (space-separated). The command runs with working directory set to the project root when available.
+- `requires::Vector{String}`: Names, DOIs, or keys of datasets that must be present before this one. Resolved via `search_dataset`; downloaded in topological order. `overwrite` applies only to the main dataset, not dependencies.
 
 # Note
 Fields such as `host`, `path`, and `scheme` are internal and not documented here.
@@ -159,6 +160,7 @@ Fields such as `host`, `path`, and `scheme` are internal and not documented here
     extract::Bool = false  # Whether to extract the dataset after downloading. If true, the key will point to the extracted folder
     format::String = ""  # For now used for archive in combination with the extract flag. zip or tar etc.. useful if the uri's path does not end with a known extension
     command::String = ""  # When set, run this command instead of built-in download
+    requires::Vector{String} = String[]  # Dataset names/dois/keys that must be present before this one
 end
 
 
@@ -606,6 +608,11 @@ function init_dataset_entry(;
     entry.extract = entry.extract && (entry.format in COMPRESSED_FORMATS)
 
     entry.key = entry.key !== "" ? entry.key : get_dataset_key(entry)
+
+    # Ensure requires is Vector{String} (TOML may give Vector{Any})
+    if !isempty(entry.requires)
+        entry.requires = String[String(r) for r in entry.requires]
+    end
 
     return entry
 end
@@ -1065,7 +1072,59 @@ function get_project_root(db::Database)::String
     return ""
 end
 
-function expand_command_template(template::String, entry::DatasetEntry, download_path::String, project_root::String="")::String
+"""
+Return dataset names in topological order for download (dependencies first).
+Resolves `requires` via search_dataset; errors on missing deps or cycles.
+"""
+function _get_download_order(db::Database, name::String; kwargs...)::Vector{String}
+    graph = Dict{String,Vector{String}}()
+    seen = Set{String}()
+
+    function collect_deps(n::String)
+        n in seen && return
+        push!(seen, n)
+        (_, entry) = search_dataset(db, n; kwargs...)
+        deps = String[]
+        for ref in entry.requires
+            (dep_name, _) = search_dataset(db, ref; kwargs...)
+            push!(deps, dep_name)
+            collect_deps(dep_name)
+        end
+        graph[n] = deps
+    end
+
+    collect_deps(name)
+
+    # Kahn's algorithm: graph[n] = deps (nodes n depends on)
+    in_degree = Dict(n => length(deps) for (n, deps) in pairs(graph))
+    queue = [n for n in keys(graph) if in_degree[n] == 0]
+    order = String[]
+    while !isempty(queue)
+        u = popfirst!(queue)
+        push!(order, u)
+        for (v, deps) in pairs(graph)
+            if u in deps
+                in_degree[v] -= 1
+                if in_degree[v] == 0
+                    push!(queue, v)
+                end
+            end
+        end
+    end
+
+    if length(order) != length(graph)
+        error("Circular dependency in dataset requires: $name")
+    end
+
+    return order  # deps first, then dependents
+end
+
+"""Sanitize ref for placeholder: replace / and . with _ (1:1 with requires)."""
+_sanitize_ref(ref::String) = replace(replace(ref, '/' => '_'), '.' => '_')
+
+function expand_command_template(template::String, entry::DatasetEntry, download_path::String, project_root::String="";
+                                 required_paths_by_ref::Dict{String,String}=Dict{String,String}(),
+                                 required_paths_ordered::Vector{String}=String[])::String
     if occursin("\$project_root", template) && project_root == ""
         error("Command template contains \$project_root but project root could not be determined. " *
               "Use an activated Julia project or a Database with datasets_toml set.")
@@ -1079,17 +1138,31 @@ function expand_command_template(template::String, entry::DatasetEntry, download
     result = replace(result, "\$doi" => entry.doi)
     result = replace(result, "\$format" => entry.format)
     result = replace(result, "\$branch" => entry.branch)
+    # (1) $path_<ref>: per-dataset, ref from requires (sanitized)
+    for (sanitized_ref, path) in pairs(required_paths_by_ref)
+        result = replace(result, "\$path_$(sanitized_ref)" => path)
+    end
+    # (2) $requires_paths: space-separated list
+    result = replace(result, "\$requires_paths" => join(required_paths_ordered, " "))
+    # (3) $path_1, $path_2, ...: by index (1-based)
+    for (i, path) in enumerate(required_paths_ordered)
+        result = replace(result, "\$path_$(i)" => path)
+    end
     return result
 end
 
 
-function _download_dataset(dataset::DatasetEntry, download_path::String; project_root::String="", overwrite::Bool=false)
+function _download_dataset(dataset::DatasetEntry, download_path::String; project_root::String="", overwrite::Bool=false,
+                          required_paths_by_ref::Dict{String,String}=Dict{String,String}(),
+                          required_paths_ordered::Vector{String}=String[])
 
     if dataset.command !== ""
         target_path = (project_root != "" && !isabspath(download_path)) ?
             joinpath(project_root, download_path) : download_path
         mkpath(target_path)
-        cmd_expanded = expand_command_template(dataset.command, dataset, download_path, project_root)
+        cmd_expanded = expand_command_template(dataset.command, dataset, download_path, project_root;
+                                               required_paths_by_ref=required_paths_by_ref,
+                                               required_paths_ordered=required_paths_ordered)
         cmd = Cmd(split(cmd_expanded))
         if project_root != ""
             run(setenv(cmd; dir=project_root))
@@ -1159,7 +1232,25 @@ Download a dataset by name or entry, and return the local path.
 # Returns
 The local path as a `String`.
 """
-function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{Nothing,Bool}=nothing, overwrite::Bool=false)
+function _name_for_entry(db::Database, entry::DatasetEntry)::String
+    for (n, e) in pairs(db.datasets)
+        e === entry && return n
+    end
+    (name, _) = search_dataset(db, entry.key; raise=true)
+    return name
+end
+
+function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{Nothing,Bool}=nothing, overwrite::Bool=false, kwargs...)
+    name = _name_for_entry(db, dataset)
+
+    # Download dependencies first (overwrite never applies to deps)
+    reqs = dataset.requires
+    if !isempty(reqs)
+        order = _get_download_order(db, name; kwargs...)
+        for dep_name in order[1:end-1]  # exclude self
+            download_dataset(db, dep_name; extract=extract, overwrite=false, kwargs...)
+        end
+    end
 
     if (dataset.skip_download)
         info("Skipping download for dataset: $(dataset.uri) (skip_download=true)")
@@ -1178,7 +1269,23 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
     if overwrite || !(isfile(download_path) || isdir(download_path))
         info("Downloading dataset: $(dataset.uri) to $download_path")
         project_root = get_project_root(db)
-        _download_dataset(dataset, download_path; project_root=project_root, overwrite=overwrite)
+        # Build required paths for command template (ref -> path, 1:1 with requires)
+        req_paths_by_ref = Dict{String,String}()
+        req_paths_ordered = String[]
+        if !isempty(reqs) && dataset.command !== ""
+            order = _get_download_order(db, name; kwargs...)
+            for ref in reqs
+                (_, dep_entry) = search_dataset(db, ref; kwargs...)
+                path = get_dataset_path(dep_entry, db.datasets_folder; extract=extract !== nothing ? extract : dep_entry.extract)
+                req_paths_by_ref[_sanitize_ref(ref)] = path
+            end
+            for dep_name in order[1:end-1]
+                (_, dep_entry) = search_dataset(db, dep_name; kwargs...)
+                push!(req_paths_ordered, get_dataset_path(dep_entry, db.datasets_folder; extract=extract !== nothing ? extract : dep_entry.extract))
+            end
+        end
+        _download_dataset(dataset, download_path; project_root=project_root, overwrite=overwrite,
+                         required_paths_by_ref=req_paths_by_ref, required_paths_ordered=req_paths_ordered)
     elseif !overwrite
         info("Dataset already exists at: $download_path")
     end
@@ -1219,11 +1326,11 @@ Nothing.
 function download_dataset(db::Database, name::String; extract=nothing, overwrite::Bool=false, kwargs...)
     datasets = get_datasets(db)
     if !haskey(datasets, name)
-        (idx, dataset) = search_dataset(db, name; kwargs...)
+        (_, dataset) = search_dataset(db, name; kwargs...)
     else
         dataset = datasets[name]
     end
-    return download_dataset(db, dataset; extract=extract, overwrite=overwrite)
+    return download_dataset(db, dataset; extract=extract, overwrite=overwrite, kwargs...)
 end
 
 
