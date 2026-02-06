@@ -19,7 +19,10 @@ export write
 export verify_checksum
 export add_dataset, read_dataset
 
-_console_logger = ConsoleLogger(Logging.Info; show_limited=true, right_justify=0)
+# ConsoleLogger API: show_limited/right_justify kwargs added in Julia 1.9
+_console_logger = VERSION >= v"1.9" ?
+    ConsoleLogger(Logging.Info; show_limited=true, right_justify=0) :
+    ConsoleLogger(stderr, Logging.Info)
 
 function meta_formatter(level::LogLevel, _module, group, id, file, line)
     color, prefix, suffix = _console_logger.meta_formatter(level, _module, group, id, file, line)
@@ -30,7 +33,9 @@ function meta_formatter(level::LogLevel, _module, group, id, file, line)
     )
 end
 
-logger = ConsoleLogger(Logging.Info; show_limited=true, right_justify=0, meta_formatter=meta_formatter)
+logger = VERSION >= v"1.9" ?
+    ConsoleLogger(Logging.Info; show_limited=true, right_justify=0, meta_formatter=meta_formatter) :
+    ConsoleLogger(stderr, Logging.Info, meta_formatter)
 
 function info(msg::String)
     with_logger(logger) do
