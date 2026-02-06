@@ -61,6 +61,16 @@ end
         @test other == db
     end
 
+    @testset "Command-based entry (templating)" begin
+        script_path = joinpath(@__DIR__, "write_dummy.jl")
+        command = "julia --startup-file=no $script_path \$download_path \$key"
+        register_dataset(db, ""; name="cmd_dataset", key="cmd-test/templating", command=command, skip_checksum=true)
+        local_path = download_dataset(db, "cmd_dataset")
+        expected_file = joinpath(local_path, "dummy.txt")
+        @test isfile(expected_file)
+        @test read(expected_file, String) == "cmd-test/templating"
+    end
+
     @testset "Download (optional, may skip if offline)" begin
         try
             local_path = download_dataset(db, "jonkers2024")
