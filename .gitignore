@@ -23,4 +23,5 @@ docs/site/
 # environment.
 Manifest.toml
 
+# Test artifacts (tests use mktempdir; keep for manual runs / backwards compat)
 datasets-test
