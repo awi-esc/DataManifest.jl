@@ -4,7 +4,6 @@ using TOML
 
 function setup_db()
     db = Database(datasets_folder="datasets-test")
-    rm("datasets-test"; force=true, recursive=true)
     # pop!(db.datasets, "CMIP6_lgm_tos") # remote the ssh:// entry
     register_dataset(db, "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip";
         name="herzschuh2023", doi="10.1594/PANGAEA.930512")
@@ -17,7 +16,13 @@ function setup_db()
     return db
 end
 
+pkg_root = abspath(joinpath(@__DIR__, ".."))
+
+try
 @testset "DataManifest.jl" begin
+    # Clean before tests (ensure fresh state, avoid pollution from previous runs)
+    rm(joinpath(pkg_root, "datasets-test"); force=true, recursive=true)
+    rm(joinpath(pkg_root, "test.toml"); force=true)
     db = setup_db()
 
     @testset "Registration" begin
@@ -161,8 +166,9 @@ end
             @info "Skipping overwrite test (offline or error): $e"
         end
     end
-
-    # Cleanup
-    rm("datasets-test"; force=true, recursive=true)
-    rm("test.toml"; force=true)
+end
+finally
+    # Cleanup (use absolute paths; runs even if tests fail)
+    rm(joinpath(pkg_root, "datasets-test"); force=true, recursive=true)
+    rm(joinpath(pkg_root, "test.toml"); force=true)
 end
