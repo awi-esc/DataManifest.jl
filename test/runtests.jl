@@ -22,7 +22,6 @@ try
 @testset "DataManifest.jl" begin
     # Clean before tests (ensure fresh state, avoid pollution from previous runs)
     rm(joinpath(pkg_root, "datasets-test"); force=true, recursive=true)
-    rm(joinpath(pkg_root, "test.toml"); force=true)
     db = setup_db()
 
     @testset "Registration" begin
@@ -60,9 +59,11 @@ try
         io = IOBuffer()
         TOML.print(io, db)
         @test String(take!(io)) isa String
-        write(db, "test.toml")
-        @test isfile("test.toml")
-        other = read_dataset("test.toml", "datasets-test"; persist=false)
+        test_toml = joinpath(pkg_root, "datasets-test", "test.toml")
+        mkpath(dirname(test_toml))
+        write(db, test_toml)
+        @test isfile(test_toml)
+        other = read_dataset(test_toml, "datasets-test"; persist=false)
         @test other == db
     end
 
@@ -168,7 +169,6 @@ try
     end
 end
 finally
-    # Cleanup (use absolute paths; runs even if tests fail)
+    # Cleanup (runs even if tests fail; datasets-test contains all test artifacts including test.toml)
     rm(joinpath(pkg_root, "datasets-test"); force=true, recursive=true)
-    rm(joinpath(pkg_root, "test.toml"); force=true)
 end
