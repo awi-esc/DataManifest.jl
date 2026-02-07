@@ -2,27 +2,24 @@ using Test
 using DataManifest
 using TOML
 
-function setup_db()
-    db = Database(datasets_folder="datasets-test")
-    # pop!(db.datasets, "CMIP6_lgm_tos") # remote the ssh:// entry
+pkg_root = abspath(joinpath(@__DIR__, ".."))
+
+function setup_db(datasets_folder::String)
+    db = Database(datasets_folder=datasets_folder; persist=false)
     register_dataset(db, "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip";
         name="herzschuh2023", doi="10.1594/PANGAEA.930512")
     register_dataset(db, "https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv";
         name="jonkers2024", doi="10.1594/PANGAEA.962852")
-    # register_dataset(db, "https://github.com/jesstierney/lgmDA.git")
     register_dataset(db, "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip")
-    reporoot = abspath(joinpath(@__DIR__, ".."))
-    register_dataset(db, "file://$(reporoot)/test-data/data_file.txt"; name="CMIP6_lgm_tos")
+    register_dataset(db, "file://$(pkg_root)/test-data/data_file.txt"; name="CMIP6_lgm_tos")
     return db
 end
 
-pkg_root = abspath(joinpath(@__DIR__, ".."))
+datasets_dir = mktempdir(prefix="DataManifest_test_"; cleanup=true)
 
 try
 @testset "DataManifest.jl" begin
-    # Clean before tests (ensure fresh state, avoid pollution from previous runs)
-    rm(joinpath(pkg_root, "datasets-test"); force=true, recursive=true)
-    db = setup_db()
+    db = setup_db(datasets_dir)
 
     @testset "Registration" begin
         @test haskey(db.datasets, "herzschuh2023")
@@ -47,34 +44,29 @@ try
 
     @testset "Path" begin
         path = get_dataset_path(db, "herzschuh2023")
-        @test path == "datasets-test/doi.pangaea.de/10.1594/PANGAEA.930512"
+        @test path == joinpath(datasets_dir, "doi.pangaea.de/10.1594/PANGAEA.930512")
         path = get_dataset_path(db, "lgmDA")
-        @test path == "datasets-test/github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
+        @test path == joinpath(datasets_dir, "github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip")
         path = get_dataset_path(db, "tierney", partial=true)
-        @test path == "datasets-test/github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
-
+        @test path == joinpath(datasets_dir, "github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip")
     end
 
     @testset "TOML" begin
         io = IOBuffer()
         TOML.print(io, db)
         @test String(take!(io)) isa String
-        test_toml = joinpath(pkg_root, "datasets-test", "test.toml")
-        mkpath(dirname(test_toml))
+        test_toml = joinpath(datasets_dir, "test.toml")
         write(db, test_toml)
         @test isfile(test_toml)
-        other = read_dataset(test_toml, "datasets-test"; persist=false)
+        other = read_dataset(test_toml, datasets_dir; persist=false)
         @test other == db
     end
 
     @testset "Command-based entry (templating)" begin
-        # Use a db with datasets_toml so project_root is the package dir (not the test env)
-        pkg_root = abspath(joinpath(@__DIR__, ".."))
-        db_cmd = Database(joinpath(pkg_root, "Datasets.toml"), "datasets-test"; persist=false)
+        db_cmd = Database(joinpath(pkg_root, "Datasets.toml"), datasets_dir; persist=false)
         register_dataset(db_cmd, ""; name="cmd_dataset", key="cmd-test/templating", command="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \$key", skip_checksum=true)
         local_path = download_dataset(db_cmd, "cmd_dataset")
-        # File is under project_root when command runs with dir=project_root
-        expected_file = joinpath(pkg_root, local_path, "dummy.txt")
+        expected_file = joinpath(local_path, "dummy.txt")
         @test isfile(expected_file)
         @test read(expected_file, String) == "cmd-test/templating"
     end
@@ -96,7 +88,6 @@ try
     end
 
     @testset "delete_dataset" begin
-        reporoot = abspath(joinpath(@__DIR__, ".."))
         # Ensure CMIP6_lgm_tos (file://) is downloaded
         try
             download_dataset(db, "CMIP6_lgm_tos")
@@ -109,7 +100,7 @@ try
         @test !haskey(db.datasets, "CMIP6_lgm_tos")
         @test isfile(path)
         # Re-register and re-download for keep_cache=false test
-        register_dataset(db, "file://$(reporoot)/test-data/data_file.txt"; name="CMIP6_lgm_tos")
+        register_dataset(db, "file://$(pkg_root)/test-data/data_file.txt"; name="CMIP6_lgm_tos")
         try
             download_dataset(db, "CMIP6_lgm_tos")
         catch
@@ -122,16 +113,15 @@ try
     end
 
     @testset "requires (dependency resolution)" begin
-        db2 = Database(datasets_folder="datasets-test"; persist=false)
-        reporoot = abspath(joinpath(@__DIR__, ".."))
-        register_dataset(db2, "file://$(reporoot)/test-data/data_file.txt"; name="base_data")
+        db2 = Database(datasets_folder=datasets_dir; persist=false)
+        register_dataset(db2, "file://$(pkg_root)/test-data/data_file.txt"; name="base_data")
         register_dataset(db2, ""; name="depends_on_base", key="dep-test/dependent",
             command="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \$key",
             requires=["base_data"], skip_checksum=true)
         # Download order: base_data first, then depends_on_base
         try
             path = download_dataset(db2, "depends_on_base")
-            @test path == "datasets-test/dep-test/dependent"
+            @test path == joinpath(datasets_dir, "dep-test/dependent")
         catch e
             @info "Skipping requires test (offline or error): $e"
         end
@@ -146,7 +136,6 @@ try
             out_path = joinpath(full_dir, "dummy.txt")
             @test isfile(out_path)
             out = read(out_path, String)
-            @test occursin("datasets-test", out)
             @test occursin("data_file", out) || occursin("base_data", out)
         catch e
             @info "Skipping path template test: $e"
@@ -169,6 +158,5 @@ try
     end
 end
 finally
-    # Cleanup (runs even if tests fail; datasets-test contains all test artifacts including test.toml)
-    rm(joinpath(pkg_root, "datasets-test"); force=true, recursive=true)
+    rm(datasets_dir; force=true, recursive=true)
 end
