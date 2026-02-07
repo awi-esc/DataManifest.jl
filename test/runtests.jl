@@ -11,7 +11,7 @@ function setup_db(datasets_folder::String)
     register_dataset(db, "https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv";
         name="jonkers2024", doi="10.1594/PANGAEA.962852")
     register_dataset(db, "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip")
-    register_dataset(db, "file://$(pkg_root)/test-data/data_file.txt"; name="CMIP6_lgm_tos")
+    register_dataset(db, "file://$(joinpath(@__DIR__, "test-data", "data_file.txt"))"; name="CMIP6_lgm_tos")
     return db
 end
 
@@ -100,7 +100,7 @@ try
         @test !haskey(db.datasets, "CMIP6_lgm_tos")
         @test isfile(path)
         # Re-register and re-download for keep_cache=false test
-        register_dataset(db, "file://$(pkg_root)/test-data/data_file.txt"; name="CMIP6_lgm_tos")
+        register_dataset(db, "file://$(joinpath(@__DIR__, "test-data", "data_file.txt"))"; name="CMIP6_lgm_tos")
         try
             download_dataset(db, "CMIP6_lgm_tos")
         catch
@@ -114,7 +114,7 @@ try
 
     @testset "requires (dependency resolution)" begin
         db2 = Database(datasets_folder=datasets_dir; persist=false)
-        register_dataset(db2, "file://$(pkg_root)/test-data/data_file.txt"; name="base_data")
+        register_dataset(db2, "file://$(joinpath(@__DIR__, "test-data", "data_file.txt"))"; name="base_data")
         register_dataset(db2, ""; name="depends_on_base", key="dep-test/dependent",
             command="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \$key",
             requires=["base_data"], skip_checksum=true)
