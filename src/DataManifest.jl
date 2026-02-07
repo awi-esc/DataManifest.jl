@@ -138,7 +138,7 @@ It is initialized via the `add` method (and internally, `register_dataset` and `
 - `skip_download::Bool`: Skip downloading this dataset.
 - `extract::Bool`: Extract the dataset after download.
 - `format::String`: File format (e.g., "zip", "tar").
-- `command::String`: When set, run this command instead of built-in download. Template placeholders: `\$download_path`, `\$project_root`, `\$uri`, `\$key`, `\$version`, `\$doi`, `\$format`, `\$branch`. For `requires`: `\$path_<ref>` (ref sanitized: `/` and `.` → `_`), `\$path_1`, `\$path_2`, ... (by index), `\$requires_paths` (space-separated). The command runs with working directory set to the project root when available.
+- `command::String`: When set, run this command instead of built-in download. Template placeholders: `\$download_path`, `\$project_root`, `\$uri`, `\$key`, `\$version`, `\$doi`, `\$format`, `\$branch`. For `requires`: `\$path_<ref>` (ref sanitized: `/` and `.` → `_`), `\$path_1`, `\$path_2`, ... (by index), `\$requires_paths` (space-separated). The command runs with working directory set to the project root when available. If `download_path` is a directory, only its parent is pre-created; the command must create the directory or ensure the output path exists.
 - `requires::Vector{String}`: Names, DOIs, or keys of datasets that must be present before this one. Resolved via `search_dataset`; downloaded in topological order. `overwrite` applies only to the main dataset, not dependencies.
 
 # Note
@@ -1152,14 +1152,24 @@ function expand_command_template(template::String, entry::DatasetEntry, download
 end
 
 
+"""
+    _download_dataset(dataset, download_path; project_root, overwrite, required_paths_by_ref, required_paths_ordered)
+
+Perform the actual download for a dataset.
+
+`download_path` may be a file (e.g. for direct downloads) or a directory (e.g. for commands or git clones).
+The parent directory is always created via `mkpath(dirname(download_path))`. For command-based downloads,
+if `download_path` is a directory, the command must create it or write into an existing path; only the
+parent is pre-created. The command runs with `dir=project_root` when set, so paths in the template
+are relative to the project root.
+"""
 function _download_dataset(dataset::DatasetEntry, download_path::String; project_root::String="", overwrite::Bool=false,
                           required_paths_by_ref::Dict{String,String}=Dict{String,String}(),
                           required_paths_ordered::Vector{String}=String[])
 
+    mkpath(dirname(download_path))
+
     if dataset.command !== ""
-        target_path = (project_root != "" && !isabspath(download_path)) ?
-            joinpath(project_root, download_path) : download_path
-        mkpath(target_path)
         cmd_expanded = expand_command_template(dataset.command, dataset, download_path, project_root;
                                                required_paths_by_ref=required_paths_by_ref,
                                                required_paths_ordered=required_paths_ordered)
@@ -1171,8 +1181,6 @@ function _download_dataset(dataset::DatasetEntry, download_path::String; project
         end
         return
     end
-
-    mkpath(dirname(download_path))
 
     scheme = dataset.scheme
 
