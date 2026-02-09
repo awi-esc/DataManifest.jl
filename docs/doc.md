@@ -134,14 +134,14 @@ uri="https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
 extract=true
 ```
 
-## Command-based entries
+## Shell- and Julia-based entries
 
-When `command` is set, it runs instead of the built-in download, with working directory set to the project root (when available) for reproducibility. Use template placeholders `$download_path`, `$project_root`, `$uri`, `$key`, `$version`, `$doi`, `$format`, `$branch`. If `$project_root` is used but cannot be determined (no activated project, in-memory database), an error is thrown. Complex logic (pipes, redirects) should go in a script.
+When `shell` is set, that command runs instead of the built-in download, with working directory set to the project root (when available) for reproducibility. Use template placeholders `$download_path`, `$project_root`, `$uri`, `$key`, `$version`, `$doi`, `$format`, `$branch`. If `$project_root` is used but cannot be determined (no activated project, in-memory database), an error is thrown. Complex logic (pipes, redirects) should go in a script. Alternatively, set `julia` to run Julia code in an isolated module (takes precedence over `shell`); use `julia_modules` to load modules before the code.
 
 ```toml
 [my_dataset]
 key = "project/data-v1"
-command = "julia scripts/fetch.jl $key $download_path"
+shell = "julia scripts/fetch.jl $key $download_path"
 ```
 
 ## Low-level declarative syntax

@@ -64,17 +64,17 @@ try
 
     @testset "Command-based entry (templating)" begin
         db_cmd = Database(joinpath(pkg_root, "Datasets.toml"), datasets_dir; persist=false)
-        register_dataset(db_cmd, ""; name="cmd_dataset", key="cmd-test/templating", command="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \$key", skip_checksum=true)
+        register_dataset(db_cmd, ""; name="cmd_dataset", key="cmd-test/templating", shell="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \$key", skip_checksum=true)
         local_path = download_dataset(db_cmd, "cmd_dataset")
         expected_file = joinpath(local_path, "dummy.txt")
         @test isfile(expected_file)
         @test read(expected_file, String) == "cmd-test/templating"
     end
 
-    @testset "julia_cmd (inline Julia in isolated module)" begin
+    @testset "julia (inline Julia in isolated module)" begin
         db_jl = Database(datasets_folder=datasets_dir; persist=false)
         register_dataset(db_jl, ""; name="julia_cmd_dataset", key="julia-cmd-test/result",
-            julia_cmd="mkpath(download_path)\nwrite(joinpath(download_path, \"out.txt\"), entry.key)",
+            julia="mkpath(download_path)\nwrite(joinpath(download_path, \"out.txt\"), entry.key)",
             skip_checksum=true)
         local_path = download_dataset(db_jl, "julia_cmd_dataset")
         expected_file = joinpath(local_path, "out.txt")
@@ -127,7 +127,7 @@ try
         db2 = Database(datasets_folder=datasets_dir; persist=false)
         register_dataset(db2, "file://$(joinpath(@__DIR__, "test-data", "data_file.txt"))"; name="base_data")
         register_dataset(db2, ""; name="depends_on_base", key="dep-test/dependent",
-            command="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \$key",
+            shell="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \$key",
             requires=["base_data"], skip_checksum=true)
         # Download order: base_data first, then depends_on_base
         try
@@ -138,7 +138,7 @@ try
         end
         # Command template: $path_<ref>, $path_1, $requires_paths
         register_dataset(db2, ""; name="uses_paths", key="dep-test/uses_paths",
-            command="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \"\$path_base_data\"",
+            shell="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \"\$path_base_data\"",
             requires=["base_data"], skip_checksum=true)
         try
             path = download_dataset(db2, "uses_paths")
@@ -152,8 +152,8 @@ try
             @info "Skipping path template test: $e"
         end
         # Circular dependency
-        register_dataset(db2, ""; name="cycle_a", key="cycle/a", command="true", requires=["cycle_b"], skip_checksum=true)
-        register_dataset(db2, ""; name="cycle_b", key="cycle/b", command="true", requires=["cycle_a"], skip_checksum=true)
+        register_dataset(db2, ""; name="cycle_a", key="cycle/a", shell="true", requires=["cycle_b"], skip_checksum=true)
+        register_dataset(db2, ""; name="cycle_b", key="cycle/b", shell="true", requires=["cycle_a"], skip_checksum=true)
         @test_throws Exception download_dataset(db2, "cycle_a")
     end
 
