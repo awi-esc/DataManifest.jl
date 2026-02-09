@@ -596,7 +596,10 @@ function init_dataset_entry(;
         entry.format = parsed.format !== "" ? parsed.format : entry.format
         entry.version = parsed.version !== "" ? parsed.version : (entry.version !== "" ? entry.version : ref)
     else
-        entry.uri = build_uri(entry)
+        # Command-based entries have no URI; leave empty instead of filling "://"
+        if entry.command == ""
+            entry.uri = build_uri(entry)
+        end
     end
 
     if (entry.format == "")
@@ -1367,15 +1370,21 @@ function download_dataset(name::String; kwargs...)
     return download_dataset(db, name; kwargs...)
 end
 
+download_dataset(db::Nothing, name::String; kwargs...) = download_dataset(name; kwargs...)
+
 function download_datasets(names=nothing; kwargs...)
     db = get_default_database()
     return download_datasets(db, names; kwargs...)
 end
 
-function register_dataset(uri=String; kwargs...)
+download_datasets(db::Nothing, names::Union{Nothing,Vector{<:Any}}=nothing; kwargs...) = download_datasets(names; kwargs...)
+
+function register_dataset(uri::String; kwargs...)
     db = get_default_database()
     return register_dataset(db, uri; kwargs...)
 end
+
+register_dataset(db::Nothing, uri::String; kwargs...) = register_dataset(uri; kwargs...)
 
 
 function register_datasets(db::Database, datasets::Dict; kwargs...)
@@ -1431,7 +1440,7 @@ function get_default_toml()
                 end
             end
             # supports legacy datasets.toml files
-            return legacy
+            return currentdefault
         end
         return currentdefault
     else
