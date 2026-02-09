@@ -71,6 +71,17 @@ try
         @test read(expected_file, String) == "cmd-test/templating"
     end
 
+    @testset "julia_cmd (inline Julia in isolated module)" begin
+        db_jl = Database(datasets_folder=datasets_dir; persist=false)
+        register_dataset(db_jl, ""; name="julia_cmd_dataset", key="julia-cmd-test/result",
+            julia_cmd="mkpath(download_path)\nwrite(joinpath(download_path, \"out.txt\"), entry.key)",
+            skip_checksum=true)
+        local_path = download_dataset(db_jl, "julia_cmd_dataset")
+        expected_file = joinpath(local_path, "out.txt")
+        @test isfile(expected_file)
+        @test read(expected_file, String) == "julia-cmd-test/result"
+    end
+
     @testset "Download (optional, may skip if offline)" begin
         try
             local_path = download_dataset(db, "jonkers2024")

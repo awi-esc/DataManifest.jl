@@ -139,6 +139,8 @@ It is initialized via the `add` method (and internally, `register_dataset` and `
 - `extract::Bool`: Extract the dataset after download.
 - `format::String`: File format (e.g., "zip", "tar").
 - `command::String`: When set, run this command instead of built-in download. Template placeholders: `\$download_path`, `\$project_root`, `\$uri`, `\$key`, `\$version`, `\$doi`, `\$format`, `\$branch`. For `requires`: `\$path_<ref>` (ref sanitized: `/` and `.` → `_`), `\$path_1`, `\$path_2`, ... (by index), `\$requires_paths` (space-separated). The command runs with working directory set to the project root when available. If `download_path` is a directory, only its parent is pre-created; the command must create the directory or ensure the output path exists.
+- `julia_cmd::String`: When set, run this Julia code in an isolated module instead of built-in download (takes precedence over `command`). The code has access to `download_path`, `project_root`, `entry`, `required_paths_by_ref`, `required_paths_ordered`. Use `julia_modules` to run `using X` for modules before the code.
+- `julia_modules::Vector{String}`: Module names to load with `using X` in the same isolated module before running `julia_cmd`. Ignored if `julia_cmd` is empty.
 - `requires::Vector{String}`: Names, DOIs, or keys of datasets that must be present before this one. Resolved via `search_dataset`; downloaded in topological order. `overwrite` applies only to the main dataset, not dependencies.
 
 # Note
@@ -160,6 +162,8 @@ Fields such as `host`, `path`, and `scheme` are internal and not documented here
     extract::Bool = false  # Whether to extract the dataset after downloading. If true, the key will point to the extracted folder
     format::String = ""  # For now used for archive in combination with the extract flag. zip or tar etc.. useful if the uri's path does not end with a known extension
     command::String = ""  # When set, run this command instead of built-in download
+    julia_cmd::String = ""  # When set, run this Julia code in an isolated module (takes precedence over command)
+    julia_modules::Vector{String} = String[]  # Module names for "using X" before running julia_cmd
     requires::Vector{String} = String[]  # Dataset names/dois/keys that must be present before this one
 end
 
@@ -596,8 +600,8 @@ function init_dataset_entry(;
         entry.format = parsed.format !== "" ? parsed.format : entry.format
         entry.version = parsed.version !== "" ? parsed.version : (entry.version !== "" ? entry.version : ref)
     else
-        # Command-based entries have no URI; leave empty instead of filling "://"
-        if entry.command == ""
+        # Command- or julia_cmd-based entries have no URI; leave empty instead of filling "://"
+        if entry.command == "" && entry.julia_cmd == ""
             entry.uri = build_uri(entry)
         end
     end
@@ -612,9 +616,12 @@ function init_dataset_entry(;
 
     entry.key = entry.key !== "" ? entry.key : get_dataset_key(entry)
 
-    # Ensure requires is Vector{String} (TOML may give Vector{Any})
+    # Ensure requires and julia_modules are Vector{String} (TOML may give Vector{Any})
     if !isempty(entry.requires)
         entry.requires = String[String(r) for r in entry.requires]
+    end
+    if !isempty(entry.julia_modules)
+        entry.julia_modules = String[String(m) for m in entry.julia_modules]
     end
 
     return entry
@@ -1156,6 +1163,30 @@ end
 
 
 """
+Run `dataset.julia_cmd` in an isolated module with injected bindings and optional `using` from `julia_modules`.
+Edge-case path: does not modify caller or Main.
+"""
+function _run_julia_cmd(dataset::DatasetEntry, download_path::String, project_root::String;
+                       required_paths_by_ref::Dict{String,String}=Dict{String,String}(),
+                       required_paths_ordered::Vector{String}=String[])
+    mod = Module()
+    Core.eval(mod, :(download_path = $download_path))
+    Core.eval(mod, :(project_root = $project_root))
+    Core.eval(mod, :(entry = $dataset))
+    Core.eval(mod, :(required_paths_by_ref = $required_paths_by_ref))
+    Core.eval(mod, :(required_paths_ordered = $required_paths_ordered))
+    for m in dataset.julia_modules
+        Core.eval(mod, :(using $(Symbol(m))))
+    end
+    run_code() = Base.include_string(mod, dataset.julia_cmd, "julia_cmd")
+    if project_root != ""
+        cd(run_code, project_root)
+    else
+        run_code()
+    end
+end
+
+"""
     _download_dataset(dataset, download_path; project_root, overwrite, required_paths_by_ref, required_paths_ordered)
 
 Perform the actual download for a dataset.
@@ -1171,6 +1202,13 @@ function _download_dataset(dataset::DatasetEntry, download_path::String; project
                           required_paths_ordered::Vector{String}=String[])
 
     mkpath(dirname(download_path))
+
+    if dataset.julia_cmd !== ""
+        _run_julia_cmd(dataset, download_path, project_root;
+                      required_paths_by_ref=required_paths_by_ref,
+                      required_paths_ordered=required_paths_ordered)
+        return
+    end
 
     if dataset.command !== ""
         cmd_expanded = expand_command_template(dataset.command, dataset, download_path, project_root;
@@ -1280,10 +1318,10 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
     if overwrite || !(isfile(download_path) || isdir(download_path))
         info("Downloading dataset: $(dataset.uri) to $download_path")
         project_root = get_project_root(db)
-        # Build required paths for command template (ref -> path, 1:1 with requires)
+        # Build required paths for command/julia_cmd template (ref -> path, 1:1 with requires)
         req_paths_by_ref = Dict{String,String}()
         req_paths_ordered = String[]
-        if !isempty(reqs) && dataset.command !== ""
+        if !isempty(reqs) && (dataset.command !== "" || dataset.julia_cmd !== "")
             order = _get_download_order(db, name; kwargs...)
             for ref in reqs
                 (_, dep_entry) = search_dataset(db, ref; kwargs...)
