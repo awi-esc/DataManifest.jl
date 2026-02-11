@@ -144,6 +144,39 @@ key = "project/data-v1"
 shell = "julia scripts/fetch.jl $key $download_path"
 ```
 
+## Loading datasets (load_dataset)
+
+`load_dataset(db, name)` downloads the dataset (if needed) and returns a loaded object. You can pass a **loader** function: it is called as `loader(path, entry)` (or `loader(path)` if it only accepts one argument). If you omit the loader, the entry’s `loader` field is used (see below), or else a format-based default (e.g. CSV when available).
+
+```julia
+data = load_dataset(db, "jonkers2024"; loader = path -> read(path, String))
+# or with entry metadata:
+data = load_dataset(db, "jonkers2024"; loader = (path, entry) -> (println(entry.doi); CSV.read(path, DataFrame)))
+```
+
+## Database-level loaders ([_loaders])
+
+A TOML **`[_loaders]`** section defines reusable loaders and a shared context. The **underscore** marks it as a special section (metadata, not a dataset) and keeps it at the top when the file is sorted. Use **`julia_modules`** (array of module names for `using X`) and **`julia_includes`** (paths to `include`, relative to the project/TOML directory). Any other key in `[_loaders]` is a loader name whose value is Julia code that **evaluates to a function**; that function is called as `fn(path, entry)` or `fn(path)`.
+
+An entry’s **`loader`** field can be:
+- A **name** that matches a key in `[_loaders]` → the corresponding loader function is used (compiled when the TOML is loaded and cached).
+- A **string** that is not a key in `[_loaders]` → it is evaluated in the same loader context (after includes and `using`); the result must be a function, which is then called with `(path, entry)` or `(path)`.
+
+From Julia you can update the loader section with **`register_loaders(db; loaders=..., julia_modules=..., julia_includes=..., persist=true)`**. All registry loaders are compiled when `register_loaders` is called (or when the TOML is loaded). Prefer minimal code in TOML and real logic in included files (e.g. `julia_includes = ["scripts/loaders.jl"]`, then loader names that reference functions defined there).
+
+Example:
+
+```toml
+[_loaders]
+julia_modules = ["CSV"]
+julia_includes = ["scripts/loaders.jl"]
+read_csv = "path -> CSV.read(path, DataFrame)"
+
+[my_csv]
+uri = "https://example.com/data.csv"
+loader = "read_csv"
+```
+
 ## Low-level declarative syntax
 
 Examples of the declarative syntax.

@@ -82,6 +82,56 @@ try
         @test read(expected_file, String) == "julia-cmd-test/result"
     end
 
+    @testset "load_dataset" begin
+        try
+            download_dataset(db, "CMIP6_lgm_tos")
+        catch
+        end
+        # Explicit loader keyword (precedence); called as loader(path, entry) or loader(path)
+        data = load_dataset(db, "CMIP6_lgm_tos"; loader=path -> read(path, String))
+        @test data isa String
+        @test length(data) > 0
+        # Entry loader field: code that evaluates to a function; called as fn(path, entry) or fn(path)
+        db_loader = Database(datasets_folder=datasets_dir; persist=false)
+        register_dataset(db_loader, ""; name="with_loader_entry", key="load-test/entry_loader",
+            julia="mkpath(download_path); write(joinpath(download_path, \"out.txt\"), \"from_entry_loader\")",
+            loader="path -> read(joinpath(path, \"out.txt\"), String)", skip_checksum=true)
+        data2 = load_dataset(db_loader, "with_loader_entry")
+        @test data2 == "from_entry_loader"
+        # No loader keyword and no entry.loader: default_loader(entry.format) used; unknown format errors
+        @test_throws Exception load_dataset(db, "CMIP6_lgm_tos"; loader=nothing)
+        # loader= function can accept (path, entry) and use entry fields
+        received_doi = Ref("")
+        load_dataset(db, "CMIP6_lgm_tos"; loader=(path, entry) -> (received_doi[] = entry.doi; read(path, String)))
+        @test received_doi[] == ""
+        load_dataset(db, "jonkers2024"; loader=(path, entry) -> (received_doi[] = entry.doi; read(path, String)))
+        @test received_doi[] == "10.1594/PANGAEA.962852"
+        # [loaders] registry: named loader, cache reuse
+        toml_loaders = joinpath(datasets_dir, "with_loaders_section.toml")
+        write(toml_loaders, """
+        [_loaders]
+        julia_modules = []
+        julia_includes = []
+        read_txt = "path -> read(joinpath(path, \\\"out.txt\\\"), String)"
+
+        [entry_using_registry]
+        key = "registry-load-test"
+        loader = "read_txt"
+        skip_checksum = true
+        julia = \"\"\"
+        mkpath(download_path)
+        write(joinpath(download_path, \"out.txt\"), \"registry_loader_ok\")
+        \"\"\"
+        """)
+        db_reg = Database(toml_loaders, datasets_dir; persist=false)
+        download_dataset(db_reg, "entry_using_registry")
+        r1 = load_dataset(db_reg, "entry_using_registry")
+        r2 = load_dataset(db_reg, "entry_using_registry")
+        @test r1 == r2
+        @test r1 == "registry_loader_ok"
+        @test haskey(db_reg.loader_cache, "read_txt")
+    end
+
     @testset "Download (optional, may skip if offline)" begin
         try
             local_path = download_dataset(db, "jonkers2024")

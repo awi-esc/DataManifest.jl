@@ -15,7 +15,7 @@ end
 
 export get_dataset_path
 export Database, DatasetEntry
-export register_dataset, register_datasets
+export register_dataset, register_datasets, register_loaders
 export search_datasets, search_dataset
 export download_dataset, download_datasets
 export set_datasets_folder, set_datasets, get_datasets_folder, get_datasets
@@ -24,6 +24,9 @@ export repr_short, string_short
 export write
 export verify_checksum
 export add_dataset, read_dataset, delete_dataset
+export load_dataset
+
+include("loaders.jl")
 
 # ConsoleLogger API: show_limited/right_justify added in Julia 1.9
 function _meta_formatter(level::LogLevel, _module, group, id, file, line)
@@ -121,6 +124,9 @@ HIDE_STRUCT_FIELDS = [:host, :path, :scheme]
         extract::Bool = false         # Whether to extract the dataset after downloading
         format::String = ""           # File format (e.g., "zip", "tar")
         shell::String = ""            # When set, run this shell command instead of built-in download
+        julia::String = ""            # When set, run this Julia code in an isolated module
+        julia_modules::Vector{String} = []
+        loader::String = ""           # When set, Julia code evaluated by load_dataset; result is the loaded object
     end
 
 A `DatasetEntry` holds metadata and configuration for a dataset.
@@ -141,6 +147,7 @@ It is initialized via the `add` method (and internally, `register_dataset` and `
 - `shell::String`: When set, run this shell command instead of built-in download. Template placeholders: `\$download_path`, `\$project_root`, `\$uri`, `\$key`, `\$version`, `\$doi`, `\$format`, `\$branch`. For `requires`: `\$path_<ref>` (ref sanitized: `/` and `.` → `_`), `\$path_1`, `\$path_2`, ... (by index), `\$requires_paths` (space-separated). The command runs with working directory set to the project root when available. If `download_path` is a directory, only its parent is pre-created; the command must create the directory or ensure the output path exists.
 - `julia::String`: When set, run this Julia code in an isolated module instead of built-in download (takes precedence over `shell`). The code has access to `download_path`, `project_root`, `entry`, `required_paths_by_ref`, `required_paths_ordered`. Use `julia_modules` to run `using X` for modules before the code.
 - `julia_modules::Vector{String}`: Module names to load with `using X` in the same isolated module before running `julia`. Ignored if `julia` is empty.
+- `loader::String`: When set (in TOML or via keyword), Julia code run in the same way as `julia` when loading via `load_dataset`; the expression's value is returned as the loaded dataset. Has access to `download_path`, `project_root`, `entry`, `required_paths_by_ref`, `required_paths_ordered`. Ignored if `load_dataset` is called with an explicit `loader` function.
 - `requires::Vector{String}`: Names, DOIs, or keys of datasets that must be present before this one. Resolved via `search_dataset`; downloaded in topological order. `overwrite` applies only to the main dataset, not dependencies.
 
 # Note
@@ -164,6 +171,7 @@ Fields such as `host`, `path`, and `scheme` are internal and not documented here
     shell::String = ""  # When set, run this shell command instead of built-in download
     julia::String = ""  # When set, run this Julia code in an isolated module (takes precedence over shell)
     julia_modules::Vector{String} = String[]  # Module names for "using X" before running julia
+    loader::String = ""  # When set, Julia code evaluated by load_dataset (same context as julia); result is the loaded object
     requires::Vector{String} = String[]  # Dataset names/dois/keys that must be present before this one
 end
 
@@ -289,6 +297,11 @@ mutable struct Database
     datasets_folder::String
     skip_checksum::Bool  # Whether to check SHA-256 checksums for datasets
     skip_checksum_folders::Bool # Whether to skip SHA-256 checksums for folders
+    loaders::Dict{String,String}           # name -> loader code
+    loaders_julia_modules::Vector{String} # modules to "using" in loader context
+    loaders_julia_includes::Vector{String} # paths to include in loader context
+    loader_cache::Dict{String,Function}   # name/code -> compiled function (not persisted)
+    loader_context_module::Union{Module,Nothing}  # shared module for eval (not persisted)
 
     function Database(;datasets_toml::String="", datasets_folder::String="",
         persist::Bool=true, skip_checksum::Bool=false, skip_checksum_folders::Bool=false,
@@ -305,6 +318,11 @@ mutable struct Database
             datasets_folder,
             skip_checksum,
             skip_checksum_folders,
+            Dict{String,String}(),
+            String[],
+            String[],
+            Dict{String,Function}(),
+            nothing,
         )
         if (isfile(datasets_toml))
             register_datasets(db, datasets_toml; kwargs...)
@@ -322,12 +340,20 @@ end
 Base.getindex(db::Database, name::String) = search_dataset(db, name)[2]
 
 function Base.:(==)(db1::Database, db2::Database)
-    return db1.datasets == db2.datasets && db1.datasets_folder == db2.datasets_folder && db1.datasets_toml == db2.datasets_toml
+    return db1.datasets == db2.datasets && db1.datasets_folder == db2.datasets_folder &&
+           db1.datasets_toml == db2.datasets_toml && db1.loaders == db2.loaders &&
+           db1.loaders_julia_modules == db2.loaders_julia_modules &&
+           db1.loaders_julia_includes == db2.loaders_julia_includes
 end
 
 function to_dict(db::Database; kwargs...)
-    return Dict(key => to_dict(entry; kwargs...) for (key, entry) in pairs(db.datasets))
-           Dict("datasets_folder" => db.datasets_folder)
+    result = Dict(key => to_dict(entry; kwargs...) for (key, entry) in pairs(db.datasets))
+    loaders_table = Dict{String,Any}("julia_modules" => db.loaders_julia_modules, "julia_includes" => db.loaders_julia_includes)
+    for (n, c) in pairs(db.loaders)
+        loaders_table[n] = c
+    end
+    result["_loaders"] = loaders_table
+    return result
 end
 
 # This method controls the default string output,
@@ -1187,6 +1213,52 @@ function _run_julia(dataset::DatasetEntry, download_path::String, project_root::
 end
 
 """
+Return the shared loader context module for `db`: includes `loaders_julia_includes` and
+`using` for `loaders_julia_modules`. Created once and cached in `db.loader_context_module`.
+"""
+function _get_loader_module(db::Database)::Module
+    if db.loader_context_module === nothing
+        mod = Module()
+        base = get_project_root(db)
+        if base == "" && db.datasets_toml != ""
+            base = dirname(db.datasets_toml)
+        end
+        if base == ""
+            base = pwd()
+        end
+        for inc in db.loaders_julia_includes
+            path = isabspath(inc) ? inc : joinpath(base, inc)
+            Base.include(mod, path)
+        end
+        for m in db.loaders_julia_modules
+            Core.eval(mod, :(using $(Symbol(m))))
+        end
+        db.loader_context_module = mod
+    end
+    return db.loader_context_module
+end
+
+"""
+Return the compiled loader function for `name_or_code`: either a key in `db.loaders` (code from
+registry) or a free-form string (e.g. `\"load_nc1\"` or `\"mymodule.load_nc1\"`) evaluated in the
+loader context. Results are cached in `db.loader_cache` under `cache_key` (default `name_or_code`).
+"""
+function _get_loader_function(db::Database, name_or_code::String; cache_key::Union{String,Nothing}=nothing)
+    key = cache_key === nothing ? name_or_code : cache_key
+    if haskey(db.loader_cache, key)
+        return db.loader_cache[key]
+    end
+    code = haskey(db.loaders, name_or_code) ? db.loaders[name_or_code] : name_or_code
+    mod = _get_loader_module(db)
+    fn = Base.include_string(mod, code, "loader")
+    if !(fn isa Function)
+        error("loader \"$name_or_code\" did not evaluate to a function, got $(typeof(fn))")
+    end
+    db.loader_cache[key] = fn
+    return fn
+end
+
+"""
     _download_dataset(dataset, download_path; project_root, overwrite, required_paths_by_ref, required_paths_ordered)
 
 Perform the actual download for a dataset.
@@ -1410,6 +1482,61 @@ end
 
 download_dataset(db::Nothing, name::String; kwargs...) = download_dataset(name; kwargs...)
 
+"""
+    load_dataset([db::Database], name::String; loader=nothing, kwargs...) -> Any
+    load_dataset([db::Database], entry::DatasetEntry; loader=nothing, kwargs...) -> Any
+
+Ensure the dataset is on disk (via `download_dataset`), then load it and return the result.
+
+- If the `loader` keyword is provided (a function), it takes precedence. The loader is called as `loader(path, entry)`; if that fails (e.g. loader only accepts one argument), it is called as `loader(path)`.
+- Else if the entry has a `loader` field (Julia code string in TOML), that code is evaluated in the loader context (see `[_loaders]`); the result must be a function, which is then called with `(path, entry)` or `(path)`.
+- Else a default loader is chosen from the dataset's `format` (e.g. \"csv\" uses CSV when available). For unsupported or empty format, an error is thrown.
+- All other keyword arguments are passed through to `download_dataset` (e.g. `extract`, `overwrite`).
+
+# Returns
+The value returned by the loader or the entry's loader code (e.g. a DataFrame for CSV).
+"""
+function load_dataset(db::Database, name::String; loader=nothing, kwargs...)
+    (_, entry) = search_dataset(db, name; kwargs...)
+    return load_dataset(db, entry; loader=loader, kwargs...)
+end
+
+function _call_loader(fn::Function, path::String, entry::DatasetEntry)
+    try
+        return fn(path, entry)
+    catch e
+        # Fallback for loaders that only accept (path); use invokelatest to avoid world-age issues
+        # when fn was created in a different module (e.g. via include_string in loader context)
+        if e isa MethodError
+            try
+                return Base.invokelatest(fn, path, entry)
+            catch
+                return Base.invokelatest(fn, path)
+            end
+        end
+        rethrow(e)
+    end
+end
+
+function load_dataset(db::Database, entry::DatasetEntry; loader=nothing, kwargs...)
+    path = download_dataset(db, entry; kwargs...)
+    if loader !== nothing
+        return _call_loader(loader, path, entry)
+    elseif entry.loader != ""
+        fn = _get_loader_function(db, entry.loader)
+        return _call_loader(fn, path, entry)
+    else
+        return default_loader(entry.format)(path)
+    end
+end
+
+function load_dataset(name::String; kwargs...)
+    db = get_default_database()
+    return load_dataset(db, name; kwargs...)
+end
+
+load_dataset(db::Nothing, name::String; kwargs...) = load_dataset(name; kwargs...)
+
 function download_datasets(names=nothing; kwargs...)
     db = get_default_database()
     return download_datasets(db, names; kwargs...)
@@ -1425,10 +1552,48 @@ end
 register_dataset(db::Nothing, uri::String; kwargs...) = register_dataset(uri; kwargs...)
 
 
+"""
+    register_loaders(db::Database; loaders=nothing, julia_modules=nothing, julia_includes=nothing, persist::Bool=true)
+
+Update the `[_loaders]` section of the database: set `db.loaders`, `db.loaders_julia_modules`, and/or
+`db.loaders_julia_includes` from the provided arguments (any argument that is `nothing` is left unchanged).
+Then clear the loader cache and context module, and force-compile all registry loaders (each key in `db.loaders`).
+If `persist` is true and `db.datasets_toml` is set, write the database to that TOML file.
+"""
+function register_loaders(db::Database; loaders=nothing, julia_modules=nothing, julia_includes=nothing, persist::Bool=true)
+    if loaders !== nothing
+        db.loaders = Dict{String,String}(String(k) => (v isa String ? v : repr(v)) for (k, v) in pairs(loaders))
+    end
+    if julia_modules !== nothing
+        db.loaders_julia_modules = String.(julia_modules)
+    end
+    if julia_includes !== nothing
+        db.loaders_julia_includes = String.(julia_includes)
+    end
+    # Force-compile all registry loaders: clear cache and context, then compile each
+    empty!(db.loader_cache)
+    db.loader_context_module = nothing
+    for name in keys(db.loaders)
+        _get_loader_function(db, name)
+    end
+    if persist && db.datasets_toml != ""
+        write(db, db.datasets_toml)
+    end
+end
+
 function register_datasets(db::Database, datasets::Dict; kwargs...)
-    for (i, (name, info_)) in enumerate(pairs(datasets))
-        info = Dict(Symbol(k) => v for (k, v) in info_)
-        persist_on_last_iteration = i == length(datasets)
+    if haskey(datasets, "_loaders") && datasets["_loaders"] isa Dict
+        L = datasets["_loaders"]
+        mods = haskey(L, "julia_modules") && L["julia_modules"] isa Vector ? String.(L["julia_modules"]) : String[]
+        incs = haskey(L, "julia_includes") && L["julia_includes"] isa Vector ? String.(L["julia_includes"]) : String[]
+        loader_dict = Dict{String,String}(String(k) => (v isa String ? v : repr(v)) for (k, v) in L if k != "julia_modules" && k != "julia_includes")
+        register_loaders(db; loaders=loader_dict, julia_modules=mods, julia_includes=incs, persist=false)
+    end
+    names = [k for k in keys(datasets) if k != "_loaders"]
+    for (i, name) in enumerate(names)
+        info_ = datasets[name]
+        info = Dict(Symbol(k) => v for (k, v) in (info_ isa Dict ? info_ : pairs(info_)))
+        persist_on_last_iteration = i == length(names)
         register_dataset(db; name=name, persist=persist_on_last_iteration, info..., kwargs...)
     end
 end
