@@ -126,7 +126,7 @@ try
         # [loaders] registry: named loader, cache reuse
         toml_loaders = joinpath(datasets_dir, "with_loaders_section.toml")
         write(toml_loaders, """
-        [_loaders]
+        [_LOADERS]
         julia_modules = []
         julia_includes = []
         read_txt = "path -> read(joinpath(path, \\\"out.txt\\\"), String)"

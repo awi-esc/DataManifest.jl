@@ -176,12 +176,14 @@ function Base.:(==)(db1::Database, db2::Database)
 end
 
 function to_dict(db::Database; kwargs...)
-    result = Dict(key => to_dict(entry; kwargs...) for (key, entry) in pairs(db.datasets))
     loaders_table = Dict{String,Any}("julia_modules" => db.loaders_julia_modules, "julia_includes" => db.loaders_julia_includes)
     for (n, c) in pairs(db.loaders)
         loaders_table[n] = c
     end
-    result["_loaders"] = loaders_table
+    result = Dict{String,Any}("_LOADERS" => loaders_table)
+    for (key, entry) in pairs(db.datasets)
+        result[key] = to_dict(entry; kwargs...)
+    end
     return result
 end
 
@@ -682,14 +684,14 @@ function register_loaders(db::Database; loaders=nothing, julia_modules=nothing, 
 end
 
 function register_datasets(db::Database, datasets::Dict; kwargs...)
-    if haskey(datasets, "_loaders") && datasets["_loaders"] isa Dict
-        L = datasets["_loaders"]
+    L = get(datasets, "_LOADERS", get(datasets, "_loaders", nothing))
+    if L isa Dict
         mods = haskey(L, "julia_modules") && L["julia_modules"] isa Vector ? String.(L["julia_modules"]) : String[]
         incs = haskey(L, "julia_includes") && L["julia_includes"] isa Vector ? String.(L["julia_includes"]) : String[]
         loader_dict = Dict{String,String}(String(k) => (v isa String ? v : repr(v)) for (k, v) in L if k != "julia_modules" && k != "julia_includes")
         register_loaders(db; loaders=loader_dict, julia_modules=mods, julia_includes=incs, persist=false)
     end
-    names = [k for k in keys(datasets) if k != "_loaders"]
+    names = [k for k in keys(datasets) if k != "_LOADERS" && k != "_loaders"]
     for (i, name) in enumerate(names)
         info_ = datasets[name]
         info = Dict(Symbol(k) => v for (k, v) in (info_ isa Dict ? info_ : pairs(info_)))
