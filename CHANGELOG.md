@@ -1,6 +1,23 @@
 # Changelog
 
-## [0.11.0] - 2025-02-09
+## [0.12.0] - 2025-02-11
+
+### New features
+
+- **Identify format** : more permissive format identification (anythhing after dot)
+- **New format-based default loaders**: `csv`, `parquet`, `yaml`, `nc`, `toml`, `json`... and nc variant (`dimstack`)
+- **Default archive loaders**: Built-in loaders for `zip`, `tar`, and `tar.gz` (when `extract=false`) that extract to a temporary directory and return its path. Optional dependencies: ZipFile, Tar, CodecZlib; loaded on use.
+
+### Breaking
+
+- [_loaders] renamed to [_LOADERS]
+
+### Tests
+
+- Tests for loaders (when optional dependencies are installed)
+
+
+## [0.11.0] - 2025-02-11
 
 ### New features
 
