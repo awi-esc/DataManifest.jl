@@ -83,7 +83,7 @@ end
 
 """
 Project root from datasets_toml path and/or current project path.
-Used by DataBase.get_project_root(db) so Config stays free of Database.
+Used by Databases.get_project_root(db) so Config stays free of Database.
 """
 function project_root_from_paths(datasets_toml_path::String, current_project_path::Union{Nothing,String})
     if datasets_toml_path != ""

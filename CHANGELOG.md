@@ -10,6 +10,7 @@
 
 ### Breaking
 
+- **DataBase** module renamed to **Databases** (plural, matches Julia convention e.g. DataFrames/DataFrame). Code referencing `DataManifest.DataBase` must use `DataManifest.Databases`. Type names `Database` and `DatasetEntry` unchanged.
 - [_loaders] renamed to [_LOADERS]
 
 ### Tests
@@ -32,7 +33,7 @@
 
 - Reorganize code into four modules to reduce cross-module linkage.
   - **Config**: Paths, logging, SHA, `get_default_toml`, `project_root_from_paths`.
-  - **DataBase**: Types, path/URI helpers, and registry.
+  - **Databases**: Types, path/URI helpers, and registry.
   - **PipeLines**: Download and load pipeline plus default loaders.
-  - **DataManifest**: Includes Config, DataBase, PipeLines; re-exports public API; extends `Base.write`.
+  - **DataManifest**: Includes Config, Databases, PipeLines; re-exports public API; extends `Base.write`.
   Public API unchanged; `Loaders` is an alias for `PipeLines`.

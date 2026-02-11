@@ -1,5 +1,5 @@
-# DataBase: types, path/URI, registry. Single module to limit linkage.
-module DataBase
+# Databases: types, path/URI, registry. Single module to limit linkage.
+module Databases
 
 using TOML
 using URIs
@@ -780,4 +780,4 @@ delete_dataset(name::String; kwargs...) = delete_dataset(get_default_database(),
 add(uri::String=""; kwargs...) = add(get_default_database(), uri; kwargs...)
 get_dataset_path(name::String; kwargs...) = get_dataset_path(get_default_database(), name; kwargs...)
 
-end # module DataBase
+end # module Databases

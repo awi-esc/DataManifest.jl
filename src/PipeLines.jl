@@ -1,9 +1,9 @@
-# PipeLines: download + load pipeline and default loaders. Depends on DataBase and Config.
+# PipeLines: download + load pipeline and default loaders. Depends on Databases and Config.
 module PipeLines
 
 import Downloads
 using ..Config: info, COMPRESSED_FORMATS
-using ..DataBase: DatasetEntry, Database, get_datasets, get_dataset_path, search_dataset, verify_checksum,
+using ..Databases: DatasetEntry, Database, get_datasets, get_dataset_path, search_dataset, verify_checksum,
     extract_file, get_project_root, get_default_database
 using ..DefaultLoaders: default_loader as builtin_default_loader
 

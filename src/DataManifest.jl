@@ -13,12 +13,12 @@ if VERSION < v"1.11"
 end
 
 include("Config.jl")
-include("DataBase.jl")
+include("Databases.jl")
 include("DefaultLoaders.jl")
 include("PipeLines.jl")
 
-# Extend Base.write for Database (DataBase.write is the implementation)
-write(db::DataBase.Database, path::String; kwargs...) = DataBase.write(db, path; kwargs...)
+# Extend Base.write for Database (Databases.write is the implementation)
+write(db::Databases.Database, path::String; kwargs...) = Databases.write(db, path; kwargs...)
 
 # Backward compatibility: Loaders was a submodule; default loaders now live in PipeLines
 const Loaders = PipeLines
@@ -27,8 +27,8 @@ const Loaders = PipeLines
 export DefaultLoaders
 using .DefaultLoaders: default_loader
 
-# Re-export public API from DataBase and PipeLines
-using .DataBase: Database, DatasetEntry,
+# Re-export public API from Databases and PipeLines
+using .Databases: Database, DatasetEntry,
     set_datasets_folder, set_datasets, get_datasets_folder, get_datasets,
     repr_short, string_short, get_dataset_path,
     register_dataset, register_datasets, register_loaders,
@@ -39,7 +39,7 @@ using .PipeLines: download_dataset, download_datasets, load_dataset, get_project
 
 const add_dataset = add
 
-export DataBase, PipeLines, Loaders
+export Databases, PipeLines, Loaders
 export Database, DatasetEntry
 export set_datasets_folder, set_datasets, get_datasets_folder, get_datasets
 export repr_short, string_short
