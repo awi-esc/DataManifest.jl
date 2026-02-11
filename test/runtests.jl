@@ -147,6 +147,43 @@ try
         @test r1 == r2
         @test r1 == "registry_loader_ok"
         @test haskey(db_reg.loader_cache, "read_txt")
+        # Default by format: loader named "csv" in _LOADERS used when entry has no loader and format is csv
+        toml_default = joinpath(datasets_dir, "with_default_csv.toml")
+        write(toml_default, """
+        [_LOADERS]
+        julia_modules = []
+        julia_includes = []
+        csv = "path -> read(path, String)"
+
+        [csv_via_format]
+        key = "default-format-test/data.csv"
+        julia = "write(download_path, \\\"csv,content\\\")"
+        skip_checksum = true
+        """)
+        db_fmt = Database(toml_default, datasets_dir; persist=false)
+        data_fmt = load_dataset(db_fmt, "csv_via_format")
+        @test data_fmt == "csv,content"
+        # Alias: md = "txt" means loader \"md\" resolves to loader \"txt\"
+        toml_alias = joinpath(datasets_dir, "with_loader_alias.toml")
+        write(toml_alias, """
+        [_LOADERS]
+        julia_modules = []
+        julia_includes = []
+        txt = "path -> read(joinpath(path, \\\"out.txt\\\"), String)"
+        md = "txt"
+
+        [entry_uses_md]
+        key = "alias-test"
+        loader = "md"
+        skip_checksum = true
+        julia = \"\"\"
+        mkpath(download_path)
+        write(joinpath(download_path, \"out.txt\"), \"from_alias\")
+        \"\"\"
+        """)
+        db_alias = Database(toml_alias, datasets_dir; persist=false)
+        data_alias = load_dataset(db_alias, "entry_uses_md")
+        @test data_alias == "from_alias"
     end
 
     @testset "Download (optional, may skip if offline)" begin

@@ -159,8 +159,10 @@ data = load_dataset(db, "jonkers2024"; loader = (path, entry) -> (println(entry.
 A TOML **`[_LOADERS]`** section defines reusable loaders and a shared context. The uppercase name keeps it at the top when the file is sorted. Use **`julia_modules`** (array of module names for `using X`) and **`julia_includes`** (paths to `include`, relative to the project/TOML directory). Any other key in `[_LOADERS]` is a loader name whose value is Julia code that **evaluates to a function**; that function is called as `fn(path, entry)` or `fn(path)`.
 
 An entry’s **`loader`** field can be:
-- A **name** that matches a key in `[_LOADERS]` → the corresponding loader function is used (compiled when the TOML is loaded and cached).
+- A **name** that matches a key in `[_LOADERS]` → the corresponding loader function is used (compiled when the TOML is loaded and cached). The value for that key may be Julia code, or **another loader name** (alias); e.g. `md = "txt"` makes `"md"` an alias for the loader `"txt"`. Alias cycles are an error.
 - A **string** that is not a key in `[_LOADERS]` → it is evaluated in the same loader context (after includes and `using`); the result must be a function, which is then called with `(path, entry)` or `(path)`.
+
+When an entry has **no** `loader`, the default is chosen by format: if a loader name (case-insensitive) equals the entry's format, that loader is used; otherwise a built-in default is used if available (e.g. `csv`), else an error. So defining `csv = "path -> CSV.read(path)"` in `[_LOADERS]` overrides or provides the default for format `csv`.
 
 From Julia you can update the loader section with **`register_loaders(db; loaders=..., julia_modules=..., julia_includes=..., persist=true)`**. All registry loaders are compiled when `register_loaders` is called (or when the TOML is loaded). Prefer minimal code in TOML and real logic in included files (e.g. `julia_includes = ["scripts/loaders.jl"]`, then loader names that reference functions defined there).
 

@@ -121,14 +121,22 @@ function _get_loader_module(db::Database)::Module
     return db.loader_context_module
 end
 
-function _get_loader_function(db::Database, name_or_code::String; cache_key::Union{String,Nothing}=nothing)
+function _get_loader_function(db::Database, name_or_code::String; cache_key::Union{String,Nothing}=nothing, _alias_chain::Set{String}=Set{String}())
     key = cache_key === nothing ? name_or_code : cache_key
     if haskey(db.loader_cache, key)
         return db.loader_cache[key]
     end
     code = haskey(db.loaders, name_or_code) ? db.loaders[name_or_code] : name_or_code
+    # Alias: value is exactly another loader name -> resolve it (with cycle detection)
+    if code isa String && haskey(db.loaders, code) && code != name_or_code
+        name_or_code in _alias_chain && error("Loader alias cycle involving \"$name_or_code\" and \"$code\".")
+        chain = union(_alias_chain, Set([name_or_code]))
+        fn = _get_loader_function(db, code; _alias_chain=chain)
+        db.loader_cache[key] = fn
+        return fn
+    end
     mod = _get_loader_module(db)
-    fn = Base.include_string(mod, code, "loader")
+    fn = Base.include_string(mod, code isa String ? code : repr(code), "loader")
     if !(fn isa Function)
         error("loader \"$name_or_code\" did not evaluate to a function, got $(typeof(fn))")
     end
@@ -290,21 +298,23 @@ end
 
 # ----- Default loaders (merged from Loaders.jl) -----
 """
-    default_loader(format::AbstractString) -> Function
+    default_loader(db::Database, format::AbstractString) -> Function
 
 Return a loader function `path -> value` for the given format, when no loader is passed to `load_dataset`.
-Supported formats may use optional dependencies (e.g. CSV for \"csv\"); if unavailable, an error suggests
-adding the dependency or passing a custom loader.
+Resolution: (1) a named loader in `db.loaders` whose `lowercase(name) == lowercase(format)`; (2) else built-in for that format (e.g. CSV); (3) else error.
 """
-function default_loader(format::AbstractString)
+function default_loader(db::Database, format::AbstractString)
     f = lowercase(strip(format))
     if isempty(f)
         error("No loader provided and dataset format is empty. Pass a loader function, e.g. loader = path -> read(path, String).")
     end
+    for name in keys(db.loaders)
+        lowercase(name) == f && return _get_loader_function(db, name)
+    end
     if f == "csv"
         return _csv_loader
     end
-    error("No default loader for format \"$format\". Pass a loader function, e.g. loader = path -> CSV.read(path, DataFrame).")
+    error("No default loader for format \"$format\". Pass a loader function or add a loader named \"$format\" in [_LOADERS].")
 end
 
 function _csv_loader(path)
@@ -346,7 +356,7 @@ function load_dataset(db::Database, entry::DatasetEntry; loader=nothing, kwargs.
     else
         # For extracted archives, path is a directory; no single-file format to load
         format = (entry.extract && entry.format in COMPRESSED_FORMATS) ? "" : entry.format
-        return default_loader(format)(path)
+        return default_loader(db, format)(path)
     end
 end
 
