@@ -67,7 +67,6 @@ const XDG_CACHE_HOME = get(ENV, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
 const DEFAULT_DATASETS_FOLDER_PATH = joinpath(XDG_CACHE_HOME, "Datasets")
 const DEFAULT_DATASETS_TOML_PATH = ""
 const COMPRESSED_FORMATS = ["zip", "tar.gz", "tar"]
-const KNOWN_EXTENSIONS = ["."*fmt for fmt in COMPRESSED_FORMATS]
 const HIDE_STRUCT_FIELDS = [:host, :path, :scheme]
 
 function get_extract_path(path::String)

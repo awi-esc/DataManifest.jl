@@ -2,7 +2,7 @@
 module PipeLines
 
 import Downloads
-using ..Config: info
+using ..Config: info, COMPRESSED_FORMATS
 using ..DataBase: DatasetEntry, Database, get_datasets, get_dataset_path, search_dataset, verify_checksum,
     extract_file, get_project_root, get_default_database
 
@@ -344,7 +344,9 @@ function load_dataset(db::Database, entry::DatasetEntry; loader=nothing, kwargs.
         fn = _get_loader_function(db, entry.loader)
         return _call_loader(fn, path, entry)
     else
-        return default_loader(entry.format)(path)
+        # For extracted archives, path is a directory; no single-file format to load
+        format = (entry.extract && entry.format in COMPRESSED_FORMATS) ? "" : entry.format
+        return default_loader(format)(path)
     end
 end
 

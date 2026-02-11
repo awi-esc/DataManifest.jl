@@ -51,6 +51,23 @@ try
         @test path == joinpath(datasets_dir, "github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip")
     end
 
+    @testset "File format inference" begin
+        # URI-based: format from key (host + path)
+        @test db.datasets["herzschuh2023"].format == "zip"
+        @test db.datasets["jonkers2024"].format == "csv"
+        @test db.datasets["jesstierney/lgmDA"].format == "zip"
+        @test db.datasets["CMIP6_lgm_tos"].format == "txt"
+        # Explicit key (no URI): format from key extension
+        db_fmt = Database(datasets_folder=datasets_dir; persist=false)
+        register_dataset(db_fmt, ""; name="csv_from_key", key="intermediate_data/tierney2020_cores_hol.csv",
+            julia="write(download_path, \"x\")", skip_checksum=true)
+        @test db_fmt.datasets["csv_from_key"].format == "csv"
+        # Key with # version suffix: format from part before #
+        register_dataset(db_fmt, ""; name="tar_gz_with_version", key="releases/archive.tar.gz#v1.0",
+            julia="write(download_path, \"x\")", skip_checksum=true)
+        @test db_fmt.datasets["tar_gz_with_version"].format == "tar.gz"
+    end
+
     @testset "TOML" begin
         io = IOBuffer()
         TOML.print(io, db)

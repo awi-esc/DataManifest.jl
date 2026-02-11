@@ -4,7 +4,7 @@ module DataBase
 using TOML
 using URIs
 using ..Config: info, warn, sha256_path, get_extract_path, get_default_toml, DEFAULT_DATASETS_FOLDER_PATH,
-    COMPRESSED_FORMATS, KNOWN_EXTENSIONS, HIDE_STRUCT_FIELDS, project_root_from_paths
+    COMPRESSED_FORMATS, HIDE_STRUCT_FIELDS, project_root_from_paths
 
 # ----- Types (DatasetEntry, Database) -----
 Base.@kwdef mutable struct DatasetEntry
@@ -53,19 +53,25 @@ function build_dataset_key(entry::DatasetEntry, path::String="")
     return strip(key, '/')
 end
 
+"""
+Infer file format from the dataset key (e.g. \"data/out.csv\" -> \"csv\", \"archive.tar.gz\" -> \"tar.gz\").
+Strips any version # fragment before taking the extension.
+"""
 function guess_file_format(entry::DatasetEntry)
-    base, ext = splitext(rstrip(entry.path, '/'))
+    key = rstrip(entry.key, '/')
+    # Trim version suffix (e.g. host/path#v1.0 -> host/path)
+    if occursin('#', key)
+        key = split(key, '#'; limit=2)[1]
+    end
+    isempty(key) && return ""
+    base, ext = splitext(key)
     if ext == ".gz"
         base, ext2 = splitext(base)
         if ext2 == ".tar"
             ext = ext2 * ext
         end
     end
-    if ext in KNOWN_EXTENSIONS
-        return lstrip(ext, '.')
-    else
-        return ""
-    end
+    return lstrip(ext, '.')
 end
 
 function to_dict(entry::DatasetEntry)
@@ -358,13 +364,13 @@ function init_dataset_entry(;
             entry.uri = build_uri(entry)
         end
     end
+    entry.key = entry.key !== "" ? entry.key : get_dataset_key(entry)
     if (entry.format == "")
         entry.format = guess_file_format(entry)
     else
         entry.format = lstrip(entry.format, '.')
     end
     entry.extract = entry.extract && (entry.format in COMPRESSED_FORMATS)
-    entry.key = entry.key !== "" ? entry.key : get_dataset_key(entry)
     if !isempty(entry.requires)
         entry.requires = String[String(r) for r in entry.requires]
     end
