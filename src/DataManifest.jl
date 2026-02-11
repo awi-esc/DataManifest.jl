@@ -31,7 +31,7 @@ using .DefaultLoaders: default_loader
 using .Databases: Database, DatasetEntry,
     set_datasets_folder, set_datasets, get_datasets_folder, get_datasets,
     repr_short, string_short, get_dataset_path,
-    register_dataset, register_datasets, register_loaders,
+    register_dataset, register_datasets, register_loaders, validate_loader, validate_loaders,
     search_datasets, search_dataset,
     repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_keys,
     verify_checksum, read_dataset, delete_dataset, add
@@ -44,7 +44,7 @@ export Database, DatasetEntry
 export set_datasets_folder, set_datasets, get_datasets_folder, get_datasets
 export repr_short, string_short
 export get_dataset_path
-export register_dataset, register_datasets, register_loaders
+export register_dataset, register_datasets, register_loaders, validate_loader, validate_loaders
 export search_datasets, search_dataset
 export repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_keys
 export verify_checksum

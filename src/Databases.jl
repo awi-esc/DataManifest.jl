@@ -674,13 +674,21 @@ function register_loaders(db::Database; loaders=nothing, julia_modules=nothing, 
     end
     empty!(db.loader_cache)
     db.loader_context_module = nothing
-    pipemod = parentmodule(@__MODULE__).PipeLines
-    for name in keys(db.loaders)
-        pipemod._get_loader_function(db, name)
-    end
     if persist && db.datasets_toml != ""
         write(db, db.datasets_toml)
     end
+end
+
+function validate_loader(db::Database, name::String)
+    pipemod = parentmodule(@__MODULE__).PipeLines
+    return pipemod._get_loader_function(db, name)
+end
+
+function validate_loaders(db::Database)
+    for name in keys(db.loaders)
+        validate_loader(db, name)
+    end
+    return nothing
 end
 
 function register_datasets(db::Database, datasets::Dict; kwargs...)

@@ -124,6 +124,38 @@ function _get_loader_module(db::Database)::Module
     return db.loader_context_module
 end
 
+# Heuristic: string looks like "A[.B.C].func" (module path + function) rather than inline code.
+function _is_loader_reference(s::String)
+    s = strip(s)
+    length(s) < 2 && return false
+    # Must contain at least one dot (Module.func)
+    occursin('.', s) || return false
+    # Must not look like expression code
+    occursin(" -> ", s) && return false
+    occursin(" => ", s) && return false
+    startswith(s, "(") && return false
+    occursin(r"\bfunction\s+", s) && return false
+    return true
+end
+
+# Resolve "A.B.C.func" at runtime: import top-level module A in loader context, then getfield chain.
+# Returns the callable or nothing if not a reference / resolution failed.
+function _resolve_loader_reference(db::Database, code::String)
+    _is_loader_reference(code) || return nothing
+    parts = split(code, '.')
+    length(parts) < 2 && return nothing
+    mod = _get_loader_module(db)
+    first_mod = String(parts[1])
+    # Import top-level module at runtime (avoids circular deps at precompile time)
+    Core.eval(mod, :(using $(Symbol(first_mod))))
+    current = getfield(mod, Symbol(first_mod))
+    for i in 2:(length(parts) - 1)
+        current = getfield(current, Symbol(parts[i]))
+    end
+    fn = getfield(current, Symbol(parts[end]))
+    return fn isa Function ? fn : nothing
+end
+
 function _get_loader_function(db::Database, name_or_code::String; cache_key::Union{String,Nothing}=nothing, _alias_chain::Set{String}=Set{String}())
     key = cache_key === nothing ? name_or_code : cache_key
     if haskey(db.loader_cache, key)
@@ -137,6 +169,14 @@ function _get_loader_function(db::Database, name_or_code::String; cache_key::Uni
         fn = _get_loader_function(db, code; _alias_chain=chain)
         db.loader_cache[key] = fn
         return fn
+    end
+    # If string looks like "A[.B.C].func", resolve by runtime import + getfield; else compile via include_string
+    if code isa String
+        fn = _resolve_loader_reference(db, code)
+        if fn !== nothing
+            db.loader_cache[key] = fn
+            return fn
+        end
     end
     mod = _get_loader_module(db)
     fn = Base.include_string(mod, code isa String ? code : repr(code), "loader")
@@ -322,15 +362,30 @@ function default_loader(db::Database, format::AbstractString)
     return builtin_default_loader(format)
 end
 
+# World-age errors are MethodError with world != typemax(UInt); "no matching method" uses typemax(UInt).
+function _is_world_age_error(e)
+    return e isa MethodError && e.world != typemax(UInt)
+end
+
 function _call_loader(fn::Function, path::String, entry::DatasetEntry)
     try
         return fn(path, entry)
     catch e
-        if e isa MethodError
+        if _is_world_age_error(e)
             try
                 return Base.invokelatest(fn, path, entry)
+            catch e2
+                if e2 isa MethodError
+                    return Base.invokelatest(fn, path)
+                end
+                rethrow(e2)
+            end
+        end
+        if e isa MethodError
+            try
+                return fn(path)
             catch
-                return Base.invokelatest(fn, path)
+                rethrow(e)
             end
         end
         rethrow(e)
@@ -344,7 +399,13 @@ end
 
 function load_dataset(db::Database, entry::DatasetEntry; loader=nothing, kwargs...)
     path = download_dataset(db, entry; kwargs...)
-    if loader !== nothing
+    if loader !== nothing && loader != ""
+        if loader isa String
+            if !haskey(db.loaders, loader)
+                error("loader must be a callable or a loader name defined in _LOADERS (got unknown name \"$loader\")")
+            end
+            loader = _get_loader_function(db, loader)
+        end
         return _call_loader(loader, path, entry)
     elseif entry.loader != ""
         fn = _get_loader_function(db, entry.loader)
@@ -352,7 +413,7 @@ function load_dataset(db::Database, entry::DatasetEntry; loader=nothing, kwargs.
     else
         # For extracted archives, path is a directory; no single-file format to load
         format = (entry.extract && entry.format in COMPRESSED_FORMATS) ? "" : entry.format
-        return default_loader(db, format)(path)
+        return _call_loader(default_loader(db, format), path, entry)
     end
 end
 

@@ -108,11 +108,12 @@ try
         data = load_dataset(db, "CMIP6_lgm_tos"; loader=path -> read(path, String))
         @test data isa String
         @test length(data) > 0
-        # Entry loader field: code that evaluates to a function; called as fn(path, entry) or fn(path)
+        # Custom loader from entry.loader string (compiled on first use; invokelatest if world age)
         db_loader = Database(datasets_folder=datasets_dir; persist=false)
         register_dataset(db_loader, ""; name="with_loader_entry", key="load-test/entry_loader",
             julia="mkpath(download_path); write(joinpath(download_path, \"out.txt\"), \"from_entry_loader\")",
-            loader="path -> read(joinpath(path, \"out.txt\"), String)", skip_checksum=true)
+            loader="path -> read(joinpath(path, \"out.txt\"), String)",
+            skip_checksum=true)
         data2 = load_dataset(db_loader, "with_loader_entry")
         @test data2 == "from_entry_loader"
         # No loader keyword and no entry.loader: default_loader(entry.format) used (e.g. txt -> IO)
@@ -129,7 +130,7 @@ try
         @test received_doi[] == ""
         load_dataset(db, "jonkers2024"; loader=(path, entry) -> (received_doi[] = entry.doi; read(path, String)))
         @test received_doi[] == "10.1594/PANGAEA.962852"
-        # [loaders] registry: named loader, cache reuse
+        # [_LOADERS] registry: entry.loader = "read_txt" uses named loader from TOML (invokelatest if world age)
         toml_loaders = joinpath(datasets_dir, "with_loaders_section.toml")
         write(toml_loaders, """
         [_LOADERS]
@@ -153,7 +154,11 @@ try
         @test r1 == r2
         @test r1 == "registry_loader_ok"
         @test haskey(db_reg.loader_cache, "read_txt")
-        # Default by format: loader named "csv" in _LOADERS used when entry has no loader and format is csv
+        # loader= string: only allowed when it's a name defined in _LOADERS
+        r3 = load_dataset(db_reg, "entry_using_registry"; loader="read_txt")
+        @test r3 == "registry_loader_ok"
+        @test_throws Exception load_dataset(db_reg, "entry_using_registry"; loader="nonexistent_loader")
+        # Default by format: entry has no loader; _LOADERS.csv string is used (invokelatest if world age)
         toml_default = joinpath(datasets_dir, "with_default_csv.toml")
         write(toml_default, """
         [_LOADERS]
@@ -169,7 +174,7 @@ try
         db_fmt = Database(toml_default, datasets_dir; persist=false)
         data_fmt = load_dataset(db_fmt, "csv_via_format")
         @test data_fmt == "csv,content"
-        # Alias: md = "txt" means loader \"md\" resolves to loader \"txt\"
+        # Alias: md = "txt" in _LOADERS; entry.loader = "md" resolves to txt loader (invokelatest if world age)
         toml_alias = joinpath(datasets_dir, "with_loader_alias.toml")
         write(toml_alias, """
         [_LOADERS]

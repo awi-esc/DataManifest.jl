@@ -164,7 +164,7 @@ An entry’s **`loader`** field can be:
 
 When an entry has **no** `loader`, the default is chosen by format: if a loader name (case-insensitive) equals the entry's format, that loader is used; otherwise a built-in default is used if available (e.g. `csv`), else an error. So defining `csv = "path -> CSV.read(path)"` in `[_LOADERS]` overrides or provides the default for format `csv`.
 
-From Julia you can update the loader section with **`register_loaders(db; loaders=..., julia_modules=..., julia_includes=..., persist=true)`**. All registry loaders are compiled when `register_loaders` is called (or when the TOML is loaded). Prefer minimal code in TOML and real logic in included files (e.g. `julia_includes = ["scripts/loaders.jl"]`, then loader names that reference functions defined there).
+From Julia you can update the loader section with **`register_loaders(db; loaders=..., julia_modules=..., julia_includes=..., persist=true)`**. Loaders are compiled on first use (lazy), which avoids circular dependencies when a loader's `julia_modules` depends on a package that itself uses DataManifest. To compile (and validate) loaders explicitly, call **`validate_loaders(db)`** or **`validate_loader(db, name)`**. Prefer minimal code in TOML and real logic in included files (e.g. `julia_includes = ["scripts/loaders.jl"]`, then loader names that reference functions defined there).
 
 Example:
 
