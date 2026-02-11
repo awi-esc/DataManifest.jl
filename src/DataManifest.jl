@@ -14,6 +14,7 @@ end
 
 include("Config.jl")
 include("DataBase.jl")
+include("DefaultLoaders.jl")
 include("PipeLines.jl")
 
 # Extend Base.write for Database (DataBase.write is the implementation)
@@ -21,6 +22,10 @@ write(db::DataBase.Database, path::String; kwargs...) = DataBase.write(db, path;
 
 # Backward compatibility: Loaders was a submodule; default loaders now live in PipeLines
 const Loaders = PipeLines
+
+# Optional default loaders by format (csv, parquet, nc, dimstack, md, txt, json, yaml, toml)
+export DefaultLoaders
+using .DefaultLoaders: default_loader
 
 # Re-export public API from DataBase and PipeLines
 using .DataBase: Database, DatasetEntry,
@@ -48,5 +53,6 @@ export add, add_dataset
 export download_dataset, download_datasets
 export load_dataset
 export get_project_root
+export default_loader
 
 end # module DataManifest

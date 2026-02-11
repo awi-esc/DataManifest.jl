@@ -5,6 +5,7 @@ import Downloads
 using ..Config: info, COMPRESSED_FORMATS
 using ..DataBase: DatasetEntry, Database, get_datasets, get_dataset_path, search_dataset, verify_checksum,
     extract_file, get_project_root, get_default_database
+using ..DefaultLoaders: default_loader as builtin_default_loader
 
 _sanitize_ref(ref::String) = replace(replace(ref, '/' => '_'), '.' => '_')
 
@@ -116,6 +117,8 @@ function _get_loader_module(db::Database)::Module
         for m in db.loaders_julia_modules
             Core.eval(mod, :(using $(Symbol(m))))
         end
+        # So loader code can call default_loader("nc") etc. to refer to built-in loaders
+        Core.eval(mod, Expr(:(=), :default_loader, builtin_default_loader))
         db.loader_context_module = mod
     end
     return db.loader_context_module
@@ -296,12 +299,17 @@ function download_datasets(db::Database, names::Union{Nothing,Vector{<:Any}}=not
     end
 end
 
-# ----- Default loaders (merged from Loaders.jl) -----
+# ----- Default loaders (db.loaders then DefaultLoaders) -----
 """
     default_loader(db::Database, format::AbstractString) -> Function
 
 Return a loader function `path -> value` for the given format, when no loader is passed to `load_dataset`.
-Resolution: (1) a named loader in `db.loaders` whose `lowercase(name) == lowercase(format)`; (2) else built-in for that format (e.g. CSV); (3) else error.
+Resolution: (1) a named loader in `db.loaders` whose `lowercase(name) == lowercase(format)`; (2) else built-in from DefaultLoaders (csv, parquet, nc, dimstack, md, txt, json, yaml, toml); (3) else error.
+
+When evaluating loader code from `_LOADERS` or `entry.loader`, the name `default_loader` is available:
+use `default_loader(\"nc\")`, `default_loader(\"dimstack\")`, etc. to refer to the built-in loaders.
+E.g. set `nc = "dimstack"` in _LOADERS so .nc uses dimstack by default, and for a specific dataset set
+`loader = "default_loader(\\\"nc\\\")"` to use the raw NCDataset loader.
 """
 function default_loader(db::Database, format::AbstractString)
     f = lowercase(strip(format))
@@ -311,19 +319,7 @@ function default_loader(db::Database, format::AbstractString)
     for name in keys(db.loaders)
         lowercase(name) == f && return _get_loader_function(db, name)
     end
-    if f == "csv"
-        return _csv_loader
-    end
-    error("No default loader for format \"$format\". Pass a loader function or add a loader named \"$format\" in [_LOADERS].")
-end
-
-function _csv_loader(path)
-    try
-        csv = Base.require(Base.PkgId("CSV"))
-        return csv.read(path)
-    catch
-        error("No loader provided. For CSV format, add CSV (using Pkg; Pkg.add(\"CSV\")) and load it (using CSV), or pass loader = path -> CSV.read(path, DataFrame).")
-    end
+    return builtin_default_loader(format)
 end
 
 function _call_loader(fn::Function, path::String, entry::DatasetEntry)

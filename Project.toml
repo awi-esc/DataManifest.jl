@@ -1,7 +1,7 @@
 name = "DataManifest"
 uuid = "b8ee69ef-a20a-4d38-bceb-a68d72817f72"
-authors = ["Mahé Perrette <mahe.perrette@gmail.com>"]
 version = "0.11.0"
+authors = ["Mahé Perrette <mahe.perrette@gmail.com>"]
 
 [deps]
 Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
@@ -14,3 +14,18 @@ URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
 [compat]
 URIs = "1"
 julia = "1.10"
+
+[extras]
+CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
+Parquet = "626c502c-15b0-58ad-a749-f091afb673ae"
+Tar = "a4e569a6-e804-4fa4-b0f3-eef7a1d5b13e"
+YAML = "ddb6d928-2868-570f-bddf-ab3f9cf99eb6"
+ZipFile = "a5390f91-8eb1-5f08-bee0-b1d1ffed6cea"
+
+[targets]
+test = ["CodecZlib", "CSV", "DataFrames", "DimensionalData", "JSON", "NCDatasets", "Parquet", "Tar", "YAML", "ZipFile"]
