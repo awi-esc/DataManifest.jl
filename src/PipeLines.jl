@@ -89,6 +89,13 @@ function _run_julia(dataset::DatasetEntry, download_path::String, project_root::
     Core.eval(mod, :(entry = $dataset))
     Core.eval(mod, :(required_paths_by_ref = $required_paths_by_ref))
     Core.eval(mod, :(required_paths_ordered = $required_paths_ordered))
+    # Same names as shell template so julia code can use $uri, $key, etc. in strings
+    Core.eval(mod, :(uri = $(dataset.uri)))
+    Core.eval(mod, :(key = $(dataset.key)))
+    Core.eval(mod, :(version = $(dataset.version)))
+    Core.eval(mod, :(doi = $(dataset.doi)))
+    Core.eval(mod, :(format = $(dataset.format)))
+    Core.eval(mod, :(branch = $(dataset.branch)))
     for m in dataset.julia_modules
         Core.eval(mod, :(using $(Symbol(m))))
     end

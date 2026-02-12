@@ -99,6 +99,22 @@ try
         @test read(expected_file, String) == "julia-cmd-test/result"
     end
 
+    @testset "julia: uri, key, doi etc. in scope (same as shell template)" begin
+        # Regression: julia code must see uri, download_path, key, doi etc. (string interpolation like $uri)
+        test_uri = "https://example.com/supplement.csv"
+        test_doi = "10.1234/example"
+        db_jl = Database(datasets_folder=datasets_dir; persist=false)
+        register_dataset(db_jl, test_uri; name="julia_vars_dataset", key="julia-vars/out", doi=test_doi,
+            julia="write(download_path, \"uri=\$(uri)\npath=\$(download_path)\nkey=\$(key)\ndoi=\$(doi)\n\")",
+            skip_checksum=true)
+        out_path = download_dataset(db_jl, "julia_vars_dataset")
+        content = read(out_path, String)
+        @test occursin("uri=$(test_uri)", content)
+        @test occursin("path=$(out_path)", content)
+        @test occursin("key=julia-vars/out", content)
+        @test occursin("doi=$(test_doi)", content)
+    end
+
     @testset "load_dataset" begin
         try
             download_dataset(db, "CMIP6_lgm_tos")
