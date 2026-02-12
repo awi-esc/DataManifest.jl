@@ -386,6 +386,13 @@ try
             @test ds.attrib["title"] == "test"
             @test ds["vals"].attrib["units"] == "m"
         end
+        # Round-trip: array + variable + global attributes -> NetCDF -> dimstack loader
+        stack = default_loader("dimstack")(nc_path)
+        @test stack isa DimensionalData.DimStack
+        @test parent(stack[:vals]) == [1.0, 2.0, 3.0]
+        @test stack[:vals].metadata["units"] == "m"
+        @test haskey(stack, :_global)
+        @test stack[:_global].metadata["title"] == "test"
 
         # zip (call loader; returns path to extracted dir; must fail if ZipFile not available)
         zip_path = joinpath(loader_dir, "x.zip")

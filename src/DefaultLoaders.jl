@@ -112,13 +112,10 @@ function _nc_loader(path)
     return Base.invokelatest(nc.NCDataset, path)
 end
 
-function _dimstack_loader(path)
-    nc = _optional_module("NCDatasets")
-    dim = _optional_module("DimensionalData")
-    if nc === nothing || dim === nothing
-        error("For dimstack default loader, add NCDatasets and DimensionalData: using Pkg; Pkg.add([\"NCDatasets\", \"DimensionalData\"])")
-    end
-    ds = Base.invokelatest(nc.NCDataset, path)
+# Compiled implementation: uses nc/dim modules so all method calls run in their world.
+# Called via invokelatest from _dimstack_loader so no world-age issues.
+function _dimstack_load_impl(path, nc, dim)
+    ds = nc.NCDataset(path)
     try
         global_attrib = Dict{String,Any}(pairs(ds.attrib))
         layers = []
@@ -126,8 +123,7 @@ function _dimstack_loader(path)
             v = ds[name]
             A = collect(v[:])
             dimnames = nc.dimnames(v)
-            dim_lengths = (length(ds.dim[d]) for d in dimnames)
-            # DimensionalData uses Dim{:name}(range), not Dim(Symbol(name))(range)
+            dim_lengths = size(A)
             dim_objs = [(Core.apply_type(dim.Dim, Symbol(d)))(1:n) for (d, n) in zip(dimnames, dim_lengths)]
             var_attrib = Dict{String,Any}(pairs(v.attrib))
             push!(layers, Symbol(name) => dim.DimArray(A, dim_objs...; metadata=var_attrib))
@@ -139,6 +135,15 @@ function _dimstack_loader(path)
     finally
         close(ds)
     end
+end
+
+function _dimstack_loader(path)
+    nc = _optional_module("NCDatasets")
+    dim = _optional_module("DimensionalData")
+    if nc === nothing || dim === nothing
+        error("For dimstack default loader, add NCDatasets and DimensionalData: using Pkg; Pkg.add([\"NCDatasets\", \"DimensionalData\"])")
+    end
+    return Base.invokelatest(_dimstack_load_impl, path, nc, dim)
 end
 
 """Return an open IO stream for the path. Caller should use in a do-block or close the stream."""
