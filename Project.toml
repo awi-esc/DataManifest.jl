@@ -22,10 +22,11 @@ DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
+OrderedCollections = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
 Parquet = "626c502c-15b0-58ad-a749-f091afb673ae"
 Tar = "a4e569a6-e804-4fa4-b0f3-eef7a1d5b13e"
 YAML = "ddb6d928-2868-570f-bddf-ab3f9cf99eb6"
 ZipFile = "a5390f91-8eb1-5f08-bee0-b1d1ffed6cea"
 
 [targets]
-test = ["CodecZlib", "CSV", "DataFrames", "DimensionalData", "JSON", "NCDatasets", "Parquet", "Tar", "YAML", "ZipFile"]
+test = ["CodecZlib", "CSV", "DataFrames", "DimensionalData", "JSON", "NCDatasets", "OrderedCollections", "Parquet", "Tar", "YAML", "ZipFile"]

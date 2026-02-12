@@ -14,6 +14,7 @@ const _LOADER_PKG_UUIDS = Dict{String,Base.UUID}(
     "DimensionalData" => Base.UUID("0703355e-b756-11e9-17c0-8b28908087d0"),
     "JSON" => Base.UUID("682c06a0-de6a-54ab-a142-c8b1cf79cde6"),
     "NCDatasets" => Base.UUID("85f8d34a-cbdd-5861-8df4-14fed0d494ab"),
+    "OrderedCollections" => Base.UUID("bac558e1-5e72-5ebc-8fee-abe8a469f55d"),
     "Parquet" => Base.UUID("626c502c-15b0-58ad-a749-f091afb673ae"),
     "Tar" => Base.UUID("a4e569a6-e804-4fa4-b0f3-eef7a1d5b13e"),
     "YAML" => Base.UUID("ddb6d928-2868-570f-bddf-ab3f9cf99eb6"),
@@ -51,10 +52,9 @@ Supported formats: csv, parquet, nc, dimstack, md, txt, json, yaml, yml, toml, z
 
 For **zip**, **tar**, **tar.gz**, the loader extracts the archive to a temporary directory and returns that directory path (string). Useful when `extract=false`: the dataset path is the archive file and the loader yields the extracted tree.
 
-For **dimstack**, the loader returns a `DimStack` of all variables (each layer is a
-`DimArray` with variable attributes in `metadata`). If the file has global (file-level)
-NetCDF attributes, they are stored in a dummy layer `_global` as `metadata` (e.g.
-`stack._global.metadata`).
+For **dimstack**, the loader returns a `DimStack` of all data variables (each layer is a
+`DimArray` with variable attributes in `metadata`). Implemented by loading an experimental
+module at runtime that uses `exclude_coords=true` (coordinate variables are not stacked).
 """
 function default_loader(format::AbstractString)
     f = lowercase(strip(format))
@@ -112,38 +112,26 @@ function _nc_loader(path)
     return Base.invokelatest(nc.NCDataset, path)
 end
 
-# Compiled implementation: uses nc/dim modules so all method calls run in their world.
-# Called via invokelatest from _dimstack_loader so no world-age issues.
-function _dimstack_load_impl(path, nc, dim)
-    ds = nc.NCDataset(path)
-    try
-        global_attrib = Dict{String,Any}(pairs(ds.attrib))
-        layers = []
-        for name in keys(ds)
-            v = ds[name]
-            A = collect(v[:])
-            dimnames = nc.dimnames(v)
-            dim_lengths = size(A)
-            dim_objs = [(Core.apply_type(dim.Dim, Symbol(d)))(1:n) for (d, n) in zip(dimnames, dim_lengths)]
-            var_attrib = Dict{String,Any}(pairs(v.attrib))
-            push!(layers, Symbol(name) => dim.DimArray(A, dim_objs...; metadata=var_attrib))
-        end
-        if !isempty(global_attrib)
-            push!(layers, :_global => dim.DimArray([0], dim.Dim{:global}(1:1); metadata=global_attrib))
-        end
-        return dim.DimStack((; layers...))
-    finally
-        close(ds)
-    end
-end
+const _netcdf_dimstack_module = Ref{Union{Nothing,Module}}(nothing)
 
 function _dimstack_loader(path)
     nc = _optional_module("NCDatasets")
     dim = _optional_module("DimensionalData")
-    if nc === nothing || dim === nothing
-        error("For dimstack default loader, add NCDatasets and DimensionalData: using Pkg; Pkg.add([\"NCDatasets\", \"DimensionalData\"])")
+    ord = _optional_module("OrderedCollections")
+    if nc === nothing || dim === nothing || ord === nothing
+        error("For dimstack default loader, add NCDatasets, DimensionalData and OrderedCollections: using Pkg; Pkg.add([\"NCDatasets\", \"DimensionalData\", \"OrderedCollections\"])")
     end
-    return Base.invokelatest(_dimstack_load_impl, path, nc, dim)
+    path_nc = path
+    # path_nc = occursin('#', path) ? String(split(path, '#'; limit=2)[1]) : path
+    # Load experimental module in Main so 'using' resolves against the active project, not DataManifest's deps
+    if _netcdf_dimstack_module[] === nothing
+        mod_path = joinpath(dirname(pathof(DefaultLoaders)), "NetCDFDimStack.jl")
+        _netcdf_dimstack_module[] = Main.include(mod_path)
+    end
+    mod = _netcdf_dimstack_module[]
+    return Base.invokelatest() do
+        mod.load_netcdf_as_dimstack(path_nc)
+    end
 end
 
 """Return an open IO stream for the path. Caller should use in a do-block or close the stream."""

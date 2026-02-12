@@ -386,13 +386,43 @@ try
             @test ds.attrib["title"] == "test"
             @test ds["vals"].attrib["units"] == "m"
         end
-        # Round-trip: array + variable + global attributes -> NetCDF -> dimstack loader
+        # Round-trip: array + variable attributes -> NetCDF -> dimstack loader (experimental module; no _global layer)
         stack = default_loader("dimstack")(nc_path)
         @test stack isa DimensionalData.DimStack
         @test parent(stack[:vals]) == [1.0, 2.0, 3.0]
-        @test stack[:vals].metadata["units"] == "m"
-        @test haskey(stack, :_global)
-        @test stack[:_global].metadata["title"] == "test"
+        @test stack[:vals].metadata[:units] == "m"
+
+        # 3-D NetCDF (like LeGrande–Schmidt: lon × lat × depth) to exercise dimstack dimension handling
+        nc_3d_path = joinpath(loader_dir, "data_3d.nc")
+        NCDatasets.NCDataset(nc_3d_path, "c") do ds
+            NCDatasets.defDim(ds, "lon", 3)
+            NCDatasets.defDim(ds, "lat", 4)
+            NCDatasets.defDim(ds, "depth", 5)
+            v = NCDatasets.defVar(ds, "d18o", Float32, ("lon", "lat", "depth"))
+            v[:] = reshape(Float32(1):Float32(60), 3, 4, 5)
+            v.attrib["units"] = "permil"
+            ds.attrib["title"] = "3D test"
+        end
+        stack_3d = default_loader("dimstack")(nc_3d_path)
+        @test stack_3d isa DimensionalData.DimStack
+        @test size(stack_3d[:d18o]) == (3, 4, 5)
+        @test stack_3d[:d18o].metadata[:units] == "permil"
+        @test parent(stack_3d[:d18o])[1, 1, 1] == 1.0f0
+        @test parent(stack_3d[:d18o])[3, 4, 5] == 60.0f0
+
+        # Optional: exercise dimstack on a real 3D NetCDF (e.g. LeGrande–Schmidt) when path is set
+        real_nc = get(ENV, "DATAMANIFEST_DIMSTACK_NC", "")
+        if real_nc != ""
+            path_nc = split(real_nc, '#'; limit=2)[1]
+            if isfile(path_nc)
+                stack_real = default_loader("dimstack")(real_nc)
+                @test stack_real isa DimensionalData.DimStack
+                @test haskey(stack_real, :d18o)
+                @test size(stack_real[:d18o]) == (360, 180, 33)
+              else
+                @warn "DATAMANIFEST_DIMSTACK_NC set but file not found: $path_nc"
+            end
+        end
 
         # zip (call loader; returns path to extracted dir; must fail if ZipFile not available)
         zip_path = joinpath(loader_dir, "x.zip")
