@@ -89,6 +89,7 @@ function _run_julia(dataset::DatasetEntry, download_path::String, project_root::
     Core.eval(mod, :(entry = $dataset))
     Core.eval(mod, :(required_paths_by_ref = $required_paths_by_ref))
     Core.eval(mod, :(required_paths_ordered = $required_paths_ordered))
+    Core.eval(mod, :(requires = $required_paths_ordered))
     # Same names as shell template so julia code can use $uri, $key, etc. in strings
     Core.eval(mod, :(uri = $(dataset.uri)))
     Core.eval(mod, :(key = $(dataset.key)))
@@ -253,7 +254,13 @@ function _download_dataset(dataset::DatasetEntry, download_path::String; project
         end
 
     else
-        Downloads.download(dataset.uri, download_path)
+        try
+            Downloads.download(dataset.uri, download_path)
+        catch e
+            throw(ErrorException(
+                "Automatic download failed. Please manually download the file from\n  $(dataset.uri)\nand save it to\n  $download_path\n\nOriginal error: " *
+                sprint(showerror, e)))
+        end
     end
 end
 
