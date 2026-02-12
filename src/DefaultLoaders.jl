@@ -118,7 +118,7 @@ function _dimstack_loader(path)
     if nc === nothing || dim === nothing
         error("For dimstack default loader, add NCDatasets and DimensionalData: using Pkg; Pkg.add([\"NCDatasets\", \"DimensionalData\"])")
     end
-    ds = nc.NCDataset(path)
+    ds = Base.invokelatest(nc.NCDataset, path)
     try
         global_attrib = Dict{String,Any}(pairs(ds.attrib))
         layers = []
@@ -127,7 +127,8 @@ function _dimstack_loader(path)
             A = collect(v[:])
             dimnames = nc.dimnames(v)
             dim_lengths = (length(ds.dim[d]) for d in dimnames)
-            dim_objs = [dim.Dim(Symbol(d))(1:n) for (d, n) in zip(dimnames, dim_lengths)]
+            # DimensionalData uses Dim{:name}(range), not Dim(Symbol(name))(range)
+            dim_objs = [(Core.apply_type(dim.Dim, Symbol(d)))(1:n) for (d, n) in zip(dimnames, dim_lengths)]
             var_attrib = Dict{String,Any}(pairs(v.attrib))
             push!(layers, Symbol(name) => dim.DimArray(A, dim_objs...; metadata=var_attrib))
         end
