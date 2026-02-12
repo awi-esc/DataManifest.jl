@@ -5,6 +5,9 @@ module DefaultLoaders
 
 using TOML  # already a dependency of DataManifest
 
+# Directory containing this file (src/); used to find NetCDFDimStack.jl when pathof(DefaultLoaders) is nothing (e.g. in CI).
+const _SRC_DIR = @__DIR__
+
 # Standard registry UUIDs for optional loader packages (so we can require by full PkgId
 # and find them in the user's project or depot regardless of DataManifest's own deps).
 const _LOADER_PKG_UUIDS = Dict{String,Base.UUID}(
@@ -125,7 +128,7 @@ function _dimstack_loader(path)
     # path_nc = occursin('#', path) ? String(split(path, '#'; limit=2)[1]) : path
     # Load experimental module in Main so 'using' resolves against the active project, not DataManifest's deps
     if _netcdf_dimstack_module[] === nothing
-        mod_path = joinpath(dirname(pathof(DefaultLoaders)), "NetCDFDimStack.jl")
+        mod_path = joinpath(_SRC_DIR, "NetCDFDimStack.jl")
         _netcdf_dimstack_module[] = Main.include(mod_path)
     end
     mod = _netcdf_dimstack_module[]
