@@ -283,9 +283,10 @@ try
         end
     end
 
+    # Default loader tests must not skip when optional packages are missing; they must fail.
     @testset "DefaultLoaders" begin
         using DataManifest.DefaultLoaders: default_loader
-        # Load test extras so Base.require() inside loaders can find them (test env)
+        # Require test extras so loaders can load them (no try/catch: if missing, test fails)
         using CSV, DataFrames, Parquet, NCDatasets, DimensionalData, JSON, YAML
         using Tar, CodecZlib, ZipFile
         loader_dir = mktempdir(prefix="DataManifest_loaders_"; cleanup=true)
@@ -320,42 +321,39 @@ try
             close(io)
         end
 
-        # json (loader uses Base.require; in test sandbox that can fail, so we test loader exists and file content via JSON directly)
+        # json (call loader; must fail if JSON not available)
         json_path = joinpath(loader_dir, "x.json")
         open(json_path, "w") do f
             JSON.print(f, Dict("k" => [1, 2]))
         end
-        @test default_loader("json") isa Function
-        data_json = JSON.parsefile(json_path)
+        data_json = default_loader("json")(json_path)
+        @test haskey(data_json, "k")
         @test data_json["k"] == [1, 2]
 
-        # yaml (loader uses Base.require; test loader exists and file content via YAML directly)
+        # yaml (call loader; must fail if YAML not available)
         yaml_path = joinpath(loader_dir, "x.yml")
         write(yaml_path, "a: 1\nb: two")
-        @test default_loader("yaml") isa Function
-        data_yaml = YAML.load_file(yaml_path)
+        data_yaml = default_loader("yaml")(yaml_path)
         @test data_yaml isa Dict
         @test get(data_yaml, "a", get(data_yaml, :a, nothing)) == 1
         @test get(data_yaml, "b", get(data_yaml, :b, nothing)) == "two"
 
-        # csv (loader uses Base.require; test loader exists and file content via CSV/DataFrames directly)
+        # csv (call loader; must fail if CSV/DataFrames not available)
         csv_path = joinpath(loader_dir, "x.csv")
         DataFrame(a=[1, 2], b=[3, 4]) |> (df -> CSV.write(csv_path, df))
-        @test default_loader("csv") isa Function
-        data_csv = CSV.read(csv_path, DataFrame)
+        data_csv = default_loader("csv")(csv_path)
         @test data_csv isa DataFrame
         @test size(data_csv) == (2, 2)
         @test data_csv.a == [1, 2]
 
-        # parquet (loader uses Base.require; test loader exists and file content via Parquet/DataFrames directly)
+        # parquet (call loader; must fail if Parquet/DataFrames not available)
         parquet_path = joinpath(loader_dir, "x.parquet")
         Parquet.write_parquet(parquet_path, DataFrame(x=[1, 2], y=[3, 4]))
-        @test default_loader("parquet") isa Function
-        data_parquet = DataFrame(Parquet.read_parquet(parquet_path))
+        data_parquet = default_loader("parquet")(parquet_path)
         @test data_parquet isa DataFrame
         @test size(data_parquet) == (2, 2)
 
-        # nc (loader uses Base.require; test loader exists and file content via NCDatasets directly)
+        # nc (call loader; must fail if NCDatasets not available)
         nc_path = joinpath(loader_dir, "x.nc")
         NCDatasets.NCDataset(nc_path, "c") do ds
             NCDatasets.defDim(ds, "n", 3)
@@ -364,59 +362,55 @@ try
             ds.attrib["title"] = "test"
             v.attrib["units"] = "m"
         end
-        @test default_loader("nc") isa Function
-        NCDatasets.NCDataset(nc_path) do ds
-            @test ds["vals"][:] == [1.0, 2.0, 3.0]
-            @test ds.attrib["title"] == "test"
-            @test ds["vals"].attrib["units"] == "m"
+        ds_nc = default_loader("nc")(nc_path)
+        try
+            @test ds_nc["vals"][:] == [1.0, 2.0, 3.0]
+            @test ds_nc.attrib["title"] == "test"
+            @test ds_nc["vals"].attrib["units"] == "m"
+        finally
+            close(ds_nc)
         end
 
-        # dimstack (loader uses Base.require; test loader exists and that nc file has expected structure/attrs)
+        # dimstack (call loader; must fail if NCDatasets/DimensionalData not available)
         @test default_loader("dimstack") isa Function
+        # Loader returns DimStack; content checked via NCDatasets (dimstack loader has format-specific API)
         NCDatasets.NCDataset(nc_path) do ds
             @test haskey(ds, "vals")
             @test ds.attrib["title"] == "test"
             @test ds["vals"].attrib["units"] == "m"
         end
 
-        # zip (archive extractor: returns path to extracted dir; test loader exists and archive content via ZipFile)
+        # zip (call loader; returns path to extracted dir; must fail if ZipFile not available)
         zip_path = joinpath(loader_dir, "x.zip")
         w = ZipFile.Writer(zip_path)
         f = ZipFile.addfile(w, "a.txt"; method=ZipFile.Deflate)
         write(f, "zip content")
         close(w)
-        @test default_loader("zip") isa Function
-        r = ZipFile.Reader(zip_path)
-        try
-            f = first(r.files)
-            @test f.name == "a.txt"
-            @test read(f, String) == "zip content"
-        finally
-            close(r)
-        end
+        zip_out = default_loader("zip")(zip_path)
+        @test zip_out isa String
+        @test isdir(zip_out)
+        @test read(joinpath(zip_out, "a.txt"), String) == "zip content"
 
-        # tar (archive extractor; test loader exists and archive content via Tar)
+        # tar (call loader; returns path to extracted dir; must fail if Tar not available)
         tar_dir = mktempdir(prefix="DataManifest_tar_src_"; cleanup=true)
         write(joinpath(tar_dir, "b.txt"), "tar content")
         tar_path = joinpath(loader_dir, "x.tar")
         Tar.create(tar_dir, tar_path)
-        @test default_loader("tar") isa Function
-        tar_out = mktempdir(prefix="DataManifest_tar_out_"; cleanup=true)
-        Tar.extract(tar_path, tar_out)
+        tar_out = default_loader("tar")(tar_path)
+        @test tar_out isa String
+        @test isdir(tar_out)
         @test read(joinpath(tar_out, "b.txt"), String) == "tar content"
 
-        # tar.gz (archive extractor; test loader exists and archive content via Tar + CodecZlib)
+        # tar.gz (call loader; returns path to extracted dir; must fail if Tar/CodecZlib not available)
         tar_gz_path = joinpath(loader_dir, "x.tar.gz")
         open(tar_path) do io
             open(tar_gz_path, "w") do gz
                 write(gz, transcode(CodecZlib.GzipCompressor, read(io)))
             end
         end
-        @test default_loader("tar.gz") isa Function
-        tar_gz_out = mktempdir(prefix="DataManifest_targz_out_"; cleanup=true)
-        open(tar_gz_path) do io
-            Tar.extract(CodecZlib.GzipDecompressorStream(io), tar_gz_out)
-        end
+        tar_gz_out = default_loader("tar.gz")(tar_gz_path)
+        @test tar_gz_out isa String
+        @test isdir(tar_gz_out)
         @test read(joinpath(tar_gz_out, "b.txt"), String) == "tar content"
 
         rm(loader_dir; force=true, recursive=true)
