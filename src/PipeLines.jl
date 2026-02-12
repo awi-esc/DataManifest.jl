@@ -387,10 +387,16 @@ function load_dataset(db::Database, entry::DatasetEntry; loader=nothing, kwargs.
     path = download_dataset(db, entry; kwargs...)
     if loader !== nothing && loader != ""
         if loader isa String
-            if !haskey(db.loaders, loader)
-                error("loader must be a callable or a loader name defined in _LOADERS (got unknown name \"$loader\")")
+            if haskey(db.loaders, loader)
+                loader = _get_loader_function(db, loader)
+            else
+                # Resolve to built-in format loader (csv, yaml, nc, etc.) when not in _LOADERS
+                try
+                    loader = builtin_default_loader(loader)
+                catch
+                    error("loader must be a callable or a loader name defined in _LOADERS, or a built-in format (csv, parquet, nc, dimstack, md, txt, json, yaml, yml, toml, zip, tar, tar.gz). Got: \"$loader\"")
+                end
             end
-            loader = _get_loader_function(db, loader)
         end
         return _call_loader(loader, path, entry)
     elseif entry.loader != ""

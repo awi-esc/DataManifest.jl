@@ -177,6 +177,10 @@ try
         @test size(data_builtin) == (2, 2)
         @test names(data_builtin) == ["a", "b"]
         @test data_builtin.a == [1, 3] && data_builtin.b == [2, 4]
+        # Explicit loader="csv" resolves to built-in when not in _LOADERS
+        data_builtin2 = load_dataset(db_builtin, "csv_builtin"; loader="csv")
+        @test size(data_builtin2) == (2, 2) && data_builtin2.a == [1, 3]
+        @test_throws Exception load_dataset(db_builtin, "csv_builtin"; loader="nonexistent_format")
         # Alias: md = "txt" in _LOADERS; entry.loader = "md" resolves to txt loader (invokelatest if world age)
         toml_alias = joinpath(datasets_dir, "with_loader_alias.toml")
         write(toml_alias, """

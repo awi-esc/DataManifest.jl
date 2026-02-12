@@ -148,8 +148,11 @@ shell = "julia scripts/fetch.jl $key $download_path"
 
 `load_dataset(db, name)` downloads the dataset (if needed) and returns a loaded object. You can pass a **loader** function: it is called as `loader(path)`. If you omit the loader, the entry’s `loader` field is used (see below), or else a format-based default (e.g. CSV when available).
 
+To call a **built-in format loader** by name without defining it in `[_LOADERS]`, pass `loader="format"` where `format` is one of: **csv**, **parquet**, **nc**, **dimstack**, **md**, **txt**, **json**, **yaml**, **yml**, **toml**, **zip**, **tar**, **tar.gz**. Each uses an optional package (CSV, Parquet, NCDatasets, etc.) and will error with an "add Package" message if not installed.
+
 ```julia
 data = load_dataset(db, "jonkers2024"; loader = path -> read(path, String))
+data = load_dataset(db, "some_csv"; loader = "csv")   # built-in CSV loader
 ```
 
 ## Database-level loaders ([_LOADERS])
