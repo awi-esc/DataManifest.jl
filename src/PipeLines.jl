@@ -384,8 +384,12 @@ function _call_loader(fn::Function, path::String, entry::DatasetEntry)
         if e isa MethodError
             try
                 return fn(path)
-            catch
-                rethrow(e)
+            catch e2
+                # fn(path) may hit world-age inside (e.g. CSV.read); retry with invokelatest on any MethodError
+                if e2 isa MethodError
+                    return Base.invokelatest(fn, path)
+                end
+                rethrow(e2)
             end
         end
         rethrow(e)

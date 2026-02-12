@@ -174,6 +174,15 @@ try
         db_fmt = Database(toml_default, datasets_dir; persist=false)
         data_fmt = load_dataset(db_fmt, "csv_via_format")
         @test data_fmt == "csv,content"
+        # Built-in CSV default loader (no _LOADERS csv): must work and survive world-age (invokelatest used in _call_loader)
+        db_builtin = Database(datasets_folder=datasets_dir; persist=false)
+        register_dataset(db_builtin, ""; name="csv_builtin", key="builtin-csv-load/data.csv", format="csv",
+            julia="mkpath(dirname(download_path)); write(download_path, \"a,b\\n1,2\\n3,4\")",
+            skip_checksum=true)
+        data_builtin = load_dataset(db_builtin, "csv_builtin")
+        @test size(data_builtin) == (2, 2)
+        @test names(data_builtin) == ["a", "b"]
+        @test data_builtin.a == [1, 3] && data_builtin.b == [2, 4]
         # Alias: md = "txt" in _LOADERS; entry.loader = "md" resolves to txt loader (invokelatest if world age)
         toml_alias = joinpath(datasets_dir, "with_loader_alias.toml")
         write(toml_alias, """

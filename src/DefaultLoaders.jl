@@ -94,7 +94,7 @@ function _csv_loader(path)
     if csv === nothing || df === nothing
         error("For CSV default loader, add CSV and DataFrames: using Pkg; Pkg.add([\"CSV\", \"DataFrames\"])")
     end
-    return csv.read(path, df.DataFrame)
+    return Base.invokelatest(csv.read, path, df.DataFrame)
 end
 
 function _parquet_loader(path)
@@ -103,13 +103,13 @@ function _parquet_loader(path)
     if parquet === nothing || df === nothing
         error("For Parquet default loader, add Parquet and DataFrames: using Pkg; Pkg.add([\"Parquet\", \"DataFrames\"])")
     end
-    return df.DataFrame(parquet.read_parquet(path))
+    return df.DataFrame(Base.invokelatest(parquet.read_parquet, path))
 end
 
 function _nc_loader(path)
     nc = _optional_module("NCDatasets")
     nc === nothing && error("For NetCDF default loader, add NCDatasets: using Pkg; Pkg.add(\"NCDatasets\")")
-    return nc.NCDataset(path)
+    return Base.invokelatest(nc.NCDataset, path)
 end
 
 function _dimstack_loader(path)
@@ -148,13 +148,13 @@ end
 function _json_loader(path)
     json = _optional_module("JSON")
     json === nothing && error("For JSON default loader, add JSON: using Pkg; Pkg.add(\"JSON\")")
-    return json.parsefile(path)
+    return Base.invokelatest(json.parsefile, path)
 end
 
 function _yaml_loader(path)
     yaml = _optional_module("YAML")
     yaml === nothing && error("For YAML default loader, add YAML: using Pkg; Pkg.add(\"YAML\")")
-    return yaml.load_file(path)
+    return Base.invokelatest(yaml.load_file, path)
 end
 
 function _toml_loader(path)
