@@ -82,7 +82,8 @@ end
 
 function _run_julia(dataset::DatasetEntry, download_path::String, project_root::String;
                    required_paths_by_ref::Dict{String,String}=Dict{String,String}(),
-                   required_paths_ordered::Vector{String}=String[])
+                   required_paths_ordered::Vector{String}=String[],
+                   loaders_julia_modules::Vector{String}=String[])
     mod = Module()
     Core.eval(mod, :(download_path = $download_path))
     Core.eval(mod, :(project_root = $project_root))
@@ -97,7 +98,8 @@ function _run_julia(dataset::DatasetEntry, download_path::String, project_root::
     Core.eval(mod, :(doi = $(dataset.doi)))
     Core.eval(mod, :(format = $(dataset.format)))
     Core.eval(mod, :(branch = $(dataset.branch)))
-    for m in dataset.julia_modules
+    # [_LOADERS].julia_modules then entry.julia_modules so entries can use global modules without repeating
+    for m in vcat(loaders_julia_modules, dataset.julia_modules)
         Core.eval(mod, :(using $(Symbol(m))))
     end
     run_code() = Base.include_string(mod, dataset.julia, "julia")
@@ -197,14 +199,16 @@ end
 
 function _download_dataset(dataset::DatasetEntry, download_path::String; project_root::String="", overwrite::Bool=false,
                           required_paths_by_ref::Dict{String,String}=Dict{String,String}(),
-                          required_paths_ordered::Vector{String}=String[])
+                          required_paths_ordered::Vector{String}=String[],
+                          loaders_julia_modules::Vector{String}=String[])
 
     mkpath(dirname(download_path))
 
     if dataset.julia !== ""
         _run_julia(dataset, download_path, project_root;
                   required_paths_by_ref=required_paths_by_ref,
-                  required_paths_ordered=required_paths_ordered)
+                  required_paths_ordered=required_paths_ordered,
+                  loaders_julia_modules=loaders_julia_modules)
         return
     end
 
@@ -315,7 +319,8 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
             end
         end
         _download_dataset(dataset, download_path; project_root=project_root, overwrite=overwrite,
-                         required_paths_by_ref=req_paths_by_ref, required_paths_ordered=req_paths_ordered)
+                         required_paths_by_ref=req_paths_by_ref, required_paths_ordered=req_paths_ordered,
+                         loaders_julia_modules=db.loaders_julia_modules)
     elseif !overwrite
         info("Dataset already exists at: $download_path")
     end

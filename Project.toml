@@ -19,6 +19,7 @@ julia = "1.10"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
@@ -29,4 +30,4 @@ YAML = "ddb6d928-2868-570f-bddf-ab3f9cf99eb6"
 ZipFile = "a5390f91-8eb1-5f08-bee0-b1d1ffed6cea"
 
 [targets]
-test = ["CodecZlib", "CSV", "DataFrames", "DimensionalData", "JSON", "NCDatasets", "OrderedCollections", "Parquet", "Tar", "YAML", "ZipFile"]
+test = ["CodecZlib", "CSV", "DataFrames", "Dates", "DimensionalData", "JSON", "NCDatasets", "OrderedCollections", "Parquet", "Tar", "YAML", "ZipFile"]

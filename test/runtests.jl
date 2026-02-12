@@ -11,7 +11,7 @@ function setup_db(datasets_folder::String)
     register_dataset(db, "https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv";
         name="jonkers2024", doi="10.1594/PANGAEA.962852")
     register_dataset(db, "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip")
-    register_dataset(db, "file://$(joinpath(@__DIR__, "test-data", "data_file.txt"))"; name="CMIP6_lgm_tos")
+    register_dataset(db, "file://$(abspath(joinpath(@__DIR__, "test-data", "data_file.txt")))"; name="CMIP6_lgm_tos", key="test-data/data_file.txt")
     return db
 end
 
@@ -113,6 +113,38 @@ try
         @test occursin("path=$(out_path)", content)
         @test occursin("key=julia-vars/out", content)
         @test occursin("doi=$(test_doi)", content)
+    end
+
+    @testset "julia: [_LOADERS].julia_modules applied to dataset julia code" begin
+        # Regression: entry julia code must see modules from db.loaders_julia_modules (_LOADERS.julia_modules)
+        # even when the entry has no julia_modules (e.g. LGMRecons.DataHelpers.create_input_dataframes).
+        # Use stdlib Dates so we need no extra deps; without loaders_julia_modules, Dates would be undefined.
+        db_jl = Database(datasets_folder=datasets_dir; persist=false)
+        register_loaders(db_jl; julia_modules=["Dates"], persist=false)
+        register_dataset(db_jl, ""; name="uses_loaders_mod", key="julia-modules-test/out",
+            julia="write(download_path, \"loaded=\" * string(Dates.dayofweek(Dates.today())))",
+            skip_checksum=true)
+        out_path = download_dataset(db_jl, "uses_loaders_mod")
+        content = read(out_path, String)
+        @test startswith(content, "loaded=")
+        @test parse(Int, content[8:end]) in 1:7
+    end
+
+    @testset "julia: [_LOADERS].julia_includes applied to loader context" begin
+        # Loader code is evaluated in a module that has db.loaders_julia_includes run first.
+        # So a loader can be the name of a function defined in an included file.
+        helper_path = joinpath(datasets_dir, "julia_includes_helper.jl")
+        write(helper_path, "included_loader(path) = read(joinpath(path, \"out.txt\"), String)\n")
+        db_jl = Database(datasets_folder=datasets_dir; persist=false)
+        register_loaders(db_jl; loaders=Dict("from_include" => "included_loader"), julia_includes=[helper_path], persist=false)
+        register_dataset(db_jl, ""; name="uses_include_loader", key="julia-includes-test/out",
+            loader="from_include",
+            julia="mkpath(download_path); write(joinpath(download_path, \"out.txt\"), \"from_julia_includes\")",
+            skip_checksum=true)
+        out_path = download_dataset(db_jl, "uses_include_loader")
+        @test isdir(out_path)
+        data = load_dataset(db_jl, "uses_include_loader")
+        @test data == "from_julia_includes"
     end
 
     @testset "load_dataset" begin
@@ -249,7 +281,7 @@ try
         @test !haskey(db.datasets, "CMIP6_lgm_tos")
         @test isfile(path)
         # Re-register and re-download for keep_cache=false test
-        register_dataset(db, "file://$(joinpath(@__DIR__, "test-data", "data_file.txt"))"; name="CMIP6_lgm_tos")
+        register_dataset(db, "file://$(abspath(joinpath(@__DIR__, "test-data", "data_file.txt")))"; name="CMIP6_lgm_tos", key="test-data/data_file.txt")
         try
             download_dataset(db, "CMIP6_lgm_tos")
         catch
@@ -263,7 +295,7 @@ try
 
     @testset "requires (dependency resolution)" begin
         db2 = Database(datasets_folder=datasets_dir; persist=false)
-        register_dataset(db2, "file://$(joinpath(@__DIR__, "test-data", "data_file.txt"))"; name="base_data")
+        register_dataset(db2, "file://$(abspath(joinpath(@__DIR__, "test-data", "data_file.txt")))"; name="base_data", key="test-data/data_file.txt")
         register_dataset(db2, ""; name="depends_on_base", key="dep-test/dependent",
             shell="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \$key",
             requires=["base_data"], skip_checksum=true)
@@ -309,9 +341,14 @@ try
     # Default loader tests must not skip when optional packages are missing; they must fail.
     @testset "DefaultLoaders" begin
         using DataManifest.DefaultLoaders: default_loader
-        # Require test extras so loaders can load them (no try/catch: if missing, test fails)
-        using CSV, DataFrames, Parquet, NCDatasets, DimensionalData, JSON, YAML
-        using Tar, CodecZlib, ZipFile
+        try
+            using CSV, DataFrames, Parquet, NCDatasets, DimensionalData, JSON, YAML
+            using Tar, CodecZlib, ZipFile
+        catch e
+            throw(ErrorException(
+                "DefaultLoaders tests require test dependencies. Run: Pkg.test(\"DataManifest\") (recommended), or add the packages listed in Project.toml [extras] to your environment. Original error: " *
+                sprint(showerror, e)))
+        end
         loader_dir = mktempdir(prefix="DataManifest_loaders_"; cleanup=true)
 
         # toml (no extra dep)
