@@ -175,12 +175,26 @@ function Base.:(==)(db1::Database, db2::Database)
            db1.loaders_julia_includes == db2.loaders_julia_includes
 end
 
+# Consider a value empty for TOML output (do not write key)
+_is_empty_toml(value) = value === nothing || value === "" || value == [] || value == false || value == Dict()
+
 function to_dict(db::Database; kwargs...)
-    loaders_table = Dict{String,Any}("julia_modules" => db.loaders_julia_modules, "julia_includes" => db.loaders_julia_includes)
-    for (n, c) in pairs(db.loaders)
-        loaders_table[n] = c
+    loaders_table = Dict{String,Any}()
+    if !_is_empty_toml(db.loaders_julia_modules)
+        loaders_table["julia_modules"] = db.loaders_julia_modules
     end
-    result = Dict{String,Any}("_LOADERS" => loaders_table)
+    if !_is_empty_toml(db.loaders_julia_includes)
+        loaders_table["julia_includes"] = db.loaders_julia_includes
+    end
+    for (n, c) in pairs(db.loaders)
+        if !_is_empty_toml(c)
+            loaders_table[n] = c
+        end
+    end
+    result = Dict{String,Any}()
+    if !isempty(loaders_table)
+        result["_LOADERS"] = loaders_table
+    end
     for (key, entry) in pairs(db.datasets)
         result[key] = to_dict(entry; kwargs...)
     end
