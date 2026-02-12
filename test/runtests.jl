@@ -459,6 +459,24 @@ try
 
         rm(loader_dir; force=true, recursive=true)
     end
+
+    @testset "validate_loaders" begin
+        # Empty loaders: validate_loaders completes without error (no external TOML/modules loaded)
+        val_dir = mktempdir(prefix="DataManifest_validate_"; cleanup=true)
+        db_empty = Database(datasets_folder=val_dir, persist=false)
+        @test length(db_empty.loaders) == 0
+        validate_loaders(db_empty)
+
+        # One inline loader: validate_loaders compiles it; validate_loader returns the function
+        register_loaders(db_empty; loaders=Dict("raw" => "path -> read(path, String)"), persist=false)
+        validate_loaders(db_empty)
+        fn = validate_loader(db_empty, "raw")
+        @test fn isa Function
+        tmp = joinpath(mktempdir(), "t.txt")
+        write(tmp, "hello")
+        @test fn(tmp) == "hello"
+        rm(tmp; force=true)
+    end
 end
 finally
     rm(datasets_dir; force=true, recursive=true)
