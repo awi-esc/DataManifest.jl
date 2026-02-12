@@ -97,7 +97,7 @@ function _csv_loader(path)
     if csv === nothing || df === nothing
         error("For CSV default loader, add CSV and DataFrames: using Pkg; Pkg.add([\"CSV\", \"DataFrames\"])")
     end
-    return Base.invokelatest(csv.read, path, df.DataFrame)
+    return Base.invokelatest(csv.read, path, df.DataFrame; comment="#")
 end
 
 function _parquet_loader(path)
