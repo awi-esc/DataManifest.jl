@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.12.1] - 2025-02-12
+
+### Fixed
+
+- **julia download code**: Execution context now injects `uri`, `key`, `version`, `doi`, `format`, `branch` (same names as shell template placeholders). Code like `error("Download from $uri into $download_path")` no longer raises `UndefVarError: uri not defined`.
+- **CSV default loader**: Use `comment="#"` (string) for CSV.jl; newer CSV.jl expects `Union{Nothing,String}` for `comment`, not `Char`.
+
+
+### Documentation
+
+- Documented variables available in `julia` download code (`download_path`, `project_root`, `entry`, `uri`, `key`, etc.) and the `human` option.
+
+### Tests
+
+- Shell template: test that `$uri` and `$download_path` (escaped) are expanded correctly.
+- julia download: test that `uri`, `download_path`, `key`, `doi` are in scope and usable in string interpolation.
+
 ## [0.12.0] - 2025-02-11
 
 ### New features
