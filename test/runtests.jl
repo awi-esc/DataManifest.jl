@@ -104,7 +104,7 @@ try
             download_dataset(db, "CMIP6_lgm_tos")
         catch
         end
-        # Explicit loader keyword (precedence); called as loader(path, entry) or loader(path)
+        # Explicit loader keyword (precedence); loader is called as loader(path)
         data = load_dataset(db, "CMIP6_lgm_tos"; loader=path -> read(path, String))
         @test data isa String
         @test length(data) > 0
@@ -124,12 +124,6 @@ try
         finally
             close(io)
         end
-        # loader= function can accept (path, entry) and use entry fields
-        received_doi = Ref("")
-        load_dataset(db, "CMIP6_lgm_tos"; loader=(path, entry) -> (received_doi[] = entry.doi; read(path, String)))
-        @test received_doi[] == ""
-        load_dataset(db, "jonkers2024"; loader=(path, entry) -> (received_doi[] = entry.doi; read(path, String)))
-        @test received_doi[] == "10.1594/PANGAEA.962852"
         # [_LOADERS] registry: entry.loader = "read_txt" uses named loader from TOML (invokelatest if world age)
         toml_loaders = joinpath(datasets_dir, "with_loaders_section.toml")
         write(toml_loaders, """
