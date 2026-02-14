@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.2] - 2025-02-14
+
+### Fixed
+
+- **julia download code**: Execution context now correctly imports **julia_modules** in `[_LOADERS]`
+
 ## [0.12.1] - 2025-02-12
 
 ### Fixed
