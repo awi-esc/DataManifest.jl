@@ -134,7 +134,56 @@ uri="https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
 extract=true
 ```
 
-## Shell- and Julia-based entries
+## Multiple URIs (`uris`)
+
+When a dataset consists of several files, use the `uris` field (a list) instead of `uri`. Each URI is downloaded individually into a shared folder. The on-disk path for each file preserves enough directory structure to avoid name collisions — the common leading path segments are stripped, so two files at different sub-paths remain distinguishable.
+
+```toml
+[my_collection]
+uris = [
+  "https://example.com/dataset/v1/file_a.nc",
+  "https://example.com/dataset/v1/file_b.nc",
+]
+# key is auto-derived as "example.com/dataset/v1"
+# files land at <datasets_folder>/example.com/dataset/v1/file_a.nc
+#                                                          file_b.nc
+```
+
+If the files share no common directory (e.g. `data1/file.nc` vs `data2/file.nc`), the key becomes just the hostname and both sub-paths are preserved:
+
+```toml
+[my_collection]
+uris = [
+  "https://example.com/data1/file.nc",
+  "https://example.com/data2/file.nc",
+]
+# key = "example.com"
+# files land at <datasets_folder>/example.com/data1/file.nc
+#                                              data2/file.nc
+```
+
+You can always override the key explicitly:
+
+```toml
+[my_collection]
+key = "my/preferred/folder"
+uris = [
+  "https://example.com/data1/file.nc",
+  "https://example.com/data2/file.nc",
+]
+```
+
+From Julia, `uri` as a list is also accepted as an alias for `uris`:
+
+```julia
+register_dataset(db, ["https://example.com/data1/file.nc", "https://example.com/data2/file.nc"];
+    name="my_collection")
+# or equivalently:
+register_dataset(db, ""; name="my_collection",
+    uris=["https://example.com/data1/file.nc", "https://example.com/data2/file.nc"])
+```
+
+
 
 When `shell` is set, that command runs instead of the built-in download, with working directory set to the project root (when available) for reproducibility. Use template placeholders `$download_path`, `$project_root`, `$uri`, `$key`, `$version`, `$doi`, `$format`, `$branch`. If `$project_root` is used but cannot be determined (no activated project, in-memory database), an error is thrown. Complex logic (pipes, redirects) should go in a script. Alternatively, set `julia` to run Julia code in an isolated module (takes precedence over `shell`); use `julia_modules` to load modules before the code. The code sees the same variable names as the shell template: `download_path`, `project_root`, `uri`, `key`, `version`, `doi`, `format`, `branch`, plus `entry` (the `DatasetEntry`).
 

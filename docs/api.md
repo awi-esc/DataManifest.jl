@@ -38,6 +38,7 @@ register_dataset([db::Database], uri::String="";
     overwrite::Bool=false,
     persist::Bool=true,
     check_duplicate::Bool=true,
+    uris::Vector{String}=String[],
     version::String="",
     branch::String="",
     doi::String="",
@@ -48,13 +49,18 @@ register_dataset([db::Database], uri::String="";
     skip_download::Bool=false,
     extract::Bool=false,
     format::String=""
-) -> Pair{String, DatasetEntry}
+```
+
+Alternatively, `uri` may be passed as a `Vector{String}` (equivalent to `uris=`):
+```
+register_dataset([db::Database], uris::Vector{String}; ...) -> Pair{String, DatasetEntry}
 ```
 
 Register a dataset in the database, without downloading it.
 
 - If `db` is not provided, the default database is used (requires an activated Julia project).
 - If `name` is not provided, it is inferred from the URI or dataset entry.
+- Use `uris` (or `uri` as a list) to register a multi-file dataset; the key is auto-derived from the common host + path prefix, or can be set explicitly via `key=`.
 - All keyword arguments (except for internal fields) correspond to fields in `DatasetEntry`.
 - Duplicate entries are checked by default; set `check_duplicate=false` to disable.
 - If an entry with the same name or key exists, it is updated or overwritten according to the `overwrite` flag.
