@@ -79,6 +79,66 @@ try
         @test other == db
     end
 
+    @testset "uris (multiple URIs for one entry)" begin
+        # Register via Julia API with uris keyword
+        db_u = Database(datasets_folder=datasets_dir; persist=false)
+        register_dataset(db_u, ""; name="multi_file", key="uris-test/folder",
+            uris=["file://$(abspath(joinpath(@__DIR__, "test-data", "data_file.txt")))"],
+            skip_checksum=true)
+        @test haskey(db_u.datasets, "multi_file")
+        @test db_u.datasets["multi_file"].uris == ["file://$(abspath(joinpath(@__DIR__, "test-data", "data_file.txt")))"]
+        @test db_u.datasets["multi_file"].key == "uris-test/folder"
+
+        # uri as a list is equivalent to uris
+        db_u2 = Database(datasets_folder=datasets_dir; persist=false)
+        register_dataset(db_u2, ["file://$(abspath(joinpath(@__DIR__, "test-data", "data_file.txt")))"];
+            name="multi_file2", key="uris-test/folder2", skip_checksum=true)
+        @test haskey(db_u2.datasets, "multi_file2")
+        @test db_u2.datasets["multi_file2"].uris == ["file://$(abspath(joinpath(@__DIR__, "test-data", "data_file.txt")))"]
+
+        # auto-derived key from common host + path prefix
+        db_u_auto = Database(datasets_folder=datasets_dir; persist=false)
+        register_dataset(db_u_auto, ""; name="auto_key",
+            uris=["https://example.com/data1/file.nc", "https://example.com/data2/file.nc"],
+            skip_checksum=true)
+        @test db_u_auto.datasets["auto_key"].key == "example.com"
+        register_dataset(db_u_auto, ""; name="auto_key_common",
+            uris=["https://example.com/dataset/v1/a.nc", "https://example.com/dataset/v1/b.nc"],
+            skip_checksum=true)
+        @test db_u_auto.datasets["auto_key_common"].key == "example.com/dataset/v1"
+
+        # TOML round-trip: uris field survives write/read
+        uris_toml = joinpath(datasets_dir, "uris_test.toml")
+        write(db_u, uris_toml)
+        db_u_rt = read_dataset(uris_toml, datasets_dir; persist=false)
+        @test db_u_rt.datasets["multi_file"].uris == db_u.datasets["multi_file"].uris
+
+        # TOML syntax: uris as a list in TOML
+        toml_str = joinpath(datasets_dir, "uris_toml_syntax.toml")
+        write(toml_str, """
+        [multi_from_toml]
+        key = "uris-toml-test/folder"
+        uris = ["file://$(abspath(joinpath(@__DIR__, "test-data", "data_file.txt")))"]
+        skip_checksum = true
+        """)
+        db_toml = read_dataset(toml_str, datasets_dir; persist=false)
+        @test haskey(db_toml.datasets, "multi_from_toml")
+        @test length(db_toml.datasets["multi_from_toml"].uris) == 1
+
+        # TOML syntax: uri as a list (alias for uris)
+        toml_uri_list = joinpath(datasets_dir, "uri_list_syntax.toml")
+        write(toml_uri_list, """
+        [multi_from_uri_list]
+        key = "uris-uri-list-test/folder"
+        uri = ["file://$(abspath(joinpath(@__DIR__, "test-data", "data_file.txt")))"]
+        skip_checksum = true
+        """)
+        db_uri_list = read_dataset(toml_uri_list, datasets_dir; persist=false)
+        @test haskey(db_uri_list.datasets, "multi_from_uri_list")
+        @test length(db_uri_list.datasets["multi_from_uri_list"].uris) == 1
+    end
+
+
     @testset "Command-based entry (templating)" begin
         db_cmd = Database(joinpath(pkg_root, "Datasets.toml"), datasets_dir; persist=false)
         register_dataset(db_cmd, ""; name="cmd_dataset", key="cmd-test/templating", shell="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \$key", skip_checksum=true)

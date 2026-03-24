@@ -4,7 +4,7 @@ module PipeLines
 import Downloads
 using ..Config: info, COMPRESSED_FORMATS
 using ..Databases: DatasetEntry, Database, get_datasets, get_dataset_path, search_dataset, verify_checksum,
-    extract_file, get_project_root, get_default_database
+    extract_file, get_project_root, get_default_database, parse_uri_metadata
 using ..DefaultLoaders: default_loader as builtin_default_loader
 
 _sanitize_ref(ref::String) = replace(replace(ref, '/' => '_'), '.' => '_')
@@ -197,12 +197,56 @@ function _get_loader_function(db::Database, name_or_code::String; cache_key::Uni
     return fn
 end
 
+"""
+Given a list of URI path strings, return relative paths that preserve enough directory
+structure to disambiguate filenames. The common leading directory segments are stripped.
+Example: ["/data1/file.nc", "/data2/file.nc"] → ["data1/file.nc", "data2/file.nc"]
+"""
+function _uri_relative_paths(uris::Vector{String})::Vector{String}
+    segments = [filter(!isempty, split(parse_uri_metadata(u).path, '/')) for u in uris]
+    # Guard: empty path segments
+    if any(isempty, segments)
+        return [basename(parse_uri_metadata(u).path) for u in uris]
+    end
+    # Find how many leading directory segments are common (never consume the filename)
+    min_len = minimum(length(s) for s in segments)
+    n_common = 0
+    for i in 1:(min_len - 1)
+        if all(s[i] == segments[1][i] for s in segments)
+            n_common = i
+        else
+            break
+        end
+    end
+    return [joinpath(s[n_common+1:end]...) for s in segments]
+end
+
 function _download_dataset(dataset::DatasetEntry, download_path::String; project_root::String="", overwrite::Bool=false,
                           required_paths_by_ref::Dict{String,String}=Dict{String,String}(),
                           required_paths_ordered::Vector{String}=String[],
                           loaders_julia_modules::Vector{String}=String[])
 
     mkpath(dirname(download_path))
+
+    if !isempty(dataset.uris)
+        mkpath(download_path)
+        rel_paths = _uri_relative_paths(dataset.uris)
+        for (uri, rel) in zip(dataset.uris, rel_paths)
+            if isempty(rel)
+                error("Cannot determine filename from URI: $uri")
+            end
+            file_path = joinpath(download_path, rel)
+            mkpath(dirname(file_path))
+            try
+                Downloads.download(uri, file_path)
+            catch e
+                throw(ErrorException(
+                    "Automatic download failed for URI $uri.\nOriginal error: " *
+                    sprint(showerror, e)))
+            end
+        end
+        return
+    end
 
     if dataset.julia !== ""
         _run_julia(dataset, download_path, project_root;

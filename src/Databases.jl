@@ -9,6 +9,7 @@ using ..Config: info, warn, sha256_path, get_extract_path, get_default_toml, DEF
 # ----- Types (DatasetEntry, Database) -----
 Base.@kwdef mutable struct DatasetEntry
     uri::String = ""
+    uris::Vector{String} = String[]
     host::String = ""
     path::String = ""
     scheme::String = ""
@@ -356,8 +357,47 @@ end
 function init_dataset_entry(;
     downloads::Vector{String}=Vector{String}(),
     ref::String="",
+    uri=nothing,
+    uris=nothing,
     kwargs...)
-    entry = DatasetEntry(; kwargs...)
+
+    # Normalize: uri can be a Vector (same as uris)
+    if uri isa AbstractVector
+        if uris !== nothing && !isempty(uris)
+            error("Cannot provide both `uri` as a list and `uris`")
+        end
+        uris = String.(uri)
+        uri = ""
+    end
+    if uri === nothing
+        uri = ""
+    end
+    if uris === nothing
+        uris = String[]
+    else
+        uris = String.(uris)
+    end
+
+    entry = DatasetEntry(; uri=uri, uris=uris, kwargs...)
+
+    # Multiple-URI entry: key derived from common host + path prefix if not given
+    if !isempty(entry.uris)
+        if entry.key == ""
+            parsed_list = [parse_uri_metadata(u) for u in entry.uris]
+            host = parsed_list[1].host
+            dir_segs = [filter(!isempty, split(p.path, '/'))[1:end-1] for p in parsed_list]
+            n_common = 0
+            if !isempty(dir_segs) && !isempty(dir_segs[1])
+                for i in 1:length(dir_segs[1])
+                    all(length(s) >= i && s[i] == dir_segs[1][i] for s in dir_segs) ? (n_common = i) : break
+                end
+            end
+            common_path = join(dir_segs[1][1:n_common], '/')
+            entry.key = isempty(common_path) ? host : "$host/$common_path"
+        end
+        return entry
+    end
+
     if length(downloads) > 0
         warn("The `downloads` field is deprecated. Use `uri` instead.")
         if (entry.uri !== "")
@@ -529,6 +569,10 @@ function register_dataset(db::Database, uri::String="" ;
         write(db, db.datasets_toml)
     end
     return (name => entry)
+end
+
+function register_dataset(db::Database, uris::Vector{String}; kwargs...)
+    register_dataset(db, ""; uris=uris, kwargs...)
 end
 
 function _remove_dataset_from_disk(db::Database, entry::DatasetEntry)
