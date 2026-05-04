@@ -1,6 +1,6 @@
 name = "DataManifest"
 uuid = "b8ee69ef-a20a-4d38-bceb-a68d72817f72"
-version = "0.13.0"
+version = "0.13.1"
 authors = ["Mahé Perrette <mahe.perrette@gmail.com>"]
 
 [deps]

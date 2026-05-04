@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.1] - 2026-05-04
+
+### New features
+
+- **`description` field on `DatasetEntry`**: free-form prose attached to a dataset entry, written/read alongside the other keys in `Datasets.toml`. Use this for rationale or provenance notes that would otherwise be lost as standalone TOML comments when the manifest is rewritten.
+
 ## [0.12.2] - 2025-02-14
 
 ### Fixed

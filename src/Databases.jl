@@ -17,6 +17,7 @@ Base.@kwdef mutable struct DatasetEntry
     branch::String = ""
     doi::String = ""
     aliases::Vector{String} = Vector{String}()
+    description::String = ""
     key::String = ""
     sha256::String = ""
     skip_checksum::Bool = false

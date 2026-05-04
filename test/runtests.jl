@@ -79,6 +79,31 @@ try
         @test other == db
     end
 
+    @testset "description roundtrip" begin
+        db_d = Database(datasets_folder=datasets_dir; persist=false)
+        descr = "Coretop-paired d18oc reference (Malevich 2019), reformatted to the Tierney LH schema."
+        register_dataset(db_d, ""; name="with_desc",
+            key="description-test/out.csv",
+            julia="write(download_path, \"x\")",
+            skip_checksum=true, description=descr)
+        @test db_d.datasets["with_desc"].description == descr
+        # serialised entry contains the description key with the full text
+        d = DataManifest.Databases.to_dict(db_d.datasets["with_desc"])
+        @test get(d, "description", "") == descr
+        # roundtrip through TOML preserves description and equality
+        toml_path = joinpath(datasets_dir, "with_description.toml")
+        write(db_d, toml_path)
+        reloaded = read_dataset(toml_path, datasets_dir; persist=false)
+        @test reloaded.datasets["with_desc"].description == descr
+        @test reloaded == db_d
+        # empty description is omitted from the serialised dict
+        register_dataset(db_d, ""; name="no_desc",
+            key="description-test/none.csv",
+            julia="write(download_path, \"x\")",
+            skip_checksum=true)
+        @test !haskey(DataManifest.Databases.to_dict(db_d.datasets["no_desc"]), "description")
+    end
+
     @testset "uris (multiple URIs for one entry)" begin
         # Register via Julia API with uris keyword
         db_u = Database(datasets_folder=datasets_dir; persist=false)
