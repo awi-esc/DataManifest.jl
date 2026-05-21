@@ -119,6 +119,8 @@ Note when `extract=true`, the method `get_dataset_path` returns the path to the 
 `DataManifest` currently stores most information via the `uri` field. The URI can refer to an http(s) path, a github repository (https or git@) or an `ssh` address (up to the user to have an up-to-date `.ssh/config` to specify passwords etc).
 Note `ssh` files are passed on to the shell's `rsync` command, git repositories to the shell's `git`, and all other uri schemes are passed to julia's `Downloads.download`. To have platform-independent dataset available on github, it is recommended to indicate a tarball archive so that `Downloads.download` is used instead of git.
 
+DataManifest does not enforce URI strictness — the URI's role can be purely informative when the download is performed by custom `shell`/`julia` code, or when the file is provided via `local_path` or `skip_download = true`. A URI pointing to a dataset's documentation page, for example, is a valid use even though DataManifest cannot fetch from it directly.
+
 e.g. instead of git-mediated
 
 ```toml
@@ -185,25 +187,27 @@ register_dataset(db, ""; name="my_collection",
 
 ## User-managed local files (`local_path`)
 
-Sometimes a dataset cannot be downloaded automatically — the source is behind Cloudflare, a manual login, or a click-through agreement — or the data is simply a file already living inside your repository. For these cases, use `local_path` to point DataManifest at an existing file. The `uri` field still documents the canonical source (so anyone reading the TOML knows where the data comes from), while `local_path` declares where the file actually is on disk.
+`local_path` overrides the location DataManifest uses for a dataset's local file — replacing the usual `joinpath(datasets_folder, key)` slot with a path the user controls. It is purely a *location override*: the rest of the pipeline (cache-hit, download, checksum, extraction) is unchanged.
 
 ```toml
-[reference_dataset]
-uri = "https://protected.example.com/dataset.tar.gz"   # canonical source (informational)
-local_path = "data/dataset.tar.gz"                      # relative → resolved against the Datasets.toml directory
-sha256 = "..."                                          # still verified
-extract = false
+[in_repo_dataset]
+uri = "https://example.com/dataset.csv"   # canonical source
+local_path = "data/dataset.csv"            # relative → resolved against the Datasets.toml directory
+sha256 = "..."                             # still verified
 ```
 
 Semantics:
 
 - **Resolution.** A relative `local_path` is resolved against the directory of `Datasets.toml` (i.e., your project root) — convenient for committing small data files alongside your code. An absolute `local_path` is used as-is, which is handy for files on a NAS, an external drive, or a scratch volume.
-- **No copy into the cache.** The dataset is *not* placed under `datasets_folder` / `key`; `get_dataset_path` returns the resolved `local_path` directly. This sidesteps the cache for files DataManifest does not own.
-- **Download is skipped.** If the file is missing, an error tells the user the expected path and the canonical `uri` to obtain it from. No download is ever attempted.
-- **Checksum still applies.** If `sha256` is set, it is verified against the local file — a useful tripwire for manually obtained data.
+- **No copy into the cache.** The dataset is *not* placed under `datasets_folder` / `key`; `get_dataset_path` returns the resolved `local_path` directly.
+- **Cache-hit logic is unchanged.** If the file is already at `local_path`, DataManifest returns it without invoking the URI — exactly the behavior for files that are committed to the repository.
+- **Cache miss → normal download.** If the file is missing, DataManifest proceeds with the usual download from `uri` and writes the result to `local_path`. This lets you redirect a fetched dataset into the repo instead of the user's cache directory.
+- **Checksum still applies.** If `sha256` is set, it is verified against the file at `local_path`.
 - **No deletion.** DataManifest will not remove a `local_path` entry from disk; it never owned the file.
 
-Comparison with `skip_download`: `skip_download = true` is an older mechanism that overloads `uri` as a path (the URI value is returned verbatim as the local path). `local_path` keeps the two roles distinct and is the recommended option going forward, especially when you want the manifest to remain self-documenting.
+For sources that cannot be fetched automatically (Cloudflare, click-through agreements, manual logins), `local_path` can be combined with `skip_download = true` — the location comes from `local_path`, while `skip_download = true` makes the user-managed nature of the file explicit and prevents any download attempt. For files committed to the repository alongside `Datasets.toml`, this pairing is usually unnecessary: the file is always present, so cache-hit wins and `uri` is never consulted.
+
+Compared with `skip_download = true` used *alone*: the older mechanism overloads `uri` as a path (the URI value is returned verbatim as the local path). `local_path` keeps the two roles distinct — `uri` stays as the source identifier, `local_path` is the on-disk location.
 
 ## Shell / Julia download commands
 

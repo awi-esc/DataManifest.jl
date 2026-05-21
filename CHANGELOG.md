@@ -1,10 +1,25 @@
 # Changelog
 
+## [0.14.1] - 2026-05-21
+
+### Changed
+
+- **`local_path` semantics narrowed to "location override"** (correcting v0.14.0 behavior, which conflated location and download policy). `local_path` now only changes where the dataset's local file lives — the cache-hit/download/checksum/extraction pipeline is otherwise unchanged. Cache miss falls through to the normal URI-driven download, writing the result to `local_path`. To declare a user-managed file that DataManifest must never try to download (Cloudflare, click-through agreements, manual logins), pair `local_path` with `skip_download = true`.
+
+### Improved
+
+- **Generic missing-file error**: `download_dataset` now produces a clear message ("Dataset file or folder not found at `<path>`. The documented URI is `<uri>`.") when the expected file is missing after the download/skip step. Applies uniformly whether the file should have been fetched, was declared via `local_path`, or was bypassed via `skip_download = true`.
+
+### Documentation
+
+- Clarified that the URI's role can be purely informative when downloads are handled by `shell`/`julia` code, `local_path`, or `skip_download = true`. DataManifest does not enforce URI strictness.
+- `skip_download`: noted that `local_path` is the recommended option for new code when declaring a user-managed local file.
+
 ## [0.14.0] - 2026-05-21
 
 ### New features
 
-- **`local_path` field on `DatasetEntry`**: declares a user-managed location for the dataset, distinct from DataManifest's own cache (`datasets_folder` / `key`). Relative paths are resolved against the directory of `Datasets.toml` (git-portable, in-repo data files); absolute paths are used as-is (NAS mounts, scratch volumes). When set, the download step is skipped entirely; if the file is missing, the error message points the user at `uri` so they know where to obtain it from. Checksum verification still applies, making this the recommended option for sources DataManifest cannot fetch automatically (Cloudflare-protected URLs, click-through agreements, manual logins). Self-documenting alternative to `skip_download = true`, which overloaded `uri` as a path.
+- **`local_path` field on `DatasetEntry`**: declares a user-managed location for the dataset, distinct from DataManifest's own cache (`datasets_folder` / `key`). Relative paths are resolved against the directory of `Datasets.toml` (git-portable, in-repo data files); absolute paths are used as-is (NAS mounts, scratch volumes). Self-documenting alternative to `skip_download = true`, which overloaded `uri` as a path.
 
 ## [0.13.1] - 2026-05-04
 

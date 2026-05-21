@@ -312,7 +312,7 @@ It is initialized via the `add` method (and internally, `register_dataset` and `
 - `local_path::String`: Path to a user-managed local file. When set, DataManifest bypasses its own cache (`datasets_folder`/`key`) and treats `local_path` as the dataset path. Relative paths are resolved against the directory of `Datasets.toml` (use this for git-portable, in-repo data files); absolute paths are used as-is (e.g. NAS mounts). The download step is skipped — if the file is missing, an error tells the user to obtain it manually from `uri`. Checksum verification still applies, making this a natural fit for sources DataManifest cannot fetch automatically (Cloudflare-protected URLs, datasets behind manual login, etc.).
 - `sha256::String`: SHA-256 checksum.
 - `skip_checksum::Bool`: Skip checksum verification for this dataset.
-- `skip_download::Bool`: Skip downloading this dataset.
+- `skip_download::Bool`: Skip downloading this dataset. For declaring a user-managed local file, prefer `local_path` (newer, self-documenting); `skip_download` is retained for back-compatibility and for entries fetched by custom `shell`/`julia` code that doesn't need a download step.
 - `extract::Bool`: Extract the dataset after download.
 - `format::String`: File format (e.g., "zip", "tar").
 - `shell::String`: When set, run this shell command instead of built-in download. Template placeholders: `$download_path`, `$project_root`, `$uri`, `$key`, `$version`, `$doi`, `$format`, `$branch`. Command runs with working directory = project root when available.

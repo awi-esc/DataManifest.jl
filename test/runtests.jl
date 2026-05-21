@@ -164,7 +164,7 @@ try
     end
 
 
-    @testset "local_path (user-managed file outside the cache)" begin
+    @testset "local_path (override the cache location)" begin
         test_file_abs = abspath(joinpath(@__DIR__, "test-data", "data_file.txt"))
 
         # Absolute local_path is returned as-is, bypassing datasets_folder/key.
@@ -173,7 +173,7 @@ try
             uri="https://protected.example.com/data.txt",
             local_path=test_file_abs, skip_checksum=true)
         @test get_dataset_path(db_abs, "abs_local") == test_file_abs
-        # download_dataset short-circuits and returns the same path (no copy made).
+        # File already exists at local_path → cache hit, no download attempted.
         @test download_dataset(db_abs, "abs_local") == test_file_abs
 
         # _remove_dataset_from_disk does not touch a local_path file.
@@ -197,16 +197,34 @@ try
         @test get_dataset_path(db_rel, "in_repo") == rel_file
         @test download_dataset(db_rel, "in_repo") == rel_file
 
-        # Missing local file: error mentions both the expected path and the canonical URI.
+        # Cache miss + downloadable URI: download lands at local_path
+        # (local_path is purely a location override; download mechanism unchanged).
+        # NOTE: filename matches the source because the file:// scheme uses rsync,
+        # which preserves the source basename.
+        fetch_dir = mktempdir(prefix="DataManifest_lp_fetch_"; cleanup=true)
+        fetch_toml = joinpath(fetch_dir, "Datasets.toml")
+        write(fetch_toml, """
+        [fetch_local]
+        uri = "file://$test_file_abs"
+        local_path = "fetched/data_file.txt"
+        skip_checksum = true
+        """)
+        db_fetch = read_dataset(fetch_toml, datasets_dir; persist=true)
+        fetched_path = joinpath(fetch_dir, "fetched", "data_file.txt")
+        @test !isfile(fetched_path)
+        @test download_dataset(db_fetch, "fetch_local") == fetched_path
+        @test isfile(fetched_path)
+
+        # Missing file with skip_download=true: generic missing-file error citing URI.
         write(toml_path, """
-        [missing_one]
+        [missing_skip]
         uri = "https://protected.example.com/missing.txt"
         local_path = "data/missing.txt"
-        skip_checksum = true
+        skip_download = true
         """)
         db_missing = read_dataset(toml_path, datasets_dir; persist=true)
         err = try
-            download_dataset(db_missing, "missing_one")
+            download_dataset(db_missing, "missing_skip")
             nothing
         catch e
             e
@@ -215,7 +233,7 @@ try
         @test occursin("data/missing.txt", err.msg)
         @test occursin("https://protected.example.com/missing.txt", err.msg)
 
-        # Checksum still applies when the file is present.
+        # Checksum still applies on cache hit.
         bad_checksum_toml = joinpath(lp_dir, "BadChecksum.toml")
         write(bad_checksum_toml, """
         [bad_sum]

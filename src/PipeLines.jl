@@ -320,6 +320,16 @@ function _name_for_entry(db::Database, entry::DatasetEntry)::String
     return name
 end
 
+function _missing_dataset_error(dataset::DatasetEntry, path::String)
+    msg = "Dataset file or folder not found at `$path`."
+    if !isempty(dataset.uris)
+        msg *= " Documented URIs: " * join(("`$u`" for u in dataset.uris), ", ") * "."
+    elseif dataset.uri != ""
+        msg *= " The documented URI is `$(dataset.uri)`."
+    end
+    error(msg)
+end
+
 function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{Nothing,Bool}=nothing, overwrite::Bool=false, kwargs...)
     name = _name_for_entry(db, dataset)
 
@@ -333,16 +343,10 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
 
     if (dataset.skip_download)
         info("Skipping download for dataset: $(dataset.uri) (skip_download=true)")
-        return get_dataset_path(db, dataset; extract=extract)
-    end
-
-    if (dataset.local_path != "")
         path = get_dataset_path(db, dataset; extract=extract)
         if !(isfile(path) || isdir(path))
-            error("Expected local file at `$path` (from `local_path = \"$(dataset.local_path)\"`). " *
-                  "Obtain it manually from `$(dataset.uri)` and place it at that location.")
+            _missing_dataset_error(dataset, path)
         end
-        verify_checksum(db, dataset; extract=extract)
         return path
     end
 
@@ -385,6 +389,10 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
         end
         info("Extracting dataset to: $local_path")
         extract_file(download_path, local_path, dataset.format)
+    end
+
+    if !(isfile(local_path) || isdir(local_path))
+        _missing_dataset_error(dataset, local_path)
     end
 
     verify_checksum(db, dataset; extract=extract)
