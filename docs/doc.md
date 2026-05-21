@@ -183,7 +183,29 @@ register_dataset(db, ""; name="my_collection",
     uris=["https://example.com/data1/file.nc", "https://example.com/data2/file.nc"])
 ```
 
+## User-managed local files (`local_path`)
 
+Sometimes a dataset cannot be downloaded automatically — the source is behind Cloudflare, a manual login, or a click-through agreement — or the data is simply a file already living inside your repository. For these cases, use `local_path` to point DataManifest at an existing file. The `uri` field still documents the canonical source (so anyone reading the TOML knows where the data comes from), while `local_path` declares where the file actually is on disk.
+
+```toml
+[reference_dataset]
+uri = "https://protected.example.com/dataset.tar.gz"   # canonical source (informational)
+local_path = "data/dataset.tar.gz"                      # relative → resolved against the Datasets.toml directory
+sha256 = "..."                                          # still verified
+extract = false
+```
+
+Semantics:
+
+- **Resolution.** A relative `local_path` is resolved against the directory of `Datasets.toml` (i.e., your project root) — convenient for committing small data files alongside your code. An absolute `local_path` is used as-is, which is handy for files on a NAS, an external drive, or a scratch volume.
+- **No copy into the cache.** The dataset is *not* placed under `datasets_folder` / `key`; `get_dataset_path` returns the resolved `local_path` directly. This sidesteps the cache for files DataManifest does not own.
+- **Download is skipped.** If the file is missing, an error tells the user the expected path and the canonical `uri` to obtain it from. No download is ever attempted.
+- **Checksum still applies.** If `sha256` is set, it is verified against the local file — a useful tripwire for manually obtained data.
+- **No deletion.** DataManifest will not remove a `local_path` entry from disk; it never owned the file.
+
+Comparison with `skip_download`: `skip_download = true` is an older mechanism that overloads `uri` as a path (the URI value is returned verbatim as the local path). `local_path` keeps the two roles distinct and is the recommended option going forward, especially when you want the manifest to remain self-documenting.
+
+## Shell / Julia download commands
 
 When `shell` is set, that command runs instead of the built-in download, with working directory set to the project root (when available) for reproducibility. Use template placeholders `$download_path`, `$project_root`, `$uri`, `$key`, `$version`, `$doi`, `$format`, `$branch`. If `$project_root` is used but cannot be determined (no activated project, in-memory database), an error is thrown. Complex logic (pipes, redirects) should go in a script. Alternatively, set `julia` to run Julia code in an isolated module (takes precedence over `shell`); use `julia_modules` to load modules before the code. The code sees the same variable names as the shell template: `download_path`, `project_root`, `uri`, `key`, `version`, `doi`, `format`, `branch`, plus `entry` (the `DatasetEntry`).
 

@@ -164,6 +164,75 @@ try
     end
 
 
+    @testset "local_path (user-managed file outside the cache)" begin
+        test_file_abs = abspath(joinpath(@__DIR__, "test-data", "data_file.txt"))
+
+        # Absolute local_path is returned as-is, bypassing datasets_folder/key.
+        db_abs = Database(datasets_folder=datasets_dir; persist=false)
+        register_dataset(db_abs, ""; name="abs_local",
+            uri="https://protected.example.com/data.txt",
+            local_path=test_file_abs, skip_checksum=true)
+        @test get_dataset_path(db_abs, "abs_local") == test_file_abs
+        # download_dataset short-circuits and returns the same path (no copy made).
+        @test download_dataset(db_abs, "abs_local") == test_file_abs
+
+        # _remove_dataset_from_disk does not touch a local_path file.
+        @test isfile(test_file_abs)
+        DataManifest.Databases._remove_dataset_from_disk(db_abs, db_abs.datasets["abs_local"])
+        @test isfile(test_file_abs)
+
+        # Relative local_path resolves against the Datasets.toml directory.
+        lp_dir = mktempdir(prefix="DataManifest_lp_"; cleanup=true)
+        toml_path = joinpath(lp_dir, "Datasets.toml")
+        mkpath(joinpath(lp_dir, "data"))
+        rel_file = joinpath(lp_dir, "data", "in_repo.txt")
+        write(rel_file, "hello local")
+        write(toml_path, """
+        [in_repo]
+        uri = "https://protected.example.com/in_repo.txt"
+        local_path = "data/in_repo.txt"
+        skip_checksum = true
+        """)
+        db_rel = read_dataset(toml_path, datasets_dir; persist=true)
+        @test get_dataset_path(db_rel, "in_repo") == rel_file
+        @test download_dataset(db_rel, "in_repo") == rel_file
+
+        # Missing local file: error mentions both the expected path and the canonical URI.
+        write(toml_path, """
+        [missing_one]
+        uri = "https://protected.example.com/missing.txt"
+        local_path = "data/missing.txt"
+        skip_checksum = true
+        """)
+        db_missing = read_dataset(toml_path, datasets_dir; persist=true)
+        err = try
+            download_dataset(db_missing, "missing_one")
+            nothing
+        catch e
+            e
+        end
+        @test err isa ErrorException
+        @test occursin("data/missing.txt", err.msg)
+        @test occursin("https://protected.example.com/missing.txt", err.msg)
+
+        # Checksum still applies when the file is present.
+        bad_checksum_toml = joinpath(lp_dir, "BadChecksum.toml")
+        write(bad_checksum_toml, """
+        [bad_sum]
+        uri = "https://protected.example.com/in_repo.txt"
+        local_path = "data/in_repo.txt"
+        sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+        """)
+        db_bad = read_dataset(bad_checksum_toml, datasets_dir; persist=true)
+        @test_throws ErrorException download_dataset(db_bad, "bad_sum")
+
+        # TOML round-trip: local_path field survives write/read.
+        rt_toml = joinpath(lp_dir, "RoundTrip.toml")
+        write(db_rel, rt_toml)
+        db_rt = read_dataset(rt_toml, datasets_dir; persist=false)
+        @test db_rt.datasets["in_repo"].local_path == "data/in_repo.txt"
+    end
+
     @testset "Command-based entry (templating)" begin
         db_cmd = Database(joinpath(pkg_root, "Datasets.toml"), datasets_dir; persist=false)
         register_dataset(db_cmd, ""; name="cmd_dataset", key="cmd-test/templating", shell="julia --startup-file=no $(joinpath(@__DIR__, "write_dummy.jl")) \$download_path \$key", skip_checksum=true)

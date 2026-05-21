@@ -287,6 +287,7 @@ struct DatasetEntry
     doi::String = ""
     aliases::Vector{String} = []
     key::String = ""              # Unique key for the dataset, usually the DOI or a unique name
+    local_path::String = ""       # Path to a user-managed local file; bypasses the cache (relative to Datasets.toml dir, or absolute)
     sha256::String = ""
     skip_checksum::Bool = false   # Whether to skip SHA-256 checksum checks for this dataset
     skip_download::Bool = false   # Skip download (e.g. to keep local files out of the download folder)
@@ -308,6 +309,7 @@ It is initialized via the `add` method (and internally, `register_dataset` and `
 - `doi::String`: DOI for the dataset.
 - `aliases::Vector{String}`: Alternative names for the dataset.
 - `key::String`: Unique key for the dataset.
+- `local_path::String`: Path to a user-managed local file. When set, DataManifest bypasses its own cache (`datasets_folder`/`key`) and treats `local_path` as the dataset path. Relative paths are resolved against the directory of `Datasets.toml` (use this for git-portable, in-repo data files); absolute paths are used as-is (e.g. NAS mounts). The download step is skipped — if the file is missing, an error tells the user to obtain it manually from `uri`. Checksum verification still applies, making this a natural fit for sources DataManifest cannot fetch automatically (Cloudflare-protected URLs, datasets behind manual login, etc.).
 - `sha256::String`: SHA-256 checksum.
 - `skip_checksum::Bool`: Skip checksum verification for this dataset.
 - `skip_download::Bool`: Skip downloading this dataset.

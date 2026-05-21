@@ -19,6 +19,7 @@ Base.@kwdef mutable struct DatasetEntry
     aliases::Vector{String} = Vector{String}()
     description::String = ""
     key::String = ""
+    local_path::String = ""
     sha256::String = ""
     skip_checksum::Bool = false
     skip_download::Bool = false
@@ -315,7 +316,16 @@ function get_dataset_key(entry::DatasetEntry)
     return build_dataset_key(entry)
 end
 
-function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extract::Union{Bool,Nothing}=nothing)
+function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extract::Union{Bool,Nothing}=nothing, project_root::String="")
+    if (entry.local_path != "")
+        if isabspath(entry.local_path)
+            return entry.local_path
+        elseif project_root != ""
+            return joinpath(project_root, entry.local_path)
+        else
+            return entry.local_path
+        end
+    end
     if (entry.skip_download)
         return entry.uri
     end
@@ -333,12 +343,12 @@ function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extra
 end
 
 function get_dataset_path(db::Database, entry::DatasetEntry; kwargs...)
-    return get_dataset_path(entry, get_datasets_folder(db); kwargs...)
+    return get_dataset_path(entry, get_datasets_folder(db); project_root=get_project_root(db), kwargs...)
 end
 
 function get_dataset_path(db::Database, name::String; extract=nothing, kwargs...)
     (name, dataset) = search_dataset(db, name; kwargs...)
-    return get_dataset_path(dataset, db.datasets_folder; extract=extract)
+    return get_dataset_path(dataset, db.datasets_folder; extract=extract, project_root=get_project_root(db))
 end
 
 function build_uri(meta::DatasetEntry)
@@ -514,8 +524,8 @@ function update_entry(db::Database, oldname::String, oldentry::DatasetEntry, new
         end
     end
     message = "Possible duplicate found $oldname =>\n$oldentry"
-    existing_datapath = get_dataset_path(oldentry, db.datasets_folder)
-    new_datapath = get_dataset_path(newentry, db.datasets_folder)
+    existing_datapath = get_dataset_path(db, oldentry)
+    new_datapath = get_dataset_path(db, newentry)
     if (existing_datapath != new_datapath && (isfile(existing_datapath) | isdir(existing_datapath)))
         if (isfile(new_datapath) | isdir(new_datapath))
             message *= "\n\nBoth old and new datasets exist on disk at:"
@@ -577,7 +587,7 @@ function register_dataset(db::Database, uris::Vector{String}; kwargs...)
 end
 
 function _remove_dataset_from_disk(db::Database, entry::DatasetEntry)
-    if entry.skip_download
+    if entry.skip_download || entry.local_path != ""
         return
     end
     download_path = get_dataset_path(entry, db.datasets_folder; extract=false)

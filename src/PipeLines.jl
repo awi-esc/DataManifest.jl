@@ -333,11 +333,21 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
 
     if (dataset.skip_download)
         info("Skipping download for dataset: $(dataset.uri) (skip_download=true)")
-        return get_dataset_path(dataset, db.datasets_folder; extract=extract)
+        return get_dataset_path(db, dataset; extract=extract)
     end
 
-    local_path = get_dataset_path(dataset, db.datasets_folder; extract=extract)
-    download_path = get_dataset_path(dataset, db.datasets_folder; extract=false)
+    if (dataset.local_path != "")
+        path = get_dataset_path(db, dataset; extract=extract)
+        if !(isfile(path) || isdir(path))
+            error("Expected local file at `$path` (from `local_path = \"$(dataset.local_path)\"`). " *
+                  "Obtain it manually from `$(dataset.uri)` and place it at that location.")
+        end
+        verify_checksum(db, dataset; extract=extract)
+        return path
+    end
+
+    local_path = get_dataset_path(db, dataset; extract=extract)
+    download_path = get_dataset_path(db, dataset; extract=false)
 
     if !overwrite && (isfile(local_path) || isdir(local_path))
         info("Dataset already exists at: $local_path")
@@ -354,12 +364,12 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
             order = _get_download_order(db, name; kwargs...)
             for ref in reqs
                 (_, dep_entry) = search_dataset(db, ref; kwargs...)
-                path = get_dataset_path(dep_entry, db.datasets_folder; extract=extract !== nothing ? extract : dep_entry.extract)
+                path = get_dataset_path(db, dep_entry; extract=extract !== nothing ? extract : dep_entry.extract)
                 req_paths_by_ref[_sanitize_ref(ref)] = path
             end
             for dep_name in order[1:end-1]
                 (_, dep_entry) = search_dataset(db, dep_name; kwargs...)
-                push!(req_paths_ordered, get_dataset_path(dep_entry, db.datasets_folder; extract=extract !== nothing ? extract : dep_entry.extract))
+                push!(req_paths_ordered, get_dataset_path(db, dep_entry; extract=extract !== nothing ? extract : dep_entry.extract))
             end
         end
         _download_dataset(dataset, download_path; project_root=project_root, overwrite=overwrite,
