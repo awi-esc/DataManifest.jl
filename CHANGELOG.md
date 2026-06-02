@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased] — schema v1 / `_LANG` namespace
+
+### New features
+
+- **Schema v1 (`_META.schema = 1`)**: manifests can now declare bindings as `module:function` references in a `_LANG.julia` subtable instead of inline Julia code. The inline `julia=`/`loader=` execution path is retained but gated to v0/legacy files (schema absent).
+- **`_LANG.julia` read/write**: per-dataset `[<ds>._LANG.julia].fetcher` / `.loader` refs and the manifest-level `[_LANG.julia.loaders]` format→ref map are parsed into the model on read and regenerated verbatim on write.
+- **v1 fetch ladder**: `_LANG.julia.fetcher` ref → `_LANG.shell.fetcher` template → `uri`/`uris` → error. Delegation to peer CLIs is not yet implemented.
+- **v1 load ladder**: own `_LANG.julia.loader` ref → manifest `[_LANG.julia.loaders][format]` → built-in format default → error. Loaders never spawn a subprocess.
+- **`module:function` ref resolver**: refs are resolved at runtime via `using Module` + `getfield(Module, :function)` — no `eval` or `include_string`.
+- **Lossless multi-language round-trip**: foreign `_LANG.<other>` subtrees (e.g. `[bar._LANG.python]`) and unknown `_*` top-level tables survive every read→write cycle verbatim. Only `_LANG.julia` is regenerated.
+- **`DataManifest.migrate(path)`**: opt-in v0→v1 migration. Moves ref-shaped `julia=`/`loader=` fields and `[_LOADERS]` ref entries into `[<ds>._LANG.julia]` / `[_LANG.julia.loaders]` and sets `_META.schema = 1`. Inline code is preserved verbatim with a log note. Idempotent.
+- **Read-time deprecation note**: a one-time warning is emitted when a legacy `[_LOADERS]` or per-dataset `julia=`/`loader=`/`julia_modules`/`julia_includes` is read.
+- **Shared conformance suite**: `test/runtests.jl` downloads the spec tarball from tag `spec-v1.0`, verifies every fixture file against a pinned per-file sha256 map (`test/conformance_pin.toml`), and runs the fixtures covered by this tool's declared capabilities: `lang-read`, `lang-write`, `shell-fetch`.
+
+### Internal
+
+- `DatasetEntry` gains `lang_julia_fetcher::String` and `lang_julia_loader::String`.
+- `Database` gains `lang_julia_loaders::Dict{String,String}`, `schema::Union{Int,Nothing}`, and `extra::Dict{String,Any}`.
+- `DatasetEntry` gains `extra::Dict{String,Any}` for passthrough of unknown per-dataset keys and foreign `_LANG.*` subtrees.
+
 ## [0.14.1] - 2026-05-21
 
 ### Changed

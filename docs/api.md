@@ -323,3 +323,27 @@ It is initialized via the `add` method (and internally, `register_dataset` and `
 Fields such as `host`, `path`, and `scheme` are internal and not documented here.
 
 ---
+
+## `migrate`
+
+```
+migrate(path::String) -> Nothing
+```
+
+Rewrite a v0 manifest at `path` to schema v1 format, in-place.
+
+- Reads the TOML, detects the schema version, and exits early if the file is already v1 (`_META.schema ≥ 1`).
+- Moves `[_LOADERS]` entries that are `module:function` refs into `[_LANG.julia.loaders]` (format → ref map).
+- Moves per-dataset `julia=` / `loader=` fields that are refs into `[<ds>._LANG.julia]` (`fetcher` / `loader`).
+- Inline code that cannot be expressed as a ref is preserved verbatim with a log note — it is the user's responsibility to extract it into a module function.
+- Sets `[_META].schema = 1` in the rewritten file.
+- Foreign keys and non-Julia `_LANG` subtrees are never modified.
+- The call is idempotent: running `migrate` on an already-v1 file is a no-op.
+
+**Arguments:**
+- `path::String`: Path to the TOML manifest to migrate.
+
+**Returns:**
+Nothing.
+
+---

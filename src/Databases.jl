@@ -30,6 +30,16 @@ Base.@kwdef mutable struct DatasetEntry
     julia_modules::Vector{String} = String[]
     loader::String = ""
     requires::Vector{String} = String[]
+    # Own v1 Julia bindings parsed from `[<ds>._LANG.julia]`: `module:function`
+    # refs. Empty ⇒ none declared. The write side (later item) regenerates the
+    # `[<ds>._LANG.julia]` block from these; they are not emitted as flat keys.
+    lang_julia_fetcher::String = ""
+    lang_julia_loader::String = ""
+    # Unknown per-dataset keys (scalars and foreign `_*` sub-tables such as
+    # `[<ds>._LANG.<other>]`) are kept here verbatim for lossless round-trip.
+    # The own `[<ds>._LANG.julia]` subtable is consumed into the fields above
+    # and removed from here; every foreign `_LANG.<other>` stays verbatim.
+    extra::Dict{String,Any} = Dict{String,Any}()
 end
 
 function Base.:(==)(a::DatasetEntry, b::DatasetEntry)
@@ -78,12 +88,20 @@ function guess_file_format(entry::DatasetEntry)
 end
 
 function to_dict(entry::DatasetEntry)
-    output = Dict{String,Union{String,Vector{String},Bool}}()
+    output = Dict{String,Any}()
     for field in fieldnames(typeof(entry))
-        value = getfield(entry, field)
         if (field in HIDE_STRUCT_FIELDS)
             continue
         end
+        if (field == :extra)
+            continue
+        end
+        # Parsed own Julia bindings are regenerated under `[<ds>._LANG.julia]`
+        # by the write side (later item), never emitted as flat scalar keys.
+        if (field == :lang_julia_fetcher || field == :lang_julia_loader)
+            continue
+        end
+        value = getfield(entry, field)
         if (value === nothing || value == [] || value == Dict() || value === "" || value == false)
             continue
         end
@@ -98,6 +116,27 @@ function to_dict(entry::DatasetEntry)
             end
         end
         output[String(field)] = value
+    end
+    # Splice unknown per-dataset keys / foreign `_*` sub-tables back verbatim.
+    for (k, v) in entry.extra
+        output[String(k)] = v
+    end
+    # Regenerate the own `[<ds>._LANG.julia]` block (fetcher/loader refs) from the
+    # parsed fields and merge it with any foreign `_LANG.<other>` subtrees kept
+    # verbatim in `extra`. The Julia subtable is regenerated; foreign subtrees are
+    # copied as-is (the splice above already placed them under `output["_LANG"]`).
+    julia_block = Dict{String,Any}()
+    if entry.lang_julia_fetcher != ""
+        julia_block["fetcher"] = entry.lang_julia_fetcher
+    end
+    if entry.lang_julia_loader != ""
+        julia_block["loader"] = entry.lang_julia_loader
+    end
+    if !isempty(julia_block)
+        lang = (haskey(output, "_LANG") && output["_LANG"] isa AbstractDict) ?
+            copy(output["_LANG"]) : Dict{String,Any}()
+        lang["julia"] = julia_block
+        output["_LANG"] = lang
     end
     return output
 end
@@ -155,6 +194,16 @@ mutable struct Database
     loaders_julia_includes::Vector{String}
     loader_cache::Dict{String,Function}
     loader_context_module::Union{Module,Nothing}
+    # Unknown top-level `_*` tables (`_META`, foreign `_LANG.<other>`, future
+    # `_FOO`) kept verbatim for lossless round-trip. The own top-level
+    # `[_LANG.julia]` subtable is consumed into `lang_julia_loaders` and removed
+    # from here; every foreign top-level `[_LANG.<other>]` stays verbatim.
+    extra::Dict{String,Any}
+    # Schema version from `[_META].schema`; `nothing` ⇒ v0 (legacy flat).
+    schema::Union{Int,Nothing}
+    # Own v1 default loaders parsed from `[_LANG.julia.loaders]`: a
+    # `format → module:function` ref map. Empty ⇒ none declared.
+    lang_julia_loaders::Dict{String,String}
 
     function Database(datasets::Dict{String,<:DatasetEntry},
             datasets_toml::String,
@@ -165,9 +214,13 @@ mutable struct Database
             loaders_julia_modules::Vector{String},
             loaders_julia_includes::Vector{String},
             loader_cache::Dict{String,Function},
-            loader_context_module::Union{Module,Nothing})
+            loader_context_module::Union{Module,Nothing},
+            extra::Dict{String,Any}=Dict{String,Any}(),
+            schema::Union{Int,Nothing}=nothing,
+            lang_julia_loaders::Dict{String,String}=Dict{String,String}())
         new(datasets, datasets_toml, datasets_folder, skip_checksum, skip_checksum_folders,
-            loaders, loaders_julia_modules, loaders_julia_includes, loader_cache, loader_context_module)
+            loaders, loaders_julia_modules, loaders_julia_includes, loader_cache, loader_context_module,
+            extra, schema, lang_julia_loaders)
     end
 end
 
@@ -175,7 +228,8 @@ function Base.:(==)(db1::Database, db2::Database)
     return db1.datasets == db2.datasets && db1.datasets_folder == db2.datasets_folder &&
            db1.datasets_toml == db2.datasets_toml && db1.loaders == db2.loaders &&
            db1.loaders_julia_modules == db2.loaders_julia_modules &&
-           db1.loaders_julia_includes == db2.loaders_julia_includes
+           db1.loaders_julia_includes == db2.loaders_julia_includes &&
+           db1.extra == db2.extra && db1.schema == db2.schema
 end
 
 # Consider a value empty for TOML output (do not write key)
@@ -197,6 +251,23 @@ function to_dict(db::Database; kwargs...)
     result = Dict{String,Any}()
     if !isempty(loaders_table)
         result["_LOADERS"] = loaders_table
+    end
+    # Splice unknown top-level `_*` tables (`_META`, foreign `_LANG.<other>`,
+    # future `_FOO`) back verbatim.
+    for (k, v) in pairs(db.extra)
+        result[String(k)] = v
+    end
+    # Regenerate the own top-level `[_LANG.julia]` block (the `loaders` format→ref
+    # map) from the parsed model and merge it with any foreign top-level
+    # `[_LANG.<other>]` kept verbatim in `db.extra` (already spliced above).
+    if !isempty(db.lang_julia_loaders)
+        julia_block = Dict{String,Any}(
+            "loaders" => Dict{String,Any}(k => v for (k, v) in db.lang_julia_loaders),
+        )
+        lang = (haskey(result, "_LANG") && result["_LANG"] isa AbstractDict) ?
+            copy(result["_LANG"]) : Dict{String,Any}()
+        lang["julia"] = julia_block
+        result["_LANG"] = lang
     end
     for (key, entry) in pairs(db.datasets)
         result[key] = to_dict(entry; kwargs...)
@@ -365,6 +436,101 @@ function build_uri(meta::DatasetEntry)
     return uri
 end
 
+# One-time deprecation flag: fires the first time a v0/legacy form is read.
+const _LEGACY_DEPRECATION_WARNED = Ref{Bool}(false)
+
+function _warn_legacy_once()
+    _LEGACY_DEPRECATION_WARNED[] && return
+    _LEGACY_DEPRECATION_WARNED[] = true
+    warn("Legacy manifest form detected (flat julia=/loader= fields or [_LOADERS] table). " *
+         "Call DataManifest.migrate(path) to update to v1 _LANG format.")
+end
+
+# True when a string looks like a `Module[.Sub]:function` ref: no whitespace,
+# no newlines — safe to resolve via getfield without include_string.
+function _is_ref(s::String)::Bool
+    return occursin(r"^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$", s)
+end
+
+# Split a `_LANG` table into its own `julia` subtable (or `nothing`) and a
+# dict of every foreign `_LANG.<other>` entry kept verbatim. The own Julia
+# subtable is consumed into the model; the foreign remainder stays in `extra`.
+function _split_lang(lang)
+    julia = nothing
+    foreign = Dict{String,Any}()
+    if lang isa AbstractDict
+        for (k, v) in lang
+            if String(k) == "julia"
+                julia = v
+            else
+                foreign[String(k)] = v
+            end
+        end
+    end
+    return julia, foreign
+end
+
+# Parse a dataset's own `[<ds>._LANG.julia]` (fetcher/loader refs) into the
+# model and drop it from `entry.extra`; keep every foreign `_LANG.<other>`
+# subtree verbatim. Legacy entries (no `_LANG`) are untouched.
+function _parse_dataset_lang!(entry::DatasetEntry)
+    haskey(entry.extra, "_LANG") || return entry
+    julia, foreign = _split_lang(entry.extra["_LANG"])
+    if julia isa AbstractDict
+        f = get(julia, "fetcher", nothing)
+        l = get(julia, "loader", nothing)
+        if f isa AbstractString
+            entry.lang_julia_fetcher = String(f)
+        end
+        if l isa AbstractString
+            entry.lang_julia_loader = String(l)
+        end
+    end
+    if isempty(foreign)
+        delete!(entry.extra, "_LANG")
+    else
+        entry.extra["_LANG"] = foreign
+    end
+    return entry
+end
+
+# Parse the top-level `[_LANG.julia.loaders]` (format→ref map) into the model
+# and drop the own `julia` subtable from `db.extra`; keep every foreign
+# top-level `[_LANG.<other>]` verbatim.
+function _parse_database_lang!(db::Database)
+    haskey(db.extra, "_LANG") || return db
+    julia, foreign = _split_lang(db.extra["_LANG"])
+    if julia isa AbstractDict
+        loaders = get(julia, "loaders", nothing)
+        if loaders isa AbstractDict
+            for (fmt, ref) in loaders
+                if ref isa AbstractString
+                    db.lang_julia_loaders[String(fmt)] = String(ref)
+                end
+            end
+        end
+    end
+    if isempty(foreign)
+        delete!(db.extra, "_LANG")
+    else
+        db.extra["_LANG"] = foreign
+    end
+    return db
+end
+
+# Put the manifest's directory (the project root) on the module load path so
+# `module:function` refs naming local modules resolve by convention (Julia
+# treats a directory on LOAD_PATH as an implicit environment). Idempotent;
+# only applies to file-backed databases.
+function _ensure_project_root_on_load_path(db::Database)
+    db.datasets_toml == "" && return nothing
+    root = get_project_root(db)
+    if !isempty(root) && isdir(root) && !(root in LOAD_PATH)
+        push!(LOAD_PATH, root)
+    end
+    return nothing
+end
+
 function init_dataset_entry(;
     downloads::Vector{String}=Vector{String}(),
     ref::String="",
@@ -389,7 +555,37 @@ function init_dataset_entry(;
         uris = String.(uris)
     end
 
-    entry = DatasetEntry(; uri=uri, uris=uris, kwargs...)
+    # Separate known struct fields from unknown keys; unknown per-dataset keys
+    # (scalars and foreign `_*` sub-tables) are kept verbatim in `entry.extra`.
+    known = Set(fieldnames(DatasetEntry))
+    passthrough = Dict{String,Any}()
+    explicit_extra = nothing
+    entry_kw = Pair{Symbol,Any}[]
+    for (k, v) in kwargs
+        if k === :extra
+            explicit_extra = v
+        elseif k in known
+            push!(entry_kw, k => v)
+        else
+            passthrough[String(k)] = v
+        end
+    end
+
+    for (k, v) in entry_kw
+        if k in (:julia, :loader, :julia_modules, :julia_includes)
+            nonempty = v isa AbstractString ? !isempty(v) : (v isa AbstractVector ? !isempty(v) : false)
+            nonempty && (_warn_legacy_once(); break)
+        end
+    end
+    entry = DatasetEntry(; uri=uri, uris=uris, entry_kw...)
+    if explicit_extra !== nothing
+        for (k, v) in pairs(explicit_extra)
+            passthrough[String(k)] = v
+        end
+    end
+    entry.extra = passthrough
+    # Parse own `[<ds>._LANG.julia]` bindings (v1); keep foreign `_LANG.<other>`.
+    _parse_dataset_lang!(entry)
 
     # Multiple-URI entry: key derived from common host + path prefix if not given
     if !isempty(entry.uris)
@@ -763,12 +959,29 @@ end
 function register_datasets(db::Database, datasets::Dict; kwargs...)
     L = get(datasets, "_LOADERS", get(datasets, "_loaders", nothing))
     if L isa Dict
+        _warn_legacy_once()
         mods = haskey(L, "julia_modules") && L["julia_modules"] isa Vector ? String.(L["julia_modules"]) : String[]
         incs = haskey(L, "julia_includes") && L["julia_includes"] isa Vector ? String.(L["julia_includes"]) : String[]
         loader_dict = Dict{String,String}(String(k) => (v isa String ? v : repr(v)) for (k, v) in L if k != "julia_modules" && k != "julia_includes")
         register_loaders(db; loaders=loader_dict, julia_modules=mods, julia_includes=incs, persist=false)
     end
-    names = [k for k in keys(datasets) if k != "_LOADERS" && k != "_loaders"]
+    # Structural `_*` top-level tables are never datasets. `_LOADERS`/`_loaders`
+    # are consumed above; recognize `[_META].schema`; keep every other `_*`
+    # table (`_META`, foreign `_LANG.<other>`, future `_FOO`) verbatim in extra.
+    for (k, v) in pairs(datasets)
+        ks = String(k)
+        startswith(ks, "_") || continue
+        (ks == "_LOADERS" || ks == "_loaders") && continue
+        db.extra[ks] = v
+    end
+    meta = get(datasets, "_META", nothing)
+    if meta isa AbstractDict && haskey(meta, "schema") && meta["schema"] isa Integer
+        db.schema = Int(meta["schema"])
+    end
+    # Parse own top-level `[_LANG.julia.loaders]`; keep foreign `_LANG.<other>`.
+    _parse_database_lang!(db)
+    _ensure_project_root_on_load_path(db)
+    names = [k for k in keys(datasets) if !startswith(String(k), "_")]
     for (i, name) in enumerate(names)
         info_ = datasets[name]
         info = Dict(Symbol(k) => v for (k, v) in (info_ isa Dict ? info_ : pairs(info_)))
@@ -856,5 +1069,101 @@ register_dataset(db::Nothing, uri::String; kwargs...) = register_dataset(uri; kw
 delete_dataset(name::String; kwargs...) = delete_dataset(get_default_database(), name; kwargs...)
 add(uri::String=""; kwargs...) = add(get_default_database(), uri; kwargs...)
 get_dataset_path(name::String; kwargs...) = get_dataset_path(get_default_database(), name; kwargs...)
+
+function migrate(path::String)
+    isfile(path) || error("File not found: $path")
+    config = TOML.parsefile(path)
+
+    meta = get(config, "_META", nothing)
+    schema = (meta isa AbstractDict && haskey(meta, "schema")) ? meta["schema"] : nothing
+    if schema isa Integer && schema >= 1
+        info("migrate: $path is already schema v$schema, nothing to do")
+        return
+    end
+
+    # Migrate [_LOADERS] format-loader entries that are refs into [_LANG.julia.loaders]
+    for lkey in ("_LOADERS", "_loaders")
+        L = get(config, lkey, nothing)
+        L isa AbstractDict || continue
+        migrated = Dict{String,String}()
+        for (k, v) in L
+            ks = String(k)
+            ks in ("julia_modules", "julia_includes") && continue
+            if v isa String && !isempty(v)
+                if _is_ref(v)
+                    migrated[ks] = v
+                else
+                    warn("migrate: [_LOADERS][$ks] looks like inline code; preserved verbatim")
+                end
+            end
+        end
+        if !isempty(migrated)
+            lang = get(config, "_LANG", Dict{String,Any}())
+            lang = lang isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in lang) : Dict{String,Any}()
+            jul = get(lang, "julia", Dict{String,Any}())
+            jul = jul isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in jul) : Dict{String,Any}()
+            ldr = get(jul, "loaders", Dict{String,Any}())
+            ldr = ldr isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in ldr) : Dict{String,Any}()
+            for (fmt, ref) in migrated
+                ldr[fmt] = ref
+            end
+            jul["loaders"] = ldr
+            lang["julia"] = jul
+            config["_LANG"] = lang
+            remaining = Dict{String,Any}(String(k) => v for (k, v) in L
+                                         if !(String(k) in keys(migrated)))
+            if isempty(remaining)
+                delete!(config, lkey)
+            else
+                config[lkey] = remaining
+            end
+        end
+        break
+    end
+
+    # Migrate per-dataset julia= and loader= refs into [<ds>._LANG.julia]
+    for dsname in collect(keys(config))
+        startswith(String(dsname), "_") && continue
+        dsval = config[dsname]
+        dsval isa AbstractDict || continue
+        ds = Dict{String,Any}(String(k) => v for (k, v) in dsval)
+        lang_julia = Dict{String,Any}()
+        for (field, target) in (("julia", "fetcher"), ("loader", "loader"))
+            v = get(ds, field, nothing)
+            if v isa String && !isempty(v)
+                if _is_ref(v)
+                    lang_julia[target] = v
+                    delete!(ds, field)
+                else
+                    warn("migrate: [$dsname].$field looks like inline code; preserved verbatim")
+                end
+            end
+        end
+        if !isempty(lang_julia)
+            lang = get(ds, "_LANG", Dict{String,Any}())
+            lang = lang isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in lang) : Dict{String,Any}()
+            jul = get(lang, "julia", Dict{String,Any}())
+            jul = jul isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in jul) : Dict{String,Any}()
+            for (k, v) in lang_julia
+                jul[k] = v
+            end
+            lang["julia"] = jul
+            ds["_LANG"] = lang
+            config[String(dsname)] = ds
+        end
+    end
+
+    # Set _META.schema = 1
+    meta_dict = get(config, "_META", Dict{String,Any}())
+    meta_dict = meta_dict isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in meta_dict) : Dict{String,Any}()
+    meta_dict["schema"] = 1
+    config["_META"] = meta_dict
+
+    open(path, "w") do io
+        TOML.print(io, config; sorted=true)
+    end
+    info("migrate: wrote v1 manifest to $path")
+    return nothing
+end
 
 end # module Databases

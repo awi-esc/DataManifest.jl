@@ -34,7 +34,7 @@ using .Databases: Database, DatasetEntry,
     register_dataset, register_datasets, register_loaders, validate_loader, validate_loaders,
     search_datasets, search_dataset,
     repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_keys,
-    verify_checksum, read_dataset, delete_dataset, add
+    verify_checksum, read_dataset, delete_dataset, add, migrate
 using .PipeLines: download_dataset, download_datasets, load_dataset, get_project_root
 
 const add_dataset = add
@@ -54,5 +54,6 @@ export download_dataset, download_datasets
 export load_dataset
 export get_project_root
 export default_loader
+export migrate
 
 end # module DataManifest

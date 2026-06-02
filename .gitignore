@@ -25,3 +25,7 @@ Manifest.toml
 
 # Test artifacts (tests use mktempdir; keep for manual runs / backwards compat)
 datasets-test
+
+# Autonomous roadmap workflows (local coordination artifacts; never committed)
+workflows/
+.worktrees/
