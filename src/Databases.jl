@@ -1259,6 +1259,20 @@ function migrate(path::String)
             ds["_LANG"] = lang
             config[String(dsname)] = ds
         end
+
+        # Migrate per-dataset shell= into [<ds>._LANG.shell].fetcher
+        shell_v = get(ds, "shell", nothing)
+        if shell_v isa String && !isempty(shell_v)
+            lang = get(ds, "_LANG", Dict{String,Any}())
+            lang = lang isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in lang) : Dict{String,Any}()
+            sh = get(lang, "shell", Dict{String,Any}())
+            sh = sh isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in sh) : Dict{String,Any}()
+            sh["fetcher"] = shell_v
+            lang["shell"] = sh
+            ds["_LANG"] = lang
+            delete!(ds, "shell")
+            config[String(dsname)] = ds
+        end
     end
 
     # Set _META.schema = 1
