@@ -5,6 +5,7 @@ using TOML
 using URIs
 using ..Config: info, warn, sha256_path, get_extract_path, get_default_toml, DEFAULT_DATASETS_FOLDER_PATH,
     COMPRESSED_FORMATS, HIDE_STRUCT_FIELDS, project_root_from_paths
+using ..Storage: store_root
 
 # ----- Types (DatasetEntry, Database) -----
 Base.@kwdef mutable struct DatasetEntry
@@ -397,7 +398,19 @@ function get_dataset_key(entry::DatasetEntry)
     return build_dataset_key(entry)
 end
 
-function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extract::Union{Bool,Nothing}=nothing, project_root::String="")
+# Resolve the root directory for an entry's store. An explicitly-provided
+# `datasets_folder` (non-empty) overrides the `data` store root for back-compat;
+# every other store — and the defaulted (`""`) `data` store — resolves via the
+# `Storage` module (platformdirs-equivalent defaults + `[_STORAGE]` precedence).
+function resolve_store_root(entry::DatasetEntry, datasets_folder::String=""; project_root::String="", storage_config::AbstractDict=Dict{String,Any}())
+    store = entry.store == "" ? "data" : entry.store
+    if datasets_folder != "" && store == "data"
+        return datasets_folder
+    end
+    return store_root(store; project_root=project_root, storage_config=storage_config)
+end
+
+function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extract::Union{Bool,Nothing}=nothing, project_root::String="", storage_config::AbstractDict=Dict{String,Any}())
     if (entry.local_path != "")
         if isabspath(entry.local_path)
             return entry.local_path
@@ -418,18 +431,41 @@ function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extra
         key = get_extract_path(key)
     end
     return joinpath(
-        datasets_folder !== "" ? datasets_folder : DEFAULT_DATASETS_FOLDER_PATH,
+        resolve_store_root(entry, datasets_folder; project_root=project_root, storage_config=storage_config),
         key,
     )
 end
 
 function get_dataset_path(db::Database, entry::DatasetEntry; kwargs...)
-    return get_dataset_path(entry, get_datasets_folder(db); project_root=get_project_root(db), kwargs...)
+    return get_dataset_path(entry, get_datasets_folder(db); project_root=get_project_root(db), storage_config=db.storage_config, kwargs...)
 end
 
 function get_dataset_path(db::Database, name::String; extract=nothing, kwargs...)
     (name, dataset) = search_dataset(db, name; kwargs...)
-    return get_dataset_path(dataset, db.datasets_folder; extract=extract, project_root=get_project_root(db))
+    return get_dataset_path(dataset, get_datasets_folder(db); extract=extract, project_root=get_project_root(db), storage_config=db.storage_config)
+end
+
+# Read-side resolution: search the `repo`, `data`, `cache` store roots in that
+# order and return the first `<root>/<key>` that already exists on disk. When the
+# dataset is not yet materialized in any store, fall back to the write path (the
+# entry's selected store). `.complete`-marker awareness is layered on later.
+function resolve_existing_path(db::Database, entry::DatasetEntry; extract::Union{Bool,Nothing}=nothing)
+    if entry.local_path != "" || entry.skip_download
+        return get_dataset_path(db, entry; extract=extract)
+    end
+    ext = extract === nothing ? entry.extract : extract
+    key = ext ? get_extract_path(entry.key) : entry.key
+    project_root = get_project_root(db)
+    datasets_folder = get_datasets_folder(db)
+    for store in ("repo", "data", "cache")
+        e = DatasetEntry(; key=entry.key, store=store)
+        root = resolve_store_root(e, datasets_folder; project_root=project_root, storage_config=db.storage_config)
+        candidate = joinpath(root, key)
+        if ispath(candidate)
+            return candidate
+        end
+    end
+    return get_dataset_path(db, entry; extract=extract)
 end
 
 function build_uri(meta::DatasetEntry)
@@ -796,9 +832,9 @@ function _remove_dataset_from_disk(db::Database, entry::DatasetEntry)
     if entry.skip_download || entry.local_path != ""
         return
     end
-    download_path = get_dataset_path(entry, db.datasets_folder; extract=false)
+    download_path = get_dataset_path(db, entry; extract=false)
     if entry.extract
-        local_path = get_dataset_path(entry, db.datasets_folder; extract=true)
+        local_path = get_dataset_path(db, entry; extract=true)
         if isdir(local_path)
             rm(local_path; force=true, recursive=true)
         end
@@ -1022,9 +1058,9 @@ end
 function Database(; datasets_toml::String="", datasets_folder::String="",
     persist::Bool=true, skip_checksum::Bool=false, skip_checksum_folders::Bool=false,
     datasets::Dict{String,<:DatasetEntry}=Dict{String,DatasetEntry}(), kwargs...)
-    if datasets_folder == ""
-        datasets_folder = DEFAULT_DATASETS_FOLDER_PATH
-    end
+    # A defaulted (empty) `datasets_folder` is left empty so the path model
+    # resolves the `data` store via `Storage` (platformdirs). An explicit value
+    # acts as the `data`-store root override (back-compat).
     if (datasets_toml == "" && persist)
         datasets_toml = get_default_toml()
     end
