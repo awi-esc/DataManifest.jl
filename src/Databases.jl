@@ -37,6 +37,16 @@ Base.@kwdef mutable struct DatasetEntry
     store::String = ""
     lang_julia_fetcher::String = ""
     lang_julia_loader::String = ""
+    # Parameterized-binding payloads for the own Julia fetcher/loader: ordered
+    # positional `args` and a `kwargs` map, parsed from the `{ ref, args, kwargs }`
+    # table form of `[<ds>._LANG.julia].fetcher`/`loader`. Empty ⇒ the binding is a
+    # bare `module:function` ref (conventional call). Values may be arbitrary TOML
+    # (strings, numbers, nested arrays/tables); `$var` substitution happens later
+    # at execution time, not here.
+    lang_julia_fetcher_args::Vector{Any} = Any[]
+    lang_julia_fetcher_kwargs::Dict{String,Any} = Dict{String,Any}()
+    lang_julia_loader_args::Vector{Any} = Any[]
+    lang_julia_loader_kwargs::Dict{String,Any} = Dict{String,Any}()
     # Unknown per-dataset keys (scalars and foreign `_*` sub-tables such as
     # `[<ds>._LANG.<other>]`) are kept here verbatim for lossless round-trip.
     # The own `[<ds>._LANG.julia]` subtable is consumed into the fields above
@@ -89,6 +99,24 @@ function guess_file_format(entry::DatasetEntry)
     return lstrip(ext, '.')
 end
 
+# Render a Julia binding (ref + optional args/kwargs) for `[<ds>._LANG.julia]`.
+# With no args and no kwargs it is a bare `module:function` string (conventional
+# call); otherwise a `{ ref, args, kwargs }` table (kwargs keys are sorted by the
+# TOML writer, args order preserved).
+function _binding_to_dict(ref::AbstractString, args, kwargs)
+    if isempty(args) && isempty(kwargs)
+        return String(ref)
+    end
+    t = Dict{String,Any}("ref" => String(ref))
+    if !isempty(args)
+        t["args"] = args
+    end
+    if !isempty(kwargs)
+        t["kwargs"] = kwargs
+    end
+    return t
+end
+
 function to_dict(entry::DatasetEntry)
     output = Dict{String,Any}()
     for field in fieldnames(typeof(entry))
@@ -98,9 +126,11 @@ function to_dict(entry::DatasetEntry)
         if (field == :extra)
             continue
         end
-        # Parsed own Julia bindings are regenerated under `[<ds>._LANG.julia]`
-        # by the write side (later item), never emitted as flat scalar keys.
-        if (field == :lang_julia_fetcher || field == :lang_julia_loader)
+        # Parsed own Julia bindings (refs + args/kwargs payloads) are regenerated
+        # under `[<ds>._LANG.julia]` below, never emitted as flat scalar keys.
+        if (field in (:lang_julia_fetcher, :lang_julia_loader,
+                      :lang_julia_fetcher_args, :lang_julia_fetcher_kwargs,
+                      :lang_julia_loader_args, :lang_julia_loader_kwargs))
             continue
         end
         value = getfield(entry, field)
@@ -134,10 +164,14 @@ function to_dict(entry::DatasetEntry)
     # copied as-is (the splice above already placed them under `output["_LANG"]`).
     julia_block = Dict{String,Any}()
     if entry.lang_julia_fetcher != ""
-        julia_block["fetcher"] = entry.lang_julia_fetcher
+        julia_block["fetcher"] = _binding_to_dict(
+            entry.lang_julia_fetcher, entry.lang_julia_fetcher_args,
+            entry.lang_julia_fetcher_kwargs)
     end
     if entry.lang_julia_loader != ""
-        julia_block["loader"] = entry.lang_julia_loader
+        julia_block["loader"] = _binding_to_dict(
+            entry.lang_julia_loader, entry.lang_julia_loader_args,
+            entry.lang_julia_loader_kwargs)
     end
     if !isempty(julia_block)
         lang = (haskey(output, "_LANG") && output["_LANG"] isa AbstractDict) ?
@@ -519,17 +553,38 @@ end
 # Parse a dataset's own `[<ds>._LANG.julia]` (fetcher/loader refs) into the
 # model and drop it from `entry.extra`; keep every foreign `_LANG.<other>`
 # subtree verbatim. Legacy entries (no `_LANG`) are untouched.
+# Decompose a fetcher/loader binding into `(ref, args, kwargs)`. A bare string is
+# `ref` with empty args/kwargs; a `{ ref, args, kwargs }` table pulls each part
+# (args order preserved; kwargs keys stringified). Anything else ⇒ empty ref.
+function _parse_binding(b)
+    if b isa AbstractString
+        return String(b), Any[], Dict{String,Any}()
+    elseif b isa AbstractDict
+        ref = get(b, "ref", nothing)
+        ref = ref isa AbstractString ? String(ref) : ""
+        a = get(b, "args", nothing)
+        args = a isa AbstractVector ? collect(Any, a) : Any[]
+        kw = get(b, "kwargs", nothing)
+        kwargs = kw isa AbstractDict ?
+            Dict{String,Any}(String(k) => v for (k, v) in kw) : Dict{String,Any}()
+        return ref, args, kwargs
+    end
+    return "", Any[], Dict{String,Any}()
+end
+
 function _parse_dataset_lang!(entry::DatasetEntry)
     haskey(entry.extra, "_LANG") || return entry
     julia, foreign = _split_lang(entry.extra["_LANG"])
     if julia isa AbstractDict
         f = get(julia, "fetcher", nothing)
         l = get(julia, "loader", nothing)
-        if f isa AbstractString
-            entry.lang_julia_fetcher = String(f)
+        if f isa AbstractString || f isa AbstractDict
+            entry.lang_julia_fetcher, entry.lang_julia_fetcher_args,
+                entry.lang_julia_fetcher_kwargs = _parse_binding(f)
         end
-        if l isa AbstractString
-            entry.lang_julia_loader = String(l)
+        if l isa AbstractString || l isa AbstractDict
+            entry.lang_julia_loader, entry.lang_julia_loader_args,
+                entry.lang_julia_loader_kwargs = _parse_binding(l)
         end
     end
     if isempty(foreign)
