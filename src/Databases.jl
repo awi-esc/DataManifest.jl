@@ -121,6 +121,23 @@ function to_dict(entry::DatasetEntry)
     for (k, v) in entry.extra
         output[String(k)] = v
     end
+    # Regenerate the own `[<ds>._LANG.julia]` block (fetcher/loader refs) from the
+    # parsed fields and merge it with any foreign `_LANG.<other>` subtrees kept
+    # verbatim in `extra`. The Julia subtable is regenerated; foreign subtrees are
+    # copied as-is (the splice above already placed them under `output["_LANG"]`).
+    julia_block = Dict{String,Any}()
+    if entry.lang_julia_fetcher != ""
+        julia_block["fetcher"] = entry.lang_julia_fetcher
+    end
+    if entry.lang_julia_loader != ""
+        julia_block["loader"] = entry.lang_julia_loader
+    end
+    if !isempty(julia_block)
+        lang = (haskey(output, "_LANG") && output["_LANG"] isa AbstractDict) ?
+            copy(output["_LANG"]) : Dict{String,Any}()
+        lang["julia"] = julia_block
+        output["_LANG"] = lang
+    end
     return output
 end
 
@@ -239,6 +256,18 @@ function to_dict(db::Database; kwargs...)
     # future `_FOO`) back verbatim.
     for (k, v) in pairs(db.extra)
         result[String(k)] = v
+    end
+    # Regenerate the own top-level `[_LANG.julia]` block (the `loaders` format→ref
+    # map) from the parsed model and merge it with any foreign top-level
+    # `[_LANG.<other>]` kept verbatim in `db.extra` (already spliced above).
+    if !isempty(db.lang_julia_loaders)
+        julia_block = Dict{String,Any}(
+            "loaders" => Dict{String,Any}(k => v for (k, v) in db.lang_julia_loaders),
+        )
+        lang = (haskey(result, "_LANG") && result["_LANG"] isa AbstractDict) ?
+            copy(result["_LANG"]) : Dict{String,Any}()
+        lang["julia"] = julia_block
+        result["_LANG"] = lang
     end
     for (key, entry) in pairs(db.datasets)
         result[key] = to_dict(entry; kwargs...)
