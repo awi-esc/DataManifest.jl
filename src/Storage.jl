@@ -195,4 +195,43 @@ function store_root(store::AbstractString;
     return _default_root(store, project_root, env)
 end
 
+# --- safe-materialization path helpers ---------------------------------------
+
+export tmp_path, lock_path, marker_path, is_complete
+
+"""
+    tmp_path(target) -> String
+
+Sibling staging path (`<target>.tmp`) a fetcher populates before the atomic
+publish. Always a sibling of `target`, so it never pollutes a directory dataset.
+"""
+tmp_path(target::AbstractString)::String = string(target, ".tmp")
+
+"""
+    lock_path(target) -> String
+
+Sibling pidfile-lock path (`<target>.lock`) held while a dataset is being
+materialized.
+"""
+lock_path(target::AbstractString)::String = string(target, ".lock")
+
+"""
+    marker_path(target) -> String
+
+Completion-marker path for `target`: `<target>/.complete` when `target` is a
+directory, `<target>.complete` (a sibling) otherwise. A present marker means the
+entry was fully materialized; its absence means the entry MUST be treated as
+absent (re-fetch), even when `target` itself exists (a partial fetch).
+"""
+marker_path(target::AbstractString)::String =
+    isdir(target) ? joinpath(String(target), ".complete") : string(target, ".complete")
+
+"""
+    is_complete(target) -> Bool
+
+`true` iff `target`'s completion marker exists. Readers MUST treat a missing
+marker as absent even when `target` itself is present.
+"""
+is_complete(target::AbstractString)::Bool = isfile(marker_path(target))
+
 end # module Storage

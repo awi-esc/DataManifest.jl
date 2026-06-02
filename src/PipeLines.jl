@@ -5,6 +5,7 @@ import Downloads
 using ..Config: info, COMPRESSED_FORMATS
 using ..Databases: DatasetEntry, Database, get_datasets, get_dataset_path, search_dataset, verify_checksum,
     extract_file, get_project_root, get_default_database, parse_uri_metadata
+using ..Storage: tmp_path, lock_path, marker_path, is_complete
 using ..DefaultLoaders: default_loader as builtin_default_loader
 
 _sanitize_ref(ref::String) = replace(replace(ref, '/' => '_'), '.' => '_')
@@ -294,6 +295,72 @@ function _uri_relative_paths(uris::Vector{String})::Vector{String}
     return [joinpath(s[n_common+1:end]...) for s in segments]
 end
 
+# --- safe materialization -----------------------------------------------------
+
+# True if `pid` is a live process on this host (best-effort; assume alive when
+# unknown so we never clobber an active writer).
+function _pid_alive(pid::Integer)::Bool
+    try
+        if Sys.isunix()
+            return success(pipeline(`kill -0 $pid`; stdout=devnull, stderr=devnull))
+        end
+    catch
+    end
+    return true
+end
+
+# Acquire `lock` (a pidfile). A lock owned by a dead PID is reclaimed; one owned
+# by a live foreign PID raises (another process is materializing the same target).
+function _acquire_lock(lock::String)
+    if isfile(lock)
+        pid = tryparse(Int, strip(read(lock, String)))
+        if pid !== nothing && pid != getpid() && _pid_alive(pid)
+            error("Dataset target is locked by another process (pid $pid): $lock")
+        end
+        rm(lock; force=true)
+    end
+    write(lock, string(getpid()))
+end
+
+"""
+    materialize(write_fn, target) -> target
+
+Safely publish a dataset at `target`. `write_fn(tmp)` populates the staging path
+`tmp = <target>.tmp` (a file or a directory); on success it is atomically
+renamed onto `target` and a completion marker is created (`<target>/.complete`
+for a directory, `<target>.complete` for a file). A `<target>.lock` pidfile is
+held for the duration and removed afterwards.
+
+A failed or interrupted `write_fn` leaves no marker and no published entry —
+only a stray `.tmp` — so the target is still treated as absent on the next load.
+
+For back-compatibility with fetchers that write straight to `target` (e.g. the
+`rsync`/`file` schemes, which deposit the source basename into the parent dir),
+a `write_fn` that produced `target` directly (and no `tmp`) is accepted as-is.
+"""
+function materialize(write_fn, target::AbstractString)
+    target = String(target)
+    tmp = tmp_path(target)
+    lock = lock_path(target)
+    dir = dirname(target)
+    !isempty(dir) && mkpath(dir)
+    _acquire_lock(lock)
+    try
+        # Clear any stale staging artifact from a previous interrupted run.
+        (isfile(tmp) || isdir(tmp)) && rm(tmp; force=true, recursive=true)
+        write_fn(tmp)
+        if isfile(tmp) || isdir(tmp)
+            mv(tmp, target; force=true)
+        elseif !(isfile(target) || isdir(target))
+            error("materialize: write function produced neither `$tmp` nor `$target`")
+        end
+        touch(marker_path(target))
+    finally
+        rm(lock; force=true)
+    end
+    return target
+end
+
 function _download_dataset(dataset::DatasetEntry, download_path::String; project_root::String="", overwrite::Bool=false,
                           required_paths_by_ref::Dict{String,String}=Dict{String,String}(),
                           required_paths_ordered::Vector{String}=String[],
@@ -471,9 +538,11 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
                 push!(req_paths_ordered, get_dataset_path(db, dep_entry; extract=extract !== nothing ? extract : dep_entry.extract))
             end
         end
-        _download_dataset(dataset, download_path; project_root=project_root, overwrite=overwrite,
-                         required_paths_by_ref=req_paths_by_ref, required_paths_ordered=req_paths_ordered,
-                         loaders_julia_modules=db.loaders_julia_modules, db=db)
+        materialize(download_path) do tmp
+            _download_dataset(dataset, tmp; project_root=project_root, overwrite=overwrite,
+                             required_paths_by_ref=req_paths_by_ref, required_paths_ordered=req_paths_ordered,
+                             loaders_julia_modules=db.loaders_julia_modules, db=db)
+        end
     elseif !overwrite
         info("Dataset already exists at: $download_path")
     end
