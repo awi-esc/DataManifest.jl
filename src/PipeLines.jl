@@ -517,10 +517,11 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
 
     if !overwrite && (isfile(local_path) || isdir(local_path))
         info("Dataset already exists at: $local_path")
-        verify_checksum(db, dataset; extract=extract)
+        verify_checksum(db, dataset; extract=extract, skip_if_complete=true)
         return local_path
     end
 
+    did_fetch = false
     if overwrite || !(isfile(download_path) || isdir(download_path))
         info("Downloading dataset: $(dataset.uri) to $download_path")
         project_root = get_project_root(db)
@@ -543,6 +544,7 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
                              required_paths_by_ref=req_paths_by_ref, required_paths_ordered=req_paths_ordered,
                              loaders_julia_modules=db.loaders_julia_modules, db=db)
         end
+        did_fetch = true
     elseif !overwrite
         info("Dataset already exists at: $download_path")
     end
@@ -559,7 +561,7 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
         _missing_dataset_error(dataset, local_path)
     end
 
-    verify_checksum(db, dataset; extract=extract)
+    verify_checksum(db, dataset; extract=extract, skip_if_complete=!did_fetch)
 
     return local_path
 end

@@ -5,7 +5,7 @@ using TOML
 using URIs
 using ..Config: info, warn, sha256_path, get_extract_path, get_default_toml, DEFAULT_DATASETS_FOLDER_PATH,
     COMPRESSED_FORMATS, HIDE_STRUCT_FIELDS, project_root_from_paths
-using ..Storage: store_root
+using ..Storage: store_root, is_complete
 
 # ----- Types (DatasetEntry, Database) -----
 Base.@kwdef mutable struct DatasetEntry
@@ -711,7 +711,7 @@ function _maybe_persist_database(db::Database, persist::Bool=true)
     end
 end
 
-function verify_checksum(db::Database, dataset::DatasetEntry; persist::Bool=true, extract::Union{Nothing, Bool}=nothing)
+function verify_checksum(db::Database, dataset::DatasetEntry; persist::Bool=true, extract::Union{Nothing, Bool}=nothing, skip_if_complete::Bool=false)
     if (extract !== nothing && extract != dataset.extract)
         warn("dataset.extract=$(dataset.extract) but required extract=$extract. Skip verifying checksum.")
         return
@@ -724,6 +724,9 @@ function verify_checksum(db::Database, dataset::DatasetEntry; persist::Bool=true
         return true
     end
     if (isdir(local_path) && db.skip_checksum_folders)
+        return true
+    end
+    if skip_if_complete && dataset.sha256 != "" && is_complete(local_path)
         return true
     end
     checksum = sha256_path(local_path)
