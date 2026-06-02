@@ -106,11 +106,55 @@ DataManifest.migrate("Datasets.toml")
 
 Moves ref-shaped `julia=`/`loader=` fields and `[_LOADERS]` ref entries into `[<ds>._LANG.julia]` / `[_LANG.julia.loaders]` and sets `_META.schema = 1`. Inline code that cannot become a ref is preserved verbatim with a log note. The call is idempotent: already-v1 files are left unchanged.
 
+## Storage model
+
+As of v0.16.0, DataManifest supports a portable **storage model** that keeps dataset paths consistent across languages:
+
+```toml
+[_META]
+schema = 1
+
+[_STORAGE]
+data = "/data/shared"            # override the data-store root
+
+[my_dataset]
+store = "cache"                  # put this dataset in the cache store
+uri   = "https://example.com/ds.nc"
+```
+
+Each dataset can declare `store = "data"` (default), `"cache"`, `"repo"` (inside the project), or `"mount"` (parsed verbatim, not yet mounted). Default roots follow Python's `platformdirs`:
+
+| Store  | Linux default                              |
+|--------|--------------------------------------------|
+| `data` | `$XDG_DATA_HOME/datamanifest/Datasets`     |
+| `cache`| `$XDG_CACHE_HOME/datamanifest/Datasets`    |
+| `repo` | `<project_root>/datasets`                  |
+
+> **Behavior change in v0.16.0**: the `data` store default moved from
+> `$XDG_CACHE_HOME/Datasets` to `$XDG_DATA_HOME/datamanifest/Datasets`.
+> Set `DATAMANIFEST_DATA_DIR` to your old path to keep resolving existing files.
+
+Per-store root precedence: `DATAMANIFEST_<STORE>_DIR` env-var →
+`_PROFILE.<name>` (when `DATAMANIFEST_PROFILE` set) → first matching
+`_HOST.<glob>` → `[_STORAGE]` base → default. `~` and `$VAR` expanded.
+
+## Parameterized bindings
+
+Fetcher and loader refs can carry `args`/`kwargs` for more flexible dispatch:
+
+```toml
+[my_dataset._LANG.julia]
+fetcher = { ref = "MyFetchers:fetch", args = ["$download_path"], kwargs = { format = "nc" } }
+loader  = { ref = "MyLoaders:load",  args = ["$path"],           kwargs = { grid = "5x5" } }
+```
+
+At call time, `$var` placeholders in string values are substituted with the dataset's context variables (`$download_path` / `$path`, `$key`, `$uri`, etc.) and the function is called as `ref(args...; kwargs...)`. Bare-string bindings (`fetcher = "Mod:fn"`) are unaffected.
+
 ## Conformance
 
-This release targets the **datamanifest.toml spec tag `spec-v1.0`** (source of truth: <https://github.com/perrette/datamanifest.toml>).
+This release targets the **datamanifest.toml spec tag `spec-v1.1`** (source of truth: <https://github.com/perrette/datamanifest.toml>).
 
-Implemented capabilities: **`lang-read`**, **`lang-write`**, **`shell-fetch`**.
+Implemented capabilities: **`lang-read`**, **`lang-write`**, **`shell-fetch`**, **`storage`**, **`binding-args`**, **`byte-identity`**.
 
 The test suite downloads the spec's tagged tarball, verifies every fixture file against a pinned per-file sha256 map (`test/conformance_pin.toml`), and runs only the fixtures whose capability set is a subset of the above. Fixtures requiring unimplemented capabilities (e.g. delegation) are skipped with a logged reason.
 

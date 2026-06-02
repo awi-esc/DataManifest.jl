@@ -5,6 +5,7 @@ import Downloads
 using ..Config: info, COMPRESSED_FORMATS
 using ..Databases: DatasetEntry, Database, get_datasets, get_dataset_path, search_dataset, verify_checksum,
     extract_file, get_project_root, get_default_database, parse_uri_metadata
+using ..Storage: tmp_path, lock_path, marker_path, is_complete
 using ..DefaultLoaders: default_loader as builtin_default_loader
 
 _sanitize_ref(ref::String) = replace(replace(ref, '/' => '_'), '.' => '_')
@@ -79,6 +80,41 @@ function expand_shell_template(template::String, entry::DatasetEntry, download_p
     end
     return result
 end
+
+# ----- Parameterized-binding `$var` substitution -----
+# A `{ ref, args, kwargs }` binding may embed `$var` placeholders in any string
+# value. The variable set mirrors `expand_shell_template`: a rung-specific path
+# var (`$download_path` for fetchers, `$path` for loaders) plus the dataset
+# metadata vars. Substitution is applied to every string element, recursively
+# into nested arrays/sub-tables; non-string scalars pass through unchanged.
+function _binding_subst_pairs(dataset::DatasetEntry, primary::Pair{String,String}, project_root::String)
+    return Pair{String,String}[
+        primary,
+        "\$project_root" => project_root,
+        "\$uri" => dataset.uri,
+        "\$key" => dataset.key,
+        "\$version" => dataset.version,
+        "\$doi" => dataset.doi,
+        "\$format" => dataset.format,
+        "\$branch" => dataset.branch,
+    ]
+end
+
+_subst_binding_value(v::AbstractString, subs::Vector{Pair{String,String}}) = begin
+    s = String(v)
+    for (k, val) in subs
+        s = replace(s, k => val)
+    end
+    s
+end
+_subst_binding_value(v::AbstractVector, subs::Vector{Pair{String,String}}) =
+    Any[_subst_binding_value(x, subs) for x in v]
+_subst_binding_value(v::AbstractDict, subs::Vector{Pair{String,String}}) =
+    Dict{String,Any}(String(k) => _subst_binding_value(x, subs) for (k, x) in v)
+_subst_binding_value(v, ::Vector{Pair{String,String}}) = v
+
+# Turn a (possibly substituted) kwargs Dict into Symbol=>value pairs for splatting.
+_kwargs_pairs(kwargs::AbstractDict) = [Symbol(k) => v for (k, v) in kwargs]
 
 function _run_julia(dataset::DatasetEntry, download_path::String, project_root::String;
                    required_paths_by_ref::Dict{String,String}=Dict{String,String}(),
@@ -199,11 +235,21 @@ end
 function _run_julia_ref(db::Database, dataset::DatasetEntry, download_path::String, project_root::String;
                        required_paths_ordered::Vector{String}=String[])
     fn = _resolve_ref(db, dataset.lang_julia_fetcher)
-    call() = Base.invokelatest(fn;
-        download_path=download_path, project_root=project_root, entry=dataset,
-        uri=dataset.uri, key=dataset.key, version=dataset.version, doi=dataset.doi,
-        format=dataset.format, branch=dataset.branch,
-        requires_paths=required_paths_ordered)
+    local call
+    if !isempty(dataset.lang_julia_fetcher_args) || !isempty(dataset.lang_julia_fetcher_kwargs)
+        # Parameterized binding: substitute `$var` and call `ref(args...; kwargs...)`.
+        subs = _binding_subst_pairs(dataset, "\$download_path" => download_path, project_root)
+        args = _subst_binding_value(dataset.lang_julia_fetcher_args, subs)
+        kwargs = _kwargs_pairs(_subst_binding_value(dataset.lang_julia_fetcher_kwargs, subs))
+        call = () -> Base.invokelatest(fn, args...; kwargs...)
+    else
+        # Bare-string ref: conventional keyword-arg call (unchanged behavior).
+        call = () -> Base.invokelatest(fn;
+            download_path=download_path, project_root=project_root, entry=dataset,
+            uri=dataset.uri, key=dataset.key, version=dataset.version, doi=dataset.doi,
+            format=dataset.format, branch=dataset.branch,
+            requires_paths=required_paths_ordered)
+    end
     if project_root != ""
         cd(call, project_root)
     else
@@ -292,6 +338,72 @@ function _uri_relative_paths(uris::Vector{String})::Vector{String}
         end
     end
     return [joinpath(s[n_common+1:end]...) for s in segments]
+end
+
+# --- safe materialization -----------------------------------------------------
+
+# True if `pid` is a live process on this host (best-effort; assume alive when
+# unknown so we never clobber an active writer).
+function _pid_alive(pid::Integer)::Bool
+    try
+        if Sys.isunix()
+            return success(pipeline(`kill -0 $pid`; stdout=devnull, stderr=devnull))
+        end
+    catch
+    end
+    return true
+end
+
+# Acquire `lock` (a pidfile). A lock owned by a dead PID is reclaimed; one owned
+# by a live foreign PID raises (another process is materializing the same target).
+function _acquire_lock(lock::String)
+    if isfile(lock)
+        pid = tryparse(Int, strip(read(lock, String)))
+        if pid !== nothing && pid != getpid() && _pid_alive(pid)
+            error("Dataset target is locked by another process (pid $pid): $lock")
+        end
+        rm(lock; force=true)
+    end
+    write(lock, string(getpid()))
+end
+
+"""
+    materialize(write_fn, target) -> target
+
+Safely publish a dataset at `target`. `write_fn(tmp)` populates the staging path
+`tmp = <target>.tmp` (a file or a directory); on success it is atomically
+renamed onto `target` and a completion marker is created (`<target>/.complete`
+for a directory, `<target>.complete` for a file). A `<target>.lock` pidfile is
+held for the duration and removed afterwards.
+
+A failed or interrupted `write_fn` leaves no marker and no published entry —
+only a stray `.tmp` — so the target is still treated as absent on the next load.
+
+For back-compatibility with fetchers that write straight to `target` (e.g. the
+`rsync`/`file` schemes, which deposit the source basename into the parent dir),
+a `write_fn` that produced `target` directly (and no `tmp`) is accepted as-is.
+"""
+function materialize(write_fn, target::AbstractString)
+    target = String(target)
+    tmp = tmp_path(target)
+    lock = lock_path(target)
+    dir = dirname(target)
+    !isempty(dir) && mkpath(dir)
+    _acquire_lock(lock)
+    try
+        # Clear any stale staging artifact from a previous interrupted run.
+        (isfile(tmp) || isdir(tmp)) && rm(tmp; force=true, recursive=true)
+        write_fn(tmp)
+        if isfile(tmp) || isdir(tmp)
+            mv(tmp, target; force=true)
+        elseif !(isfile(target) || isdir(target))
+            error("materialize: write function produced neither `$tmp` nor `$target`")
+        end
+        touch(marker_path(target))
+    finally
+        rm(lock; force=true)
+    end
+    return target
 end
 
 function _download_dataset(dataset::DatasetEntry, download_path::String; project_root::String="", overwrite::Bool=false,
@@ -450,10 +562,11 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
 
     if !overwrite && (isfile(local_path) || isdir(local_path))
         info("Dataset already exists at: $local_path")
-        verify_checksum(db, dataset; extract=extract)
+        verify_checksum(db, dataset; extract=extract, skip_if_complete=true)
         return local_path
     end
 
+    did_fetch = false
     if overwrite || !(isfile(download_path) || isdir(download_path))
         info("Downloading dataset: $(dataset.uri) to $download_path")
         project_root = get_project_root(db)
@@ -471,9 +584,12 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
                 push!(req_paths_ordered, get_dataset_path(db, dep_entry; extract=extract !== nothing ? extract : dep_entry.extract))
             end
         end
-        _download_dataset(dataset, download_path; project_root=project_root, overwrite=overwrite,
-                         required_paths_by_ref=req_paths_by_ref, required_paths_ordered=req_paths_ordered,
-                         loaders_julia_modules=db.loaders_julia_modules, db=db)
+        materialize(download_path) do tmp
+            _download_dataset(dataset, tmp; project_root=project_root, overwrite=overwrite,
+                             required_paths_by_ref=req_paths_by_ref, required_paths_ordered=req_paths_ordered,
+                             loaders_julia_modules=db.loaders_julia_modules, db=db)
+        end
+        did_fetch = true
     elseif !overwrite
         info("Dataset already exists at: $download_path")
     end
@@ -490,7 +606,7 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
         _missing_dataset_error(dataset, local_path)
     end
 
-    verify_checksum(db, dataset; extract=extract)
+    verify_checksum(db, dataset; extract=extract, skip_if_complete=!did_fetch)
 
     return local_path
 end
@@ -605,6 +721,16 @@ function load_dataset(db::Database, entry::DatasetEntry; loader=nothing, kwargs.
         end
         return _call_loader(loader, path, entry)
     elseif db.schema == 1
+        # Parameterized own-loader binding: substitute `$var` (incl. `$path`) and
+        # call `ref(args...; kwargs...)`. Only taken when args/kwargs are present.
+        if entry.lang_julia_loader != "" &&
+           (!isempty(entry.lang_julia_loader_args) || !isempty(entry.lang_julia_loader_kwargs))
+            fn = _resolve_ref(db, entry.lang_julia_loader)
+            subs = _binding_subst_pairs(entry, "\$path" => path, get_project_root(db))
+            args = _subst_binding_value(entry.lang_julia_loader_args, subs)
+            kwargs = _kwargs_pairs(_subst_binding_value(entry.lang_julia_loader_kwargs, subs))
+            return Base.invokelatest(fn, args...; kwargs...)
+        end
         # v1 load ladder: own `_LANG.julia.loader` ref → manifest
         # `[_LANG.julia.loaders][format]` ref → built-in format default → error.
         fn = _resolve_loader_v1(db, entry)

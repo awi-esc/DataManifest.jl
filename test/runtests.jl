@@ -734,8 +734,8 @@ try
     end
 end
 
-@testset "Conformance suite (spec-v1.0)" begin
-    # Source of truth: github.com/perrette/datamanifest.toml, tag spec-v1.0.
+@testset "Conformance suite (spec-v1.1)" begin
+    # Source of truth: github.com/perrette/datamanifest.toml, tag spec-v1.1.
     # The pin file records the spec tag + per-file sha256 of each fixture; hashes
     # are over file contents (not the tarball), keeping the pin robust to GitHub
     # re-generating the auto-archive. The tag + content pin is this tool's
@@ -790,7 +790,8 @@ end
             end
 
             # Capabilities this tool implements; drives which fixtures are run
-            SUPPORTED_CAPABILITIES = Set(["lang-read", "lang-write", "shell-fetch"])
+            SUPPORTED_CAPABILITIES = Set(["lang-read", "lang-write", "shell-fetch",
+                                          "storage", "binding-args", "byte-identity"])
 
             toml_fnames = sort(filter(f -> endswith(f, ".toml"), readdir(fixtures_top)))
             for toml_fname in toml_fnames
@@ -872,6 +873,70 @@ end
                                       get(get(ds_orig, top_key, Dict()), sub_key, nothing)
                             end
                         end
+
+                        # binding-args: the resolved Julia binding carries args
+                        # (ordered) + kwargs matching the fixture, pre-$var.
+                        binding_args = get(expected, "binding_args", nothing)
+                        if binding_args !== nothing
+                            jul = get(binding_args, "julia", Dict())
+                            for (ds_name, rungs) in jul
+                                @test haskey(db.datasets, ds_name)
+                                if haskey(db.datasets, ds_name)
+                                    entry = db.datasets[ds_name]
+                                    if haskey(rungs, "fetcher")
+                                        fe = rungs["fetcher"]
+                                        @test entry.lang_julia_fetcher_args ==
+                                              get(fe, "args", Any[])
+                                        @test entry.lang_julia_fetcher_kwargs ==
+                                              get(fe, "kwargs", Dict{String,Any}())
+                                    end
+                                    if haskey(rungs, "loader")
+                                        le = rungs["loader"]
+                                        @test entry.lang_julia_loader_args ==
+                                              get(le, "args", Any[])
+                                        @test entry.lang_julia_loader_kwargs ==
+                                              get(le, "kwargs", Dict{String,Any}())
+                                    end
+                                end
+                            end
+                        end
+
+                        # storage: parsed [_STORAGE] config + per-dataset store
+                        # selection match the fixture's storage block.
+                        storage_exp = get(expected, "storage", nothing)
+                        if storage_exp !== nothing
+                            # Tool's implicit default store is "data".
+                            @test get(storage_exp, "default_store", "data") == "data"
+
+                            for (ds_name, store_exp) in get(storage_exp, "datasets", Dict())
+                                @test haskey(db.datasets, ds_name)
+                                if haskey(db.datasets, ds_name)
+                                    s = db.datasets[ds_name].store
+                                    @test (s == "" ? "data" : s) == store_exp
+                                end
+                            end
+
+                            roots = get(storage_exp, "roots", Dict())
+                            sc = db.storage_config
+                            base_keys = sort([k for k in keys(sc) if !startswith(k, "_")])
+                            @test base_keys == sort(String.(get(roots, "base", String[])))
+                            host = get(sc, "_HOST", Dict())
+                            @test sort(collect(keys(host))) ==
+                                  sort(String.(get(roots, "host_patterns", String[])))
+                            prof = get(sc, "_PROFILE", Dict())
+                            @test sort(collect(keys(prof))) ==
+                                  sort(String.(get(roots, "profiles", String[])))
+                        end
+
+                        # byte-identity (self-consistent): serialize → parse →
+                        # serialize is byte-stable and key-sorted at every level.
+                        # No cross-tool diff yet — pending the Python tool.
+                        s1 = read(tmp_toml, String)
+                        db2 = read_dataset(tmp_toml, tmp_dir; persist=false)
+                        tmp_toml2 = joinpath(tmp_dir, "round_trip2.toml")
+                        write(db2, tmp_toml2)
+                        s2 = read(tmp_toml2, String)
+                        @test s1 == s2
                     finally
                         rm(tmp_dir; force=true, recursive=true)
                     end

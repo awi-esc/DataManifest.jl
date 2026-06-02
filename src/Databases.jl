@@ -5,6 +5,7 @@ using TOML
 using URIs
 using ..Config: info, warn, sha256_path, get_extract_path, get_default_toml, DEFAULT_DATASETS_FOLDER_PATH,
     COMPRESSED_FORMATS, HIDE_STRUCT_FIELDS, project_root_from_paths
+using ..Storage: store_root, is_complete
 
 # ----- Types (DatasetEntry, Database) -----
 Base.@kwdef mutable struct DatasetEntry
@@ -33,8 +34,19 @@ Base.@kwdef mutable struct DatasetEntry
     # Own v1 Julia bindings parsed from `[<ds>._LANG.julia]`: `module:function`
     # refs. Empty ⇒ none declared. The write side (later item) regenerates the
     # `[<ds>._LANG.julia]` block from these; they are not emitted as flat keys.
+    store::String = ""
     lang_julia_fetcher::String = ""
     lang_julia_loader::String = ""
+    # Parameterized-binding payloads for the own Julia fetcher/loader: ordered
+    # positional `args` and a `kwargs` map, parsed from the `{ ref, args, kwargs }`
+    # table form of `[<ds>._LANG.julia].fetcher`/`loader`. Empty ⇒ the binding is a
+    # bare `module:function` ref (conventional call). Values may be arbitrary TOML
+    # (strings, numbers, nested arrays/tables); `$var` substitution happens later
+    # at execution time, not here.
+    lang_julia_fetcher_args::Vector{Any} = Any[]
+    lang_julia_fetcher_kwargs::Dict{String,Any} = Dict{String,Any}()
+    lang_julia_loader_args::Vector{Any} = Any[]
+    lang_julia_loader_kwargs::Dict{String,Any} = Dict{String,Any}()
     # Unknown per-dataset keys (scalars and foreign `_*` sub-tables such as
     # `[<ds>._LANG.<other>]`) are kept here verbatim for lossless round-trip.
     # The own `[<ds>._LANG.julia]` subtable is consumed into the fields above
@@ -87,6 +99,24 @@ function guess_file_format(entry::DatasetEntry)
     return lstrip(ext, '.')
 end
 
+# Render a Julia binding (ref + optional args/kwargs) for `[<ds>._LANG.julia]`.
+# With no args and no kwargs it is a bare `module:function` string (conventional
+# call); otherwise a `{ ref, args, kwargs }` table (kwargs keys are sorted by the
+# TOML writer, args order preserved).
+function _binding_to_dict(ref::AbstractString, args, kwargs)
+    if isempty(args) && isempty(kwargs)
+        return String(ref)
+    end
+    t = Dict{String,Any}("ref" => String(ref))
+    if !isempty(args)
+        t["args"] = args
+    end
+    if !isempty(kwargs)
+        t["kwargs"] = kwargs
+    end
+    return t
+end
+
 function to_dict(entry::DatasetEntry)
     output = Dict{String,Any}()
     for field in fieldnames(typeof(entry))
@@ -96,14 +126,21 @@ function to_dict(entry::DatasetEntry)
         if (field == :extra)
             continue
         end
-        # Parsed own Julia bindings are regenerated under `[<ds>._LANG.julia]`
-        # by the write side (later item), never emitted as flat scalar keys.
-        if (field == :lang_julia_fetcher || field == :lang_julia_loader)
+        # Parsed own Julia bindings (refs + args/kwargs payloads) are regenerated
+        # under `[<ds>._LANG.julia]` below, never emitted as flat scalar keys.
+        if (field in (:lang_julia_fetcher, :lang_julia_loader,
+                      :lang_julia_fetcher_args, :lang_julia_fetcher_kwargs,
+                      :lang_julia_loader_args, :lang_julia_loader_kwargs))
             continue
         end
         value = getfield(entry, field)
         if (value === nothing || value == [] || value == Dict() || value === "" || value == false)
             continue
+        end
+        if (field == :store)
+            if value == "" || value == "data"
+                continue
+            end
         end
         if (field == :key)
             if value == build_dataset_key(entry)
@@ -127,10 +164,14 @@ function to_dict(entry::DatasetEntry)
     # copied as-is (the splice above already placed them under `output["_LANG"]`).
     julia_block = Dict{String,Any}()
     if entry.lang_julia_fetcher != ""
-        julia_block["fetcher"] = entry.lang_julia_fetcher
+        julia_block["fetcher"] = _binding_to_dict(
+            entry.lang_julia_fetcher, entry.lang_julia_fetcher_args,
+            entry.lang_julia_fetcher_kwargs)
     end
     if entry.lang_julia_loader != ""
-        julia_block["loader"] = entry.lang_julia_loader
+        julia_block["loader"] = _binding_to_dict(
+            entry.lang_julia_loader, entry.lang_julia_loader_args,
+            entry.lang_julia_loader_kwargs)
     end
     if !isempty(julia_block)
         lang = (haskey(output, "_LANG") && output["_LANG"] isa AbstractDict) ?
@@ -204,6 +245,9 @@ mutable struct Database
     # Own v1 default loaders parsed from `[_LANG.julia.loaders]`: a
     # `format → module:function` ref map. Empty ⇒ none declared.
     lang_julia_loaders::Dict{String,String}
+    # Parsed copy of `[_STORAGE]` for the path resolver; verbatim copy stays in
+    # `extra` for lossless round-trip. Empty when `[_STORAGE]` is absent.
+    storage_config::Dict{String,Any}
 
     function Database(datasets::Dict{String,<:DatasetEntry},
             datasets_toml::String,
@@ -217,10 +261,11 @@ mutable struct Database
             loader_context_module::Union{Module,Nothing},
             extra::Dict{String,Any}=Dict{String,Any}(),
             schema::Union{Int,Nothing}=nothing,
-            lang_julia_loaders::Dict{String,String}=Dict{String,String}())
+            lang_julia_loaders::Dict{String,String}=Dict{String,String}(),
+            storage_config::Dict{String,Any}=Dict{String,Any}())
         new(datasets, datasets_toml, datasets_folder, skip_checksum, skip_checksum_folders,
             loaders, loaders_julia_modules, loaders_julia_includes, loader_cache, loader_context_module,
-            extra, schema, lang_julia_loaders)
+            extra, schema, lang_julia_loaders, storage_config)
     end
 end
 
@@ -387,7 +432,19 @@ function get_dataset_key(entry::DatasetEntry)
     return build_dataset_key(entry)
 end
 
-function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extract::Union{Bool,Nothing}=nothing, project_root::String="")
+# Resolve the root directory for an entry's store. An explicitly-provided
+# `datasets_folder` (non-empty) overrides the `data` store root for back-compat;
+# every other store — and the defaulted (`""`) `data` store — resolves via the
+# `Storage` module (platformdirs-equivalent defaults + `[_STORAGE]` precedence).
+function resolve_store_root(entry::DatasetEntry, datasets_folder::String=""; project_root::String="", storage_config::AbstractDict=Dict{String,Any}())
+    store = entry.store == "" ? "data" : entry.store
+    if datasets_folder != "" && store == "data"
+        return datasets_folder
+    end
+    return store_root(store; project_root=project_root, storage_config=storage_config)
+end
+
+function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extract::Union{Bool,Nothing}=nothing, project_root::String="", storage_config::AbstractDict=Dict{String,Any}())
     if (entry.local_path != "")
         if isabspath(entry.local_path)
             return entry.local_path
@@ -408,18 +465,41 @@ function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extra
         key = get_extract_path(key)
     end
     return joinpath(
-        datasets_folder !== "" ? datasets_folder : DEFAULT_DATASETS_FOLDER_PATH,
+        resolve_store_root(entry, datasets_folder; project_root=project_root, storage_config=storage_config),
         key,
     )
 end
 
 function get_dataset_path(db::Database, entry::DatasetEntry; kwargs...)
-    return get_dataset_path(entry, get_datasets_folder(db); project_root=get_project_root(db), kwargs...)
+    return get_dataset_path(entry, get_datasets_folder(db); project_root=get_project_root(db), storage_config=db.storage_config, kwargs...)
 end
 
 function get_dataset_path(db::Database, name::String; extract=nothing, kwargs...)
     (name, dataset) = search_dataset(db, name; kwargs...)
-    return get_dataset_path(dataset, db.datasets_folder; extract=extract, project_root=get_project_root(db))
+    return get_dataset_path(dataset, get_datasets_folder(db); extract=extract, project_root=get_project_root(db), storage_config=db.storage_config)
+end
+
+# Read-side resolution: search the `repo`, `data`, `cache` store roots in that
+# order and return the first `<root>/<key>` that already exists on disk. When the
+# dataset is not yet materialized in any store, fall back to the write path (the
+# entry's selected store). `.complete`-marker awareness is layered on later.
+function resolve_existing_path(db::Database, entry::DatasetEntry; extract::Union{Bool,Nothing}=nothing)
+    if entry.local_path != "" || entry.skip_download
+        return get_dataset_path(db, entry; extract=extract)
+    end
+    ext = extract === nothing ? entry.extract : extract
+    key = ext ? get_extract_path(entry.key) : entry.key
+    project_root = get_project_root(db)
+    datasets_folder = get_datasets_folder(db)
+    for store in ("repo", "data", "cache")
+        e = DatasetEntry(; key=entry.key, store=store)
+        root = resolve_store_root(e, datasets_folder; project_root=project_root, storage_config=db.storage_config)
+        candidate = joinpath(root, key)
+        if ispath(candidate)
+            return candidate
+        end
+    end
+    return get_dataset_path(db, entry; extract=extract)
 end
 
 function build_uri(meta::DatasetEntry)
@@ -473,17 +553,38 @@ end
 # Parse a dataset's own `[<ds>._LANG.julia]` (fetcher/loader refs) into the
 # model and drop it from `entry.extra`; keep every foreign `_LANG.<other>`
 # subtree verbatim. Legacy entries (no `_LANG`) are untouched.
+# Decompose a fetcher/loader binding into `(ref, args, kwargs)`. A bare string is
+# `ref` with empty args/kwargs; a `{ ref, args, kwargs }` table pulls each part
+# (args order preserved; kwargs keys stringified). Anything else ⇒ empty ref.
+function _parse_binding(b)
+    if b isa AbstractString
+        return String(b), Any[], Dict{String,Any}()
+    elseif b isa AbstractDict
+        ref = get(b, "ref", nothing)
+        ref = ref isa AbstractString ? String(ref) : ""
+        a = get(b, "args", nothing)
+        args = a isa AbstractVector ? collect(Any, a) : Any[]
+        kw = get(b, "kwargs", nothing)
+        kwargs = kw isa AbstractDict ?
+            Dict{String,Any}(String(k) => v for (k, v) in kw) : Dict{String,Any}()
+        return ref, args, kwargs
+    end
+    return "", Any[], Dict{String,Any}()
+end
+
 function _parse_dataset_lang!(entry::DatasetEntry)
     haskey(entry.extra, "_LANG") || return entry
     julia, foreign = _split_lang(entry.extra["_LANG"])
     if julia isa AbstractDict
         f = get(julia, "fetcher", nothing)
         l = get(julia, "loader", nothing)
-        if f isa AbstractString
-            entry.lang_julia_fetcher = String(f)
+        if f isa AbstractString || f isa AbstractDict
+            entry.lang_julia_fetcher, entry.lang_julia_fetcher_args,
+                entry.lang_julia_fetcher_kwargs = _parse_binding(f)
         end
-        if l isa AbstractString
-            entry.lang_julia_loader = String(l)
+        if l isa AbstractString || l isa AbstractDict
+            entry.lang_julia_loader, entry.lang_julia_loader_args,
+                entry.lang_julia_loader_kwargs = _parse_binding(l)
         end
     end
     if isempty(foreign)
@@ -665,7 +766,7 @@ function _maybe_persist_database(db::Database, persist::Bool=true)
     end
 end
 
-function verify_checksum(db::Database, dataset::DatasetEntry; persist::Bool=true, extract::Union{Nothing, Bool}=nothing)
+function verify_checksum(db::Database, dataset::DatasetEntry; persist::Bool=true, extract::Union{Nothing, Bool}=nothing, skip_if_complete::Bool=false)
     if (extract !== nothing && extract != dataset.extract)
         warn("dataset.extract=$(dataset.extract) but required extract=$extract. Skip verifying checksum.")
         return
@@ -678,6 +779,9 @@ function verify_checksum(db::Database, dataset::DatasetEntry; persist::Bool=true
         return true
     end
     if (isdir(local_path) && db.skip_checksum_folders)
+        return true
+    end
+    if skip_if_complete && dataset.sha256 != "" && is_complete(local_path)
         return true
     end
     checksum = sha256_path(local_path)
@@ -786,9 +890,9 @@ function _remove_dataset_from_disk(db::Database, entry::DatasetEntry)
     if entry.skip_download || entry.local_path != ""
         return
     end
-    download_path = get_dataset_path(entry, db.datasets_folder; extract=false)
+    download_path = get_dataset_path(db, entry; extract=false)
     if entry.extract
-        local_path = get_dataset_path(entry, db.datasets_folder; extract=true)
+        local_path = get_dataset_path(db, entry; extract=true)
         if isdir(local_path)
             rm(local_path; force=true, recursive=true)
         end
@@ -974,6 +1078,10 @@ function register_datasets(db::Database, datasets::Dict; kwargs...)
         (ks == "_LOADERS" || ks == "_loaders") && continue
         db.extra[ks] = v
     end
+    storage = get(datasets, "_STORAGE", nothing)
+    if storage isa AbstractDict
+        db.storage_config = Dict{String,Any}(storage)
+    end
     meta = get(datasets, "_META", nothing)
     if meta isa AbstractDict && haskey(meta, "schema") && meta["schema"] isa Integer
         db.schema = Int(meta["schema"])
@@ -1008,9 +1116,9 @@ end
 function Database(; datasets_toml::String="", datasets_folder::String="",
     persist::Bool=true, skip_checksum::Bool=false, skip_checksum_folders::Bool=false,
     datasets::Dict{String,<:DatasetEntry}=Dict{String,DatasetEntry}(), kwargs...)
-    if datasets_folder == ""
-        datasets_folder = DEFAULT_DATASETS_FOLDER_PATH
-    end
+    # A defaulted (empty) `datasets_folder` is left empty so the path model
+    # resolves the `data` store via `Storage` (platformdirs). An explicit value
+    # acts as the `data`-store root override (back-compat).
     if (datasets_toml == "" && persist)
         datasets_toml = get_default_toml()
     end
@@ -1149,6 +1257,20 @@ function migrate(path::String)
             end
             lang["julia"] = jul
             ds["_LANG"] = lang
+            config[String(dsname)] = ds
+        end
+
+        # Migrate per-dataset shell= into [<ds>._LANG.shell].fetcher
+        shell_v = get(ds, "shell", nothing)
+        if shell_v isa String && !isempty(shell_v)
+            lang = get(ds, "_LANG", Dict{String,Any}())
+            lang = lang isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in lang) : Dict{String,Any}()
+            sh = get(lang, "shell", Dict{String,Any}())
+            sh = sh isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in sh) : Dict{String,Any}()
+            sh["fetcher"] = shell_v
+            lang["shell"] = sh
+            ds["_LANG"] = lang
+            delete!(ds, "shell")
             config[String(dsname)] = ds
         end
     end
