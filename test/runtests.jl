@@ -107,6 +107,15 @@ try
         @test isfile(test_toml)
         other = read_dataset(test_toml, datasets_dir; persist=false)
         @test other == db
+
+        # canonical=true routes through the Python `datamanifest format` CLI when
+        # present, else falls back to native output (semantically identical). The
+        # cross-tool byte-identity itself is checked by datamanifest.toml's
+        # tests/byte_identity.sh; here we just assert the option round-trips.
+        canon_toml = joinpath(datasets_dir, "test_canonical.toml")
+        write(db, canon_toml; canonical=true)
+        @test isfile(canon_toml)
+        @test read_dataset(canon_toml, datasets_dir; persist=false) == db
     end
 
     @testset "description roundtrip" begin

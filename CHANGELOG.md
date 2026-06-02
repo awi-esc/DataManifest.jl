@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### New features
+
+- **Cross-tool byte-identical output (opt-in).** `write(db, path; canonical=true)`
+  pipes the serialized manifest through the Python `datamanifest format` CLI so
+  Julia and Python emit byte-for-byte identical files. Optional and graceful: if
+  the peer CLI is not on `PATH` (or fails), it falls back to native TOML — which
+  is already semantically identical (same keys, same canonical order), differing
+  only in TOML-library formatting. Default behavior is unchanged.
+
 ## [0.16.0] - 2026-06-02 — spec-v1.1: storage model, parameterized bindings, verify-once
 
 ### New features
