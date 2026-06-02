@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] — schema v1 / `_LANG` namespace
+## [0.15.0] - 2026-06-02 — schema v1 / `_LANG` namespace
 
 ### New features
 
