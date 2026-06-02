@@ -33,6 +33,7 @@ Base.@kwdef mutable struct DatasetEntry
     # Own v1 Julia bindings parsed from `[<ds>._LANG.julia]`: `module:function`
     # refs. Empty ⇒ none declared. The write side (later item) regenerates the
     # `[<ds>._LANG.julia]` block from these; they are not emitted as flat keys.
+    store::String = ""
     lang_julia_fetcher::String = ""
     lang_julia_loader::String = ""
     # Unknown per-dataset keys (scalars and foreign `_*` sub-tables such as
@@ -104,6 +105,11 @@ function to_dict(entry::DatasetEntry)
         value = getfield(entry, field)
         if (value === nothing || value == [] || value == Dict() || value === "" || value == false)
             continue
+        end
+        if (field == :store)
+            if value == "" || value == "data"
+                continue
+            end
         end
         if (field == :key)
             if value == build_dataset_key(entry)
