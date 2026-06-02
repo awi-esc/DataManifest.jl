@@ -363,10 +363,37 @@ function TOML.print(db::Database; sorted=true, kwargs...)
     return TOML.print(to_dict(db); sorted=sorted, kwargs...)
 end
 
-function write(db::Database, datasets_toml::String; kwargs...)
+# Pipe a TOML string through the Python `datamanifest format` CLI to obtain the
+# canonical, cross-tool byte-identical serialization (the same recursive-sorted
+# `tomli_w` output the Python tool writes). Optional and graceful: if the peer
+# CLI is not on PATH, or the call fails, fall back to the native string — which
+# is *semantically* identical (same keys, same canonical order), differing only
+# in TOML-library formatting (indentation, blank lines, inline-vs-multiline
+# arrays) — with a warning.
+function _canonicalize_toml(toml_string::String)::String
+    exe = Sys.which("datamanifest")
+    if exe === nothing
+        warn("write(...; canonical=true): the `datamanifest` (Python) CLI was not found on PATH; " *
+             "writing native TOML (semantically identical; cross-tool byte-identity needs the peer CLI).")
+        return toml_string
+    end
+    try
+        out = IOBuffer()
+        run(pipeline(`$exe format`; stdin=IOBuffer(toml_string), stdout=out))
+        return String(take!(out))
+    catch e
+        warn("write(...; canonical=true): `datamanifest format` failed ($e); writing native TOML.")
+        return toml_string
+    end
+end
+
+function write(db::Database, datasets_toml::String; canonical::Bool=false, kwargs...)
     toml_string = sprint(TOML.print, db; kwargs...)
     if (toml_string === nothing)
         error("Failed to convert Database to TOML string.")
+    end
+    if canonical
+        toml_string = _canonicalize_toml(toml_string)
     end
     open(datasets_toml, "w") do io
         Base.write(io, toml_string)
