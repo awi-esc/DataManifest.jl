@@ -210,6 +210,9 @@ mutable struct Database
     # Own v1 default loaders parsed from `[_LANG.julia.loaders]`: a
     # `format → module:function` ref map. Empty ⇒ none declared.
     lang_julia_loaders::Dict{String,String}
+    # Parsed copy of `[_STORAGE]` for the path resolver; verbatim copy stays in
+    # `extra` for lossless round-trip. Empty when `[_STORAGE]` is absent.
+    storage_config::Dict{String,Any}
 
     function Database(datasets::Dict{String,<:DatasetEntry},
             datasets_toml::String,
@@ -223,10 +226,11 @@ mutable struct Database
             loader_context_module::Union{Module,Nothing},
             extra::Dict{String,Any}=Dict{String,Any}(),
             schema::Union{Int,Nothing}=nothing,
-            lang_julia_loaders::Dict{String,String}=Dict{String,String}())
+            lang_julia_loaders::Dict{String,String}=Dict{String,String}(),
+            storage_config::Dict{String,Any}=Dict{String,Any}())
         new(datasets, datasets_toml, datasets_folder, skip_checksum, skip_checksum_folders,
             loaders, loaders_julia_modules, loaders_julia_includes, loader_cache, loader_context_module,
-            extra, schema, lang_julia_loaders)
+            extra, schema, lang_julia_loaders, storage_config)
     end
 end
 
@@ -979,6 +983,10 @@ function register_datasets(db::Database, datasets::Dict; kwargs...)
         startswith(ks, "_") || continue
         (ks == "_LOADERS" || ks == "_loaders") && continue
         db.extra[ks] = v
+    end
+    storage = get(datasets, "_STORAGE", nothing)
+    if storage isa AbstractDict
+        db.storage_config = Dict{String,Any}(storage)
     end
     meta = get(datasets, "_META", nothing)
     if meta isa AbstractDict && haskey(meta, "schema") && meta["schema"] isa Integer
