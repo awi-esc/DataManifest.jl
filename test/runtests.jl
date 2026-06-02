@@ -15,6 +15,36 @@ function setup_db(datasets_folder::String)
     return db
 end
 
+# ----- conformance helpers (used by the conformance testset below) -----
+
+function _conf_shell_fetcher(entry::DatasetEntry)::String
+    lang = get(entry.extra, "_LANG", nothing)
+    lang isa AbstractDict || return ""
+    shell = get(lang, "shell", nothing)
+    shell isa AbstractDict || return ""
+    f = get(shell, "fetcher", nothing)
+    f isa AbstractString ? String(f) : ""
+end
+
+function _conf_infer_fetcher(db::Database, entry::DatasetEntry)
+    entry.lang_julia_fetcher != "" && return ("own-fetcher", entry.lang_julia_fetcher)
+    sf = _conf_shell_fetcher(entry)
+    sf != "" && return ("shell", sf)
+    (entry.uri != "" || !isempty(entry.uris)) && return ("uri", nothing)
+    return nothing
+end
+
+function _conf_infer_loader(db::Database, entry::DatasetEntry)
+    entry.lang_julia_loader != "" && return ("per-dataset", entry.lang_julia_loader)
+    fmt = lowercase(strip(entry.format))
+    if !isempty(fmt)
+        for (k, ref) in pairs(db.lang_julia_loaders)
+            lowercase(strip(k)) == fmt && return ("manifest-format-default", ref)
+        end
+    end
+    return ("builtin", nothing)
+end
+
 datasets_dir = mktempdir(prefix="DataManifest_test_"; cleanup=true)
 
 try
@@ -703,6 +733,156 @@ try
         rm(tmp; force=true)
     end
 end
+
+@testset "Conformance suite (spec-v1.0)" begin
+    # Source of truth: github.com/perrette/datamanifest.toml, tag spec-v1.0.
+    # The pin file records the spec tag + per-file sha256 of each fixture; hashes
+    # are over file contents (not the tarball), keeping the pin robust to GitHub
+    # re-generating the auto-archive. The tag + content pin is this tool's
+    # machine-checkable conformance claim. Unsupported-capability fixtures are
+    # skipped with a logged reason — divergent pace is a capability subset, not a
+    # spec fork.
+    using Downloads, SHA, Tar, CodecZlib, JSON
+
+    pin = TOML.parsefile(joinpath(@__DIR__, "conformance_pin.toml"))
+    spec_tag = pin["spec_tag"]
+    file_pins = pin["files"]  # relpath -> sha256
+
+    tarball_url = "https://github.com/perrette/datamanifest.toml/archive/refs/tags/$(spec_tag).tar.gz"
+
+    tarball_path = try
+        Downloads.download(tarball_url)
+    catch e
+        @info "Conformance suite skipped: spec tarball unreachable" exception=e
+        nothing
+    end
+
+    if tarball_path !== nothing
+        extracted_dir = mktempdir()
+        try
+            open(tarball_path) do io
+                stream = CodecZlib.GzipDecompressorStream(io)
+                try
+                    Tar.extract(stream, extracted_dir)
+                finally
+                    close(stream)
+                end
+            end
+            rm(tarball_path; force=true)
+
+            top_dirs = filter(isdir, readdir(extracted_dir; join=true))
+            @test length(top_dirs) == 1
+            extracted_root = top_dirs[1]
+            fixtures_top = joinpath(extracted_root, "tests", "fixtures")
+
+            # Verify every pinned file against its recorded sha256 (no missing, no extra)
+            for (pinned_rel, expected_sha) in file_pins
+                fpath = joinpath(extracted_root, pinned_rel)
+                @test isfile(fpath)
+                actual_sha = bytes2hex(SHA.sha256(read(fpath)))
+                @test actual_sha == expected_sha
+            end
+            for (root, _, files) in walkdir(fixtures_top)
+                for fname in files
+                    rel_key = replace(relpath(joinpath(root, fname), extracted_root), '\\' => '/')
+                    @test haskey(file_pins, rel_key)
+                end
+            end
+
+            # Capabilities this tool implements; drives which fixtures are run
+            SUPPORTED_CAPABILITIES = Set(["lang-read", "lang-write", "shell-fetch"])
+
+            toml_fnames = sort(filter(f -> endswith(f, ".toml"), readdir(fixtures_top)))
+            for toml_fname in toml_fnames
+                base = toml_fname[1:end-5]
+                expected_path = joinpath(fixtures_top, base * ".expected.json")
+                isfile(expected_path) || continue
+                toml_path = joinpath(fixtures_top, toml_fname)
+
+                expected = JSON.parsefile(expected_path)
+                caps = Set(String.(get(expected, "capabilities", String[])))
+
+                if !issubset(caps, SUPPORTED_CAPABILITIES)
+                    @info "Skipping fixture $base: requires unsupported capabilities $(setdiff(caps, SUPPORTED_CAPABILITIES))"
+                    continue
+                end
+
+                @testset "Fixture: $base" begin
+                    tmp_dir = mktempdir()
+                    try
+                        db = read_dataset(toml_path, tmp_dir; persist=false)
+
+                        # Resolution check: compare model against expected Julia rows
+                        julia_res = get(get(expected, "resolution", Dict()), "julia", nothing)
+                        if julia_res !== nothing
+                            for (ds_name, ds_exp) in julia_res
+                                @test haskey(db.datasets, ds_name)
+                                if haskey(db.datasets, ds_name)
+                                    entry = db.datasets[ds_name]
+
+                                    fetch_exp = ds_exp["fetcher"]
+                                    actual_fetch = _conf_infer_fetcher(db, entry)
+                                    @test actual_fetch !== nothing
+                                    if actual_fetch !== nothing
+                                        @test actual_fetch[1] == fetch_exp["rung"]
+                                        @test actual_fetch[2] == fetch_exp["ref"]
+                                    end
+
+                                    load_exp = ds_exp["loader"]
+                                    actual_load = _conf_infer_loader(db, entry)
+                                    @test actual_load !== nothing
+                                    if actual_load !== nothing
+                                        @test actual_load[1] == load_exp["rung"]
+                                        @test actual_load[2] == load_exp["ref"]
+                                    end
+                                end
+                            end
+                        end
+
+                        # Verbatim round-trip: foreign _LANG.* and unknown _* survive write→read
+                        orig_dict = TOML.parsefile(toml_path)
+                        tmp_toml = joinpath(tmp_dir, "round_trip.toml")
+                        write(db, tmp_toml)
+                        written_dict = TOML.parsefile(tmp_toml)
+
+                        pv = expected["preserve_verbatim"]
+
+                        for key in get(pv, "unknown_structural", String[])
+                            @test haskey(written_dict, key)
+                            @test get(written_dict, key, nothing) == get(orig_dict, key, nothing)
+                        end
+
+                        for ns in get(get(pv, "lang_namespaces", Dict()), "top_level", String[])
+                            parts = split(ns, "."; limit=2)
+                            top_key, sub_key = String(parts[1]), String(parts[2])
+                            @test haskey(get(written_dict, top_key, Dict()), sub_key)
+                            @test get(get(written_dict, top_key, Dict()), sub_key, nothing) ==
+                                  get(get(orig_dict, top_key, Dict()), sub_key, nothing)
+                        end
+
+                        per_ds = get(get(pv, "lang_namespaces", Dict()), "per_dataset", Dict())
+                        for (ds_name, namespaces) in per_ds
+                            for ns in namespaces
+                                parts = split(ns, "."; limit=2)
+                                top_key, sub_key = String(parts[1]), String(parts[2])
+                                ds_written = get(written_dict, ds_name, Dict())
+                                ds_orig = get(orig_dict, ds_name, Dict())
+                                @test haskey(get(ds_written, top_key, Dict()), sub_key)
+                                @test get(get(ds_written, top_key, Dict()), sub_key, nothing) ==
+                                      get(get(ds_orig, top_key, Dict()), sub_key, nothing)
+                            end
+                        end
+                    finally
+                        rm(tmp_dir; force=true, recursive=true)
+                    end
+                end
+            end
+        finally
+            rm(extracted_dir; force=true, recursive=true)
+        end
+    end
+end
+
 finally
     rm(datasets_dir; force=true, recursive=true)
 end
