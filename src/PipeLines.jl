@@ -81,6 +81,41 @@ function expand_shell_template(template::String, entry::DatasetEntry, download_p
     return result
 end
 
+# ----- Parameterized-binding `$var` substitution -----
+# A `{ ref, args, kwargs }` binding may embed `$var` placeholders in any string
+# value. The variable set mirrors `expand_shell_template`: a rung-specific path
+# var (`$download_path` for fetchers, `$path` for loaders) plus the dataset
+# metadata vars. Substitution is applied to every string element, recursively
+# into nested arrays/sub-tables; non-string scalars pass through unchanged.
+function _binding_subst_pairs(dataset::DatasetEntry, primary::Pair{String,String}, project_root::String)
+    return Pair{String,String}[
+        primary,
+        "\$project_root" => project_root,
+        "\$uri" => dataset.uri,
+        "\$key" => dataset.key,
+        "\$version" => dataset.version,
+        "\$doi" => dataset.doi,
+        "\$format" => dataset.format,
+        "\$branch" => dataset.branch,
+    ]
+end
+
+_subst_binding_value(v::AbstractString, subs::Vector{Pair{String,String}}) = begin
+    s = String(v)
+    for (k, val) in subs
+        s = replace(s, k => val)
+    end
+    s
+end
+_subst_binding_value(v::AbstractVector, subs::Vector{Pair{String,String}}) =
+    Any[_subst_binding_value(x, subs) for x in v]
+_subst_binding_value(v::AbstractDict, subs::Vector{Pair{String,String}}) =
+    Dict{String,Any}(String(k) => _subst_binding_value(x, subs) for (k, x) in v)
+_subst_binding_value(v, ::Vector{Pair{String,String}}) = v
+
+# Turn a (possibly substituted) kwargs Dict into Symbol=>value pairs for splatting.
+_kwargs_pairs(kwargs::AbstractDict) = [Symbol(k) => v for (k, v) in kwargs]
+
 function _run_julia(dataset::DatasetEntry, download_path::String, project_root::String;
                    required_paths_by_ref::Dict{String,String}=Dict{String,String}(),
                    required_paths_ordered::Vector{String}=String[],
@@ -200,11 +235,21 @@ end
 function _run_julia_ref(db::Database, dataset::DatasetEntry, download_path::String, project_root::String;
                        required_paths_ordered::Vector{String}=String[])
     fn = _resolve_ref(db, dataset.lang_julia_fetcher)
-    call() = Base.invokelatest(fn;
-        download_path=download_path, project_root=project_root, entry=dataset,
-        uri=dataset.uri, key=dataset.key, version=dataset.version, doi=dataset.doi,
-        format=dataset.format, branch=dataset.branch,
-        requires_paths=required_paths_ordered)
+    local call
+    if !isempty(dataset.lang_julia_fetcher_args) || !isempty(dataset.lang_julia_fetcher_kwargs)
+        # Parameterized binding: substitute `$var` and call `ref(args...; kwargs...)`.
+        subs = _binding_subst_pairs(dataset, "\$download_path" => download_path, project_root)
+        args = _subst_binding_value(dataset.lang_julia_fetcher_args, subs)
+        kwargs = _kwargs_pairs(_subst_binding_value(dataset.lang_julia_fetcher_kwargs, subs))
+        call = () -> Base.invokelatest(fn, args...; kwargs...)
+    else
+        # Bare-string ref: conventional keyword-arg call (unchanged behavior).
+        call = () -> Base.invokelatest(fn;
+            download_path=download_path, project_root=project_root, entry=dataset,
+            uri=dataset.uri, key=dataset.key, version=dataset.version, doi=dataset.doi,
+            format=dataset.format, branch=dataset.branch,
+            requires_paths=required_paths_ordered)
+    end
     if project_root != ""
         cd(call, project_root)
     else
@@ -676,6 +721,16 @@ function load_dataset(db::Database, entry::DatasetEntry; loader=nothing, kwargs.
         end
         return _call_loader(loader, path, entry)
     elseif db.schema == 1
+        # Parameterized own-loader binding: substitute `$var` (incl. `$path`) and
+        # call `ref(args...; kwargs...)`. Only taken when args/kwargs are present.
+        if entry.lang_julia_loader != "" &&
+           (!isempty(entry.lang_julia_loader_args) || !isempty(entry.lang_julia_loader_kwargs))
+            fn = _resolve_ref(db, entry.lang_julia_loader)
+            subs = _binding_subst_pairs(entry, "\$path" => path, get_project_root(db))
+            args = _subst_binding_value(entry.lang_julia_loader_args, subs)
+            kwargs = _kwargs_pairs(_subst_binding_value(entry.lang_julia_loader_kwargs, subs))
+            return Base.invokelatest(fn, args...; kwargs...)
+        end
         # v1 load ladder: own `_LANG.julia.loader` ref → manifest
         # `[_LANG.julia.loaders][format]` ref → built-in format default → error.
         fn = _resolve_loader_v1(db, entry)
