@@ -187,7 +187,7 @@ Database(datasets_toml::String, datasets_folder::String=""; kwargs...) -> Databa
 
 Create a new dataset database.
 
-- If `datasets_folder` is not provided, defaults to `~/.cache/Datasets`.
+- If `datasets_folder` is not provided, the `data` store root is resolved via `Storage.store_root` (defaults to `$XDG_DATA_HOME/datamanifest/Datasets` on Linux). To override, set `DATAMANIFEST_DATA_DIR` or pass `datasets_folder=`.
 - If `datasets_toml` is not provided and `persist` is `true`, attempts to infer a TOML file from the project or environment.
 - If a TOML file is provided and exists, datasets are loaded from it.
 
@@ -288,6 +288,7 @@ struct DatasetEntry
     aliases::Vector{String} = []
     key::String = ""              # Unique key for the dataset, usually the DOI or a unique name
     local_path::String = ""       # Path to a user-managed local file; bypasses the cache (relative to Datasets.toml dir, or absolute)
+    store::String = ""            # Store name: "" or "data" (default), "cache", "repo", "mount"
     sha256::String = ""
     skip_checksum::Bool = false   # Whether to skip SHA-256 checksum checks for this dataset
     skip_download::Bool = false   # Skip download (e.g. to keep local files out of the download folder)
@@ -296,6 +297,13 @@ struct DatasetEntry
     shell::String = ""            # When set, run this shell command instead of built-in download
     julia::String = ""            # When set, run this Julia code in an isolated module (takes precedence over shell)
     julia_modules::Vector{String} = String[]
+    # Schema v1 bindings (parameterized form):
+    lang_julia_fetcher::String = ""
+    lang_julia_fetcher_args::Vector{Any} = []
+    lang_julia_fetcher_kwargs::Dict{String,Any} = Dict()
+    lang_julia_loader::String = ""
+    lang_julia_loader_args::Vector{Any} = []
+    lang_julia_loader_kwargs::Dict{String,Any} = Dict()
 end
 ```
 
@@ -309,7 +317,8 @@ It is initialized via the `add` method (and internally, `register_dataset` and `
 - `doi::String`: DOI for the dataset.
 - `aliases::Vector{String}`: Alternative names for the dataset.
 - `key::String`: Unique key for the dataset.
-- `local_path::String`: Path to a user-managed local file. When set, DataManifest bypasses its own cache (`datasets_folder`/`key`) and treats `local_path` as the dataset path. Relative paths are resolved against the directory of `Datasets.toml` (use this for git-portable, in-repo data files); absolute paths are used as-is (e.g. NAS mounts). The download step is skipped — if the file is missing, an error tells the user to obtain it manually from `uri`. Checksum verification still applies, making this a natural fit for sources DataManifest cannot fetch automatically (Cloudflare-protected URLs, datasets behind manual login, etc.).
+- `local_path::String`: Path to a user-managed local file.
+- `store::String`: Store name — `""` or `"data"` (default), `"cache"`, `"repo"`, `"mount"`. Controls which storage root is used for the dataset. Omitted on write when default. When set, DataManifest bypasses its own cache (`datasets_folder`/`key`) and treats `local_path` as the dataset path. Relative paths are resolved against the directory of `Datasets.toml` (use this for git-portable, in-repo data files); absolute paths are used as-is (e.g. NAS mounts). The download step is skipped — if the file is missing, an error tells the user to obtain it manually from `uri`. Checksum verification still applies, making this a natural fit for sources DataManifest cannot fetch automatically (Cloudflare-protected URLs, datasets behind manual login, etc.).
 - `sha256::String`: SHA-256 checksum.
 - `skip_checksum::Bool`: Skip checksum verification for this dataset.
 - `skip_download::Bool`: Skip downloading this dataset. For declaring a user-managed local file, prefer `local_path` (newer, self-documenting); `skip_download` is retained for back-compatibility and for entries fetched by custom `shell`/`julia` code that doesn't need a download step.

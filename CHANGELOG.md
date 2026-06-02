@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.16.0] - 2026-06-02 — spec-v1.1: storage model, parameterized bindings, verify-once
+
+### New features
+
+- **Storage model (`store` field + `[_STORAGE]`)**: each dataset may declare a
+  `store` of `data` (default), `cache`, `repo`, or `mount` (parsed verbatim; not
+  yet mounted). Default roots match Python's `platformdirs` so peer tools resolve
+  the same dataset to the same on-disk path.
+- **Default download location changed** (behavior change): the `data` store
+  default is now `$XDG_DATA_HOME/datamanifest/Datasets` (Linux) rather than
+  `$XDG_CACHE_HOME/Datasets`. Existing cached downloads are not moved
+  automatically. Set `DATAMANIFEST_DATA_DIR` to your old cache path to keep
+  resolving existing files without re-downloading.
+- **`[_STORAGE]` resolver**: per-store root-path precedence —
+  `DATAMANIFEST_<STORE>_DIR` env-var → `_PROFILE.<name>` (when
+  `DATAMANIFEST_PROFILE` set) → first matching `_HOST.<glob>` → `[_STORAGE]`
+  base → platformdirs default. `~` and `$VAR` expanded.
+- **Read-order resolution**: `resolve_existing_path` searches `repo → data →
+  cache` and returns the first existing complete entry, enabling seamless
+  promotion of a dataset from one store to another.
+- **Safe materialization**: fetchers write to `<target>.tmp` and atomically
+  rename to `<target>` on success; a `.complete` marker (`<file>.complete` or
+  `<dir>/.complete`) is created. A missing marker is treated as absent; a killed
+  write leaves no partial entry.
+- **Verify-once integrity** (Theme A): checksum is computed only when actually
+  (re-)fetching. A present, complete entry with a stored `sha256` is not
+  re-hashed on every `load_dataset` call.
+- **Parameterized bindings** (`{ ref, args, kwargs }`): `fetcher`/`loader` in
+  `[<ds>._LANG.julia]` may be a table `{ ref = "Mod:fn", args = [...], kwargs =
+  {...} }` instead of a bare string. `$var` substitution (`$download_path`,
+  `$path`, `$key`, `$uri`, etc.) is applied to string values in `args`/`kwargs`
+  at execution time; the resolved function is called as `ref(args...; kwargs...)`.
+  Bare-string bindings are unaffected.
+- **`shell=` migration**: `DataManifest.migrate` now also converts a flat
+  per-dataset `shell = "<cmd>"` field into `[<ds>._LANG.shell].fetcher`.
+- **Conformance re-pinned to `spec-v1.1`**: implemented capabilities are now
+  `lang-read`, `lang-write`, `shell-fetch`, `storage`, `binding-args`,
+  `byte-identity`. The conformance suite adds assertions for the `storage` block,
+  `binding_args` block, and self-consistent byte-identity (serialize → parse →
+  serialize is byte-stable).
+
+### Internal
+
+- `DatasetEntry` gains `store::String = ""`.
+- `Database` gains `storage_config::Dict{String,Any}` populated from
+  `[_STORAGE]` (verbatim copy stays in `extra` for lossless round-trip).
+- New `src/Storage.jl` module: pure `store_root(store; …) → String` resolver.
+- `DatasetEntry` gains `lang_julia_fetcher_args`, `lang_julia_fetcher_kwargs`,
+  `lang_julia_loader_args`, `lang_julia_loader_kwargs` for the parameterized
+  binding form.
+
+---
+
 ## [0.15.0] - 2026-06-02 — schema v1 / `_LANG` namespace
 
 ### New features

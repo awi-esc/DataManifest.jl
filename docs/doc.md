@@ -73,12 +73,51 @@ rm /home/perrette/.cache/Datasets/LGM_foraminifera_assemblages_20240110.csv
 
 ## Data naming on disk
 
-The default folder is `$XDG_CACHE_HOME/Datasets/` or `.cache/Datasets/` if `XDG_CACHE_HOME` environment variable is not defined (see [XDG specifications](https://specifications.freedesktop.org/basedir-spec/latest/)).
-Any other folder, such as a local folder, can be provided by passing `datasets_folder=` when initializing the `Database`.
-Note the datasets naming scheme is still pretty much "in flux" (though hopefully stabilizing by now), trying to balance clarity and uniqueness.
+The default folder for the `data` store is `$XDG_DATA_HOME/datamanifest/Datasets` (Linux), matching Python's `platformdirs.user_data_dir("datamanifest")`. If `XDG_DATA_HOME` is not set the fallback is `~/.local/share/datamanifest/Datasets`. For the `cache` store the default is `$XDG_CACHE_HOME/datamanifest/Datasets` (`~/.cache/datamanifest/Datasets` if unset).
+
+> **Note (v0.16.0 behavior change)**: the default download location moved from
+> `$XDG_CACHE_HOME/Datasets` to `$XDG_DATA_HOME/datamanifest/Datasets`.
+> If you have existing downloads in the old location, set
+> `DATAMANIFEST_DATA_DIR=~/.cache/Datasets` (or wherever your files live) so
+> DataManifest finds them without re-downloading.
+
+Any other folder can be provided by passing `datasets_folder=` when initializing the `Database` — this overrides the `data`-store root.
+
 When `version=0.2.5` parameter is provided, the name on disk will be appended with `...#0.2.5`.
 
-It is also possible to provide a preferred name on disk via `key=...` to add. The local path will then be provided by `joinpath(datasets_folder, key)` (absolute paths also supported). If `extract=true` is specified, the dataset path for the extracted archive will be either stripped from the archive extension, if the local path ends with the matching archive extension (e.g. ".zip" for the "zip" format), or appended with `.d` in non-obivous case (e.g. no extension, version string `#...`).
+It is also possible to provide a preferred name on disk via `key=...` to add. The local path will then be provided by `joinpath(store_root, key)` (absolute paths also supported). If `extract=true` is specified, the dataset path for the extracted archive will be either stripped from the archive extension, if the local path ends with the matching archive extension (e.g. ".zip" for the "zip" format), or appended with `.d` in non-obivous case (e.g. no extension, version string `#...`).
+
+## Storage model
+
+A dataset can live in one of four named stores:
+
+| Store  | Meaning                                 | Default root (Linux)                          |
+|--------|-----------------------------------------|-----------------------------------------------|
+| `data` | persistent user data (default)          | `$XDG_DATA_HOME/datamanifest/Datasets`        |
+| `cache`| re-fetchable, may be purged             | `$XDG_CACHE_HOME/datamanifest/Datasets`       |
+| `repo` | committed inside the project repository | `<project_root>/datasets`                     |
+| `mount`| externally mounted volume               | parsed verbatim; not yet mounted by DataManifest |
+
+Declare the store per dataset:
+
+```toml
+[my_dataset]
+store = "cache"
+uri   = "https://example.com/big_file.nc"
+```
+
+Override roots via environment variables or `[_STORAGE]`:
+
+```toml
+[_STORAGE]
+data  = "/data/shared"                          # base override for the data store
+_HOST.login* = { data = "/scratch/datasets" }   # host-glob override
+_PROFILE.hpc = { cache = "/tmp/datasets" }      # profile override (DATAMANIFEST_PROFILE=hpc)
+```
+
+Precedence per store: `DATAMANIFEST_<STORE>_DIR` env-var → `_PROFILE.<name>` → first matching `_HOST.<glob>` → `[_STORAGE]` base → default. `~` and `$VAR` expanded.
+
+When loading, DataManifest searches `repo → data → cache` and returns the first store where the dataset exists and has a `.complete` marker.
 
 ## Maintaining a local `Datasets.toml`
 
@@ -248,6 +287,34 @@ DataManifest.migrate("Datasets.toml")
 ```
 
 Moves ref-shaped `julia=`/`loader=` per-dataset fields and `[_LOADERS]` ref entries into `[<ds>._LANG.julia]` / `[_LANG.julia.loaders]`, then sets `_META.schema = 1`. Genuinely inline code is preserved verbatim with a log note. The call is idempotent.
+
+Also converts a flat per-dataset `shell = "<cmd>"` field into `[<ds>._LANG.shell].fetcher`.
+
+## Parameterized bindings (`{ ref, args, kwargs }`)
+
+Fetcher and loader refs can be written as a TOML inline table to pass explicit arguments:
+
+```toml
+[_META]
+schema = 1
+
+[my_dataset._LANG.julia]
+fetcher = { ref = "MyFetchers:fetch", args = ["$download_path"], kwargs = { format = "nc" } }
+loader  = { ref = "MyLoaders:load",  args = ["$path"],           kwargs = { grid = "5x5" } }
+```
+
+At call time:
+
+1. `$var` placeholders in string values are substituted with the dataset context:
+   - Fetcher: `$download_path`, `$key`, `$uri`, `$version`, `$doi`, `$format`, `$branch`, `$project_root`.
+   - Loader: `$path` (the materialized file path), plus the same set.
+2. The resolved function is called as `ref(subst(args)...; subst(kwargs)...)`.
+
+Non-string values (numbers, arrays, sub-tables) are passed through unchanged. Bare-string bindings (`fetcher = "Mod:fn"`) are unaffected and keep the conventional `fn(; download_path=..., ...)` call.
+
+## Verify-once integrity
+
+Starting with v0.16.0, SHA-256 checksum is computed **only when actually (re-)fetching** a dataset. A present dataset with a `.complete` marker and a non-empty stored `sha256` is not re-hashed on every `load_dataset` call. To force re-verification, pass `overwrite=true` to `download_dataset`.
 
 ## Shell / Julia download commands (v0 / legacy)
 
