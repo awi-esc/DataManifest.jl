@@ -30,6 +30,9 @@ Base.@kwdef mutable struct DatasetEntry
     julia_modules::Vector{String} = String[]
     loader::String = ""
     requires::Vector{String} = String[]
+    # Unknown per-dataset keys (scalars and foreign `_*` sub-tables such as
+    # `[<ds>._LANG.<other>]`) are kept here verbatim for lossless round-trip.
+    extra::Dict{String,Any} = Dict{String,Any}()
 end
 
 function Base.:(==)(a::DatasetEntry, b::DatasetEntry)
@@ -78,12 +81,15 @@ function guess_file_format(entry::DatasetEntry)
 end
 
 function to_dict(entry::DatasetEntry)
-    output = Dict{String,Union{String,Vector{String},Bool}}()
+    output = Dict{String,Any}()
     for field in fieldnames(typeof(entry))
-        value = getfield(entry, field)
         if (field in HIDE_STRUCT_FIELDS)
             continue
         end
+        if (field == :extra)
+            continue
+        end
+        value = getfield(entry, field)
         if (value === nothing || value == [] || value == Dict() || value === "" || value == false)
             continue
         end
@@ -98,6 +104,10 @@ function to_dict(entry::DatasetEntry)
             end
         end
         output[String(field)] = value
+    end
+    # Splice unknown per-dataset keys / foreign `_*` sub-tables back verbatim.
+    for (k, v) in entry.extra
+        output[String(k)] = v
     end
     return output
 end
@@ -155,6 +165,11 @@ mutable struct Database
     loaders_julia_includes::Vector{String}
     loader_cache::Dict{String,Function}
     loader_context_module::Union{Module,Nothing}
+    # Unknown top-level `_*` tables (`_META`, foreign `_LANG.<other>`, future
+    # `_FOO`) kept verbatim for lossless round-trip.
+    extra::Dict{String,Any}
+    # Schema version from `[_META].schema`; `nothing` ⇒ v0 (legacy flat).
+    schema::Union{Int,Nothing}
 
     function Database(datasets::Dict{String,<:DatasetEntry},
             datasets_toml::String,
@@ -165,9 +180,12 @@ mutable struct Database
             loaders_julia_modules::Vector{String},
             loaders_julia_includes::Vector{String},
             loader_cache::Dict{String,Function},
-            loader_context_module::Union{Module,Nothing})
+            loader_context_module::Union{Module,Nothing},
+            extra::Dict{String,Any}=Dict{String,Any}(),
+            schema::Union{Int,Nothing}=nothing)
         new(datasets, datasets_toml, datasets_folder, skip_checksum, skip_checksum_folders,
-            loaders, loaders_julia_modules, loaders_julia_includes, loader_cache, loader_context_module)
+            loaders, loaders_julia_modules, loaders_julia_includes, loader_cache, loader_context_module,
+            extra, schema)
     end
 end
 
@@ -175,7 +193,8 @@ function Base.:(==)(db1::Database, db2::Database)
     return db1.datasets == db2.datasets && db1.datasets_folder == db2.datasets_folder &&
            db1.datasets_toml == db2.datasets_toml && db1.loaders == db2.loaders &&
            db1.loaders_julia_modules == db2.loaders_julia_modules &&
-           db1.loaders_julia_includes == db2.loaders_julia_includes
+           db1.loaders_julia_includes == db2.loaders_julia_includes &&
+           db1.extra == db2.extra && db1.schema == db2.schema
 end
 
 # Consider a value empty for TOML output (do not write key)
@@ -197,6 +216,11 @@ function to_dict(db::Database; kwargs...)
     result = Dict{String,Any}()
     if !isempty(loaders_table)
         result["_LOADERS"] = loaders_table
+    end
+    # Splice unknown top-level `_*` tables (`_META`, foreign `_LANG.<other>`,
+    # future `_FOO`) back verbatim.
+    for (k, v) in pairs(db.extra)
+        result[String(k)] = v
     end
     for (key, entry) in pairs(db.datasets)
         result[key] = to_dict(entry; kwargs...)
@@ -389,7 +413,29 @@ function init_dataset_entry(;
         uris = String.(uris)
     end
 
-    entry = DatasetEntry(; uri=uri, uris=uris, kwargs...)
+    # Separate known struct fields from unknown keys; unknown per-dataset keys
+    # (scalars and foreign `_*` sub-tables) are kept verbatim in `entry.extra`.
+    known = Set(fieldnames(DatasetEntry))
+    passthrough = Dict{String,Any}()
+    explicit_extra = nothing
+    entry_kw = Pair{Symbol,Any}[]
+    for (k, v) in kwargs
+        if k === :extra
+            explicit_extra = v
+        elseif k in known
+            push!(entry_kw, k => v)
+        else
+            passthrough[String(k)] = v
+        end
+    end
+
+    entry = DatasetEntry(; uri=uri, uris=uris, entry_kw...)
+    if explicit_extra !== nothing
+        for (k, v) in pairs(explicit_extra)
+            passthrough[String(k)] = v
+        end
+    end
+    entry.extra = passthrough
 
     # Multiple-URI entry: key derived from common host + path prefix if not given
     if !isempty(entry.uris)
@@ -768,7 +814,20 @@ function register_datasets(db::Database, datasets::Dict; kwargs...)
         loader_dict = Dict{String,String}(String(k) => (v isa String ? v : repr(v)) for (k, v) in L if k != "julia_modules" && k != "julia_includes")
         register_loaders(db; loaders=loader_dict, julia_modules=mods, julia_includes=incs, persist=false)
     end
-    names = [k for k in keys(datasets) if k != "_LOADERS" && k != "_loaders"]
+    # Structural `_*` top-level tables are never datasets. `_LOADERS`/`_loaders`
+    # are consumed above; recognize `[_META].schema`; keep every other `_*`
+    # table (`_META`, foreign `_LANG.<other>`, future `_FOO`) verbatim in extra.
+    for (k, v) in pairs(datasets)
+        ks = String(k)
+        startswith(ks, "_") || continue
+        (ks == "_LOADERS" || ks == "_loaders") && continue
+        db.extra[ks] = v
+    end
+    meta = get(datasets, "_META", nothing)
+    if meta isa AbstractDict && haskey(meta, "schema") && meta["schema"] isa Integer
+        db.schema = Int(meta["schema"])
+    end
+    names = [k for k in keys(datasets) if !startswith(String(k), "_")]
     for (i, name) in enumerate(names)
         info_ = datasets[name]
         info = Dict(Symbol(k) => v for (k, v) in (info_ isa Dict ? info_ : pairs(info_)))
