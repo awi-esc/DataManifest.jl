@@ -247,6 +247,34 @@ Given a list of URI path strings, return relative paths that preserve enough dir
 structure to disambiguate filenames. The common leading directory segments are stripped.
 Example: ["/data1/file.nc", "/data2/file.nc"] → ["data1/file.nc", "data2/file.nc"]
 """
+# Read a dataset's v1 `[<ds>._LANG.shell].fetcher` template. Shell is not parsed
+# into the model (Item 2 kept every foreign `_LANG.<other>` verbatim in `extra`),
+# so the fetch ladder reads it from there. Returns "" when absent.
+function _lang_shell_fetcher(entry::DatasetEntry)::String
+    lang = get(entry.extra, "_LANG", nothing)
+    lang isa AbstractDict || return ""
+    shell = get(lang, "shell", nothing)
+    shell isa AbstractDict || return ""
+    f = get(shell, "fetcher", nothing)
+    return f isa AbstractString ? String(f) : ""
+end
+
+# Expand and run a shell fetch template. Shared by the v0 `shell=` field and the
+# v1 `_LANG.shell.fetcher` rung so both behave identically.
+function _run_shell(template::String, dataset::DatasetEntry, download_path::String, project_root::String;
+                   required_paths_by_ref::Dict{String,String}=Dict{String,String}(),
+                   required_paths_ordered::Vector{String}=String[])
+    cmd_expanded = expand_shell_template(template, dataset, download_path, project_root;
+                                         required_paths_by_ref=required_paths_by_ref,
+                                         required_paths_ordered=required_paths_ordered)
+    cmd = Cmd(split(cmd_expanded))
+    if project_root != ""
+        run(setenv(cmd; dir=project_root))
+    else
+        run(cmd)
+    end
+end
+
 function _uri_relative_paths(uris::Vector{String})::Vector{String}
     segments = [filter(!isempty, split(parse_uri_metadata(u).path, '/')) for u in uris]
     # Guard: empty path segments
@@ -278,6 +306,29 @@ function _download_dataset(dataset::DatasetEntry, download_path::String; project
 
     mkpath(dirname(download_path))
 
+    # v1 fetch ladder: own `_LANG.julia.fetcher` → `_LANG.shell.fetcher` → uri →
+    # error (delegation is out of scope). The julia/shell rungs return early; the
+    # uri rung falls through to the uris/scheme handling below, and the absence of
+    # every rung is a clear error.
+    if v1
+        if dataset.lang_julia_fetcher != ""
+            _run_julia_ref(db, dataset, download_path, project_root;
+                          required_paths_ordered=required_paths_ordered)
+            return
+        end
+        shell_fetcher = _lang_shell_fetcher(dataset)
+        if shell_fetcher != ""
+            _run_shell(shell_fetcher, dataset, download_path, project_root;
+                      required_paths_by_ref=required_paths_by_ref,
+                      required_paths_ordered=required_paths_ordered)
+            return
+        end
+        if isempty(dataset.uris) && dataset.uri == ""
+            error("No fetcher resolved for dataset \"$(dataset.key)\": no own " *
+                  "`_LANG.julia.fetcher`, no `_LANG.shell.fetcher`, and no `uri`/`uris`.")
+        end
+    end
+
     if !isempty(dataset.uris)
         mkpath(download_path)
         rel_paths = _uri_relative_paths(dataset.uris)
@@ -298,12 +349,6 @@ function _download_dataset(dataset::DatasetEntry, download_path::String; project
         return
     end
 
-    if v1 && dataset.lang_julia_fetcher != ""
-        _run_julia_ref(db, dataset, download_path, project_root;
-                      required_paths_ordered=required_paths_ordered)
-        return
-    end
-
     if !v1 && dataset.julia !== ""
         _run_julia(dataset, download_path, project_root;
                   required_paths_by_ref=required_paths_by_ref,
@@ -313,15 +358,9 @@ function _download_dataset(dataset::DatasetEntry, download_path::String; project
     end
 
     if dataset.shell !== ""
-        cmd_expanded = expand_shell_template(dataset.shell, dataset, download_path, project_root;
-                                             required_paths_by_ref=required_paths_by_ref,
-                                             required_paths_ordered=required_paths_ordered)
-        cmd = Cmd(split(cmd_expanded))
-        if project_root != ""
-            run(setenv(cmd; dir=project_root))
-        else
-            run(cmd)
-        end
+        _run_shell(dataset.shell, dataset, download_path, project_root;
+                  required_paths_by_ref=required_paths_by_ref,
+                  required_paths_ordered=required_paths_ordered)
         return
     end
 
@@ -499,6 +538,35 @@ function default_loader(db::Database, format::AbstractString)
     return builtin_default_loader(format)
 end
 
+# v1 load ladder: own `_LANG.julia.loader` ref → manifest
+# `[_LANG.julia.loaders][format]` ref → built-in format default → error. Every
+# rung resolves by import + getfield or a built-in lookup; a v1 loader never
+# spawns a subprocess and never goes through `include_string`. (Delegation — a
+# foreign-language loader — is out of scope.)
+function _resolve_loader_v1(db::Database, entry::DatasetEntry)
+    if entry.lang_julia_loader != ""
+        return _resolve_ref(db, entry.lang_julia_loader)
+    end
+    # For extracted archives, path is a directory; no single-file format to load.
+    format = (entry.extract && entry.format in COMPRESSED_FORMATS) ? "" : entry.format
+    fmt = lowercase(strip(format))
+    if !isempty(fmt)
+        for (k, ref) in pairs(db.lang_julia_loaders)
+            lowercase(strip(k)) == fmt && return _resolve_ref(db, ref)
+        end
+    end
+    if isempty(fmt)
+        error("No loader resolved for dataset \"$(entry.key)\": no own " *
+              "`_LANG.julia.loader`, no `[_LANG.julia.loaders]` entry, and the dataset format is empty.")
+    end
+    try
+        return builtin_default_loader(format)
+    catch
+        error("No loader resolved for dataset \"$(entry.key)\" (format \"$format\"): no own " *
+              "`_LANG.julia.loader`, no `[_LANG.julia.loaders][$fmt]`, and no built-in loader for \"$format\".")
+    end
+end
+
 # World-age errors are MethodError with world != typemax(UInt); "no matching method" uses typemax(UInt).
 function _is_world_age_error(e)
     return e isa MethodError && e.world != typemax(UInt)
@@ -536,11 +604,12 @@ function load_dataset(db::Database, entry::DatasetEntry; loader=nothing, kwargs.
             end
         end
         return _call_loader(loader, path, entry)
-    elseif db.schema == 1 && entry.lang_julia_loader != ""
-        # v1: own `_LANG.julia.loader` ref (resolved via import, never include_string).
-        fn = _resolve_ref(db, entry.lang_julia_loader)
+    elseif db.schema == 1
+        # v1 load ladder: own `_LANG.julia.loader` ref → manifest
+        # `[_LANG.julia.loaders][format]` ref → built-in format default → error.
+        fn = _resolve_loader_v1(db, entry)
         return _call_loader(fn, path, entry)
-    elseif db.schema != 1 && entry.loader != ""
+    elseif entry.loader != ""
         # v0/legacy inline (or named/ref) loader.
         fn = _get_loader_function(db, entry.loader)
         return _call_loader(fn, path, entry)
