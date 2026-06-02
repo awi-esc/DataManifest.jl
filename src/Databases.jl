@@ -436,6 +436,22 @@ function build_uri(meta::DatasetEntry)
     return uri
 end
 
+# One-time deprecation flag: fires the first time a v0/legacy form is read.
+const _LEGACY_DEPRECATION_WARNED = Ref{Bool}(false)
+
+function _warn_legacy_once()
+    _LEGACY_DEPRECATION_WARNED[] && return
+    _LEGACY_DEPRECATION_WARNED[] = true
+    warn("Legacy manifest form detected (flat julia=/loader= fields or [_LOADERS] table). " *
+         "Call DataManifest.migrate(path) to update to v1 _LANG format.")
+end
+
+# True when a string looks like a `Module[.Sub]:function` ref: no whitespace,
+# no newlines — safe to resolve via getfield without include_string.
+function _is_ref(s::String)::Bool
+    return occursin(r"^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$", s)
+end
+
 # Split a `_LANG` table into its own `julia` subtable (or `nothing`) and a
 # dict of every foreign `_LANG.<other>` entry kept verbatim. The own Julia
 # subtable is consumed into the model; the foreign remainder stays in `extra`.
@@ -555,6 +571,12 @@ function init_dataset_entry(;
         end
     end
 
+    for (k, v) in entry_kw
+        if k in (:julia, :loader, :julia_modules, :julia_includes)
+            nonempty = v isa AbstractString ? !isempty(v) : (v isa AbstractVector ? !isempty(v) : false)
+            nonempty && (_warn_legacy_once(); break)
+        end
+    end
     entry = DatasetEntry(; uri=uri, uris=uris, entry_kw...)
     if explicit_extra !== nothing
         for (k, v) in pairs(explicit_extra)
@@ -937,6 +959,7 @@ end
 function register_datasets(db::Database, datasets::Dict; kwargs...)
     L = get(datasets, "_LOADERS", get(datasets, "_loaders", nothing))
     if L isa Dict
+        _warn_legacy_once()
         mods = haskey(L, "julia_modules") && L["julia_modules"] isa Vector ? String.(L["julia_modules"]) : String[]
         incs = haskey(L, "julia_includes") && L["julia_includes"] isa Vector ? String.(L["julia_includes"]) : String[]
         loader_dict = Dict{String,String}(String(k) => (v isa String ? v : repr(v)) for (k, v) in L if k != "julia_modules" && k != "julia_includes")
@@ -1046,5 +1069,101 @@ register_dataset(db::Nothing, uri::String; kwargs...) = register_dataset(uri; kw
 delete_dataset(name::String; kwargs...) = delete_dataset(get_default_database(), name; kwargs...)
 add(uri::String=""; kwargs...) = add(get_default_database(), uri; kwargs...)
 get_dataset_path(name::String; kwargs...) = get_dataset_path(get_default_database(), name; kwargs...)
+
+function migrate(path::String)
+    isfile(path) || error("File not found: $path")
+    config = TOML.parsefile(path)
+
+    meta = get(config, "_META", nothing)
+    schema = (meta isa AbstractDict && haskey(meta, "schema")) ? meta["schema"] : nothing
+    if schema isa Integer && schema >= 1
+        info("migrate: $path is already schema v$schema, nothing to do")
+        return
+    end
+
+    # Migrate [_LOADERS] format-loader entries that are refs into [_LANG.julia.loaders]
+    for lkey in ("_LOADERS", "_loaders")
+        L = get(config, lkey, nothing)
+        L isa AbstractDict || continue
+        migrated = Dict{String,String}()
+        for (k, v) in L
+            ks = String(k)
+            ks in ("julia_modules", "julia_includes") && continue
+            if v isa String && !isempty(v)
+                if _is_ref(v)
+                    migrated[ks] = v
+                else
+                    warn("migrate: [_LOADERS][$ks] looks like inline code; preserved verbatim")
+                end
+            end
+        end
+        if !isempty(migrated)
+            lang = get(config, "_LANG", Dict{String,Any}())
+            lang = lang isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in lang) : Dict{String,Any}()
+            jul = get(lang, "julia", Dict{String,Any}())
+            jul = jul isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in jul) : Dict{String,Any}()
+            ldr = get(jul, "loaders", Dict{String,Any}())
+            ldr = ldr isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in ldr) : Dict{String,Any}()
+            for (fmt, ref) in migrated
+                ldr[fmt] = ref
+            end
+            jul["loaders"] = ldr
+            lang["julia"] = jul
+            config["_LANG"] = lang
+            remaining = Dict{String,Any}(String(k) => v for (k, v) in L
+                                         if !(String(k) in keys(migrated)))
+            if isempty(remaining)
+                delete!(config, lkey)
+            else
+                config[lkey] = remaining
+            end
+        end
+        break
+    end
+
+    # Migrate per-dataset julia= and loader= refs into [<ds>._LANG.julia]
+    for dsname in collect(keys(config))
+        startswith(String(dsname), "_") && continue
+        dsval = config[dsname]
+        dsval isa AbstractDict || continue
+        ds = Dict{String,Any}(String(k) => v for (k, v) in dsval)
+        lang_julia = Dict{String,Any}()
+        for (field, target) in (("julia", "fetcher"), ("loader", "loader"))
+            v = get(ds, field, nothing)
+            if v isa String && !isempty(v)
+                if _is_ref(v)
+                    lang_julia[target] = v
+                    delete!(ds, field)
+                else
+                    warn("migrate: [$dsname].$field looks like inline code; preserved verbatim")
+                end
+            end
+        end
+        if !isempty(lang_julia)
+            lang = get(ds, "_LANG", Dict{String,Any}())
+            lang = lang isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in lang) : Dict{String,Any}()
+            jul = get(lang, "julia", Dict{String,Any}())
+            jul = jul isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in jul) : Dict{String,Any}()
+            for (k, v) in lang_julia
+                jul[k] = v
+            end
+            lang["julia"] = jul
+            ds["_LANG"] = lang
+            config[String(dsname)] = ds
+        end
+    end
+
+    # Set _META.schema = 1
+    meta_dict = get(config, "_META", Dict{String,Any}())
+    meta_dict = meta_dict isa AbstractDict ? Dict{String,Any}(String(k) => v for (k, v) in meta_dict) : Dict{String,Any}()
+    meta_dict["schema"] = 1
+    config["_META"] = meta_dict
+
+    open(path, "w") do io
+        TOML.print(io, config; sorted=true)
+    end
+    info("migrate: wrote v1 manifest to $path")
+    return nothing
+end
 
 end # module Databases
