@@ -118,6 +118,31 @@ try
         @test read_dataset(canon_toml, datasets_dir; persist=false) == db
     end
 
+    @testset "legacy read-only probe" begin
+        legacy = mktempdir()
+        mkpath(joinpath(legacy, "Datasets", "host"))
+        write(joinpath(legacy, "Datasets", "host", "f.txt"), "x")
+        newdata = mktempdir()
+        # Dataset present only in legacy ~/.cache/Datasets resolves there.
+        withenv("XDG_CACHE_HOME" => legacy, "XDG_DATA_HOME" => newdata,
+                "DATAMANIFEST_DATA_DIR" => nothing) do
+            db_l = Database(datasets_folder="", persist=false)
+            register_dataset(db_l, "https://example.com/host/f.txt"; name="d",
+                key="host/f.txt", skip_checksum=true, persist=false)
+            p = DataManifest.Databases.resolve_existing_path(db_l, db_l.datasets["d"])
+            @test p == joinpath(legacy, "Datasets", "host", "f.txt")
+        end
+        # explicit DATAMANIFEST_DATA_DIR disables the legacy probe.
+        withenv("XDG_CACHE_HOME" => legacy, "XDG_DATA_HOME" => newdata,
+                "DATAMANIFEST_DATA_DIR" => newdata) do
+            db_e = Database(datasets_folder="", persist=false)
+            register_dataset(db_e, "https://example.com/host/f.txt"; name="d2",
+                key="host/f.txt", skip_checksum=true, persist=false)
+            p = DataManifest.Databases.resolve_existing_path(db_e, db_e.datasets["d2"])
+            @test p != joinpath(legacy, "Datasets", "host", "f.txt")
+        end
+    end
+
     @testset "description roundtrip" begin
         db_d = Database(datasets_folder=datasets_dir; persist=false)
         descr = "Coretop-paired d18oc reference (Malevich 2019), reformatted to the Tierney LH schema."
