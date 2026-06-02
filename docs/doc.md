@@ -209,9 +209,51 @@ For sources that cannot be fetched automatically (Cloudflare, click-through agre
 
 Compared with `skip_download = true` used *alone*: the older mechanism overloads `uri` as a path (the URI value is returned verbatim as the local path). `local_path` keeps the two roles distinct — `uri` stays as the source identifier, `local_path` is the on-disk location.
 
-## Shell / Julia download commands
+## Schema v1 and the `_LANG` namespace
+
+Schema v1 (`_META.schema = 1`) expresses custom fetch and load logic as `module:function` references stored in `_LANG.julia` subtables rather than as inline Julia code.
+
+```toml
+[_META]
+schema = 1
+
+[_LANG.julia.loaders]
+nc = "MyProject:load_netcdf"        # format-level default loader
+
+[my_dataset._LANG.julia]
+fetcher = "MyFetchers:fetch_data"   # custom fetcher ref
+loader  = "MyLoaders:load_data"     # custom loader ref
+```
+
+A ref `"Module:function"` resolves at runtime via `using Module` + `getfield(Module, :function)` — no `eval` or `include_string`.
+
+### Resolution ladders
+
+**Load** (own `_LANG.julia.loader` → manifest `[_LANG.julia.loaders][format]` → built-in default → error): loaders never spawn a subprocess.
+
+**Fetch** (own `_LANG.julia.fetcher` → `_LANG.shell.fetcher` → `uri`/`uris` → error): delegation to peer CLIs is not yet implemented.
+
+### v0 / v1 split for inline code
+
+Legacy (v0) manifests without `_META.schema` continue to work: inline `julia=`/`loader=` and `[_LOADERS]` are read and executed as before. Under v1 (`schema = 1`) these inline execution paths are skipped — bindings resolve only via `module:function` refs.
+
+### Multi-language round-trip
+
+Foreign `_LANG.<other>` subtrees (e.g. `[bar._LANG.python]`) and unknown `_*` top-level tables are preserved verbatim on every read→write cycle. Only `_LANG.julia` is regenerated from the model.
+
+### Migrating a v0 manifest
+
+```julia
+DataManifest.migrate("Datasets.toml")
+```
+
+Moves ref-shaped `julia=`/`loader=` per-dataset fields and `[_LOADERS]` ref entries into `[<ds>._LANG.julia]` / `[_LANG.julia.loaders]`, then sets `_META.schema = 1`. Genuinely inline code is preserved verbatim with a log note. The call is idempotent.
+
+## Shell / Julia download commands (v0 / legacy)
 
 When `shell` is set, that command runs instead of the built-in download, with working directory set to the project root (when available) for reproducibility. Use template placeholders `$download_path`, `$project_root`, `$uri`, `$key`, `$version`, `$doi`, `$format`, `$branch`. If `$project_root` is used but cannot be determined (no activated project, in-memory database), an error is thrown. Complex logic (pipes, redirects) should go in a script. Alternatively, set `julia` to run Julia code in an isolated module (takes precedence over `shell`); use `julia_modules` to load modules before the code. The code sees the same variable names as the shell template: `download_path`, `project_root`, `uri`, `key`, `version`, `doi`, `format`, `branch`, plus `entry` (the `DatasetEntry`).
+
+Under schema v1 (`_META.schema = 1`) the `shell=` and `julia=` inline fields are ignored for fetch/load — use `_LANG.julia` refs instead (see above).
 
 ```toml
 [my_dataset]

@@ -64,6 +64,55 @@ add(db, ...) # will simply download things and update db without writing any tom
 
 See the [full documentation](/docs/doc.md) and the [API](/docs/api.md).
 
+## Schema v1 and the `_LANG` namespace
+
+DataManifest now supports **schema v1** (`_META.schema = 1`), which introduces a language-namespaced binding model. Under v1, custom fetch and load logic is expressed as `module:function` references stored in a `_LANG.julia` subtable rather than as inline Julia code.
+
+### Declaring bindings in a v1 manifest
+
+```toml
+[_META]
+schema = 1
+
+[_LANG.julia.loaders]
+nc = "MyProject:load_netcdf"          # format-level default loader
+
+[my_dataset._LANG.julia]
+fetcher = "MyFetchers:fetch_my_data"  # called instead of built-in URI download
+loader  = "MyLoaders:load_my_data"    # called instead of format default
+```
+
+Bindings are resolved at runtime: `"Module:function"` causes `using Module` followed by `getfield(Module, :function)` — no `eval`, no `include_string`.
+
+### Resolution ladders
+
+**Load** (in order): own `_LANG.julia.loader` → manifest `[_LANG.julia.loaders][format]` → built-in format default → error. Never spawns a subprocess.
+
+**Fetch** (in order): own `_LANG.julia.fetcher` → `_LANG.shell.fetcher` (shell template) → `uri`/`uris` → error. Delegation to peer CLIs is not yet implemented.
+
+### v0/v1 split for inline code
+
+Legacy manifests (no `_META.schema`) continue to work: inline `julia=`/`loader=` fields and `[_LOADERS]` are still read and executed. Under v1 (`schema = 1`) only `module:function` refs are used for bindings; the inline execution path is skipped.
+
+### Multi-language round-trip
+
+Foreign `_LANG.<other>` subtrees (e.g. `[bar._LANG.python]`) and unknown `_*` top-level tables are carried through verbatim on every read→write cycle. Only the Julia subtree is regenerated from the model; all other language namespaces are never modified.
+
+### Migrating a v0 manifest
+
+```julia
+DataManifest.migrate("Datasets.toml")
+```
+
+Moves ref-shaped `julia=`/`loader=` fields and `[_LOADERS]` ref entries into `[<ds>._LANG.julia]` / `[_LANG.julia.loaders]` and sets `_META.schema = 1`. Inline code that cannot become a ref is preserved verbatim with a log note. The call is idempotent: already-v1 files are left unchanged.
+
+## Conformance
+
+This release targets the **datamanifest.toml spec tag `spec-v1.0`** (source of truth: <https://github.com/perrette/datamanifest.toml>).
+
+Implemented capabilities: **`lang-read`**, **`lang-write`**, **`shell-fetch`**.
+
+The test suite downloads the spec's tagged tarball, verifies every fixture file against a pinned per-file sha256 map (`test/conformance_pin.toml`), and runs only the fixtures whose capability set is a subset of the above. Fixtures requiring unimplemented capabilities (e.g. delegation) are skipped with a logged reason.
 
 ## Roadmap
 
