@@ -3,7 +3,8 @@ module PipeLines
 
 import Downloads
 using ..Config: info, COMPRESSED_FORMATS
-using ..Databases: DatasetEntry, Database, get_datasets, get_dataset_path, search_dataset, verify_checksum,
+using ..Databases: DatasetEntry, Database, get_datasets, get_dataset_path, resolve_existing_path,
+    search_dataset, verify_checksum,
     extract_file, get_project_root, get_default_database, parse_uri_metadata
 using ..Storage: tmp_path, lock_path, marker_path, is_complete
 using ..DefaultLoaders: default_loader as builtin_default_loader
@@ -560,10 +561,16 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
     local_path = get_dataset_path(db, dataset; extract=extract)
     download_path = get_dataset_path(db, dataset; extract=false)
 
-    if !overwrite && (isfile(local_path) || isdir(local_path))
-        info("Dataset already exists at: $local_path")
-        verify_checksum(db, dataset; extract=extract, skip_if_complete=true)
-        return local_path
+    # Read-resolution: reuse an existing copy in any store — including the legacy
+    # read-only location (~/.cache/Datasets) — rather than re-downloading to the
+    # new write path. New fetches still land in download_path/local_path.
+    if !overwrite
+        existing = resolve_existing_path(db, dataset; extract=extract)
+        if isfile(existing) || isdir(existing)
+            info("Dataset already exists at: $existing")
+            verify_checksum(db, dataset; extract=extract, skip_if_complete=true)
+            return existing
+        end
     end
 
     did_fetch = false

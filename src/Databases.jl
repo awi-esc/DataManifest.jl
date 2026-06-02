@@ -5,7 +5,7 @@ using TOML
 using URIs
 using ..Config: info, warn, sha256_path, get_extract_path, get_default_toml, DEFAULT_DATASETS_FOLDER_PATH,
     COMPRESSED_FORMATS, HIDE_STRUCT_FIELDS, project_root_from_paths
-using ..Storage: store_root, is_complete
+using ..Storage: store_root, legacy_data_root, is_complete
 
 # ----- Types (DatasetEntry, Database) -----
 Base.@kwdef mutable struct DatasetEntry
@@ -526,6 +526,16 @@ function resolve_existing_path(db::Database, entry::DatasetEntry; extract::Union
             return candidate
         end
     end
+    # Legacy read-only back-compat probe (pre-v1.1 default ~/.cache/Datasets),
+    # checked last so any new-store copy wins. Skipped when the user has made an
+    # explicit data-dir choice (DATAMANIFEST_DATA_DIR). New writes never go here.
+    if get(ENV, "DATAMANIFEST_DATA_DIR", "") == ""
+        legacy_candidate = joinpath(legacy_data_root(), key)
+        if ispath(legacy_candidate)
+            _warn_legacy_dir_once()
+            return legacy_candidate
+        end
+    end
     return get_dataset_path(db, entry; extract=extract)
 end
 
@@ -551,6 +561,21 @@ function _warn_legacy_once()
     _LEGACY_DEPRECATION_WARNED[] = true
     warn("Legacy manifest form detected (flat julia=/loader= fields or [_LOADERS] table). " *
          "Call DataManifest.migrate(path) to update to v1 _LANG format.")
+end
+
+# One-time flag: fires the first time a dataset resolves from the legacy
+# read-only datasets folder ($XDG_CACHE_HOME/Datasets, the pre-v1.1 default).
+const _LEGACY_DIR_WARNED = Ref{Bool}(false)
+
+function _warn_legacy_dir_once()
+    _LEGACY_DIR_WARNED[] && return
+    _LEGACY_DIR_WARNED[] = true
+    legacy = legacy_data_root()
+    current = store_root("data")
+    warn("Reading datasets from the legacy location $legacy (pre-v1.1 default; read-only). " *
+         "New downloads go to the current data store at $current. To keep using the legacy " *
+         "folder, set DATAMANIFEST_DATA_DIR=$legacy; otherwise migrate it manually " *
+         "(e.g. with rsync) at your convenience.")
 end
 
 # True when a string looks like a `Module[.Sub]:function` ref: no whitespace,

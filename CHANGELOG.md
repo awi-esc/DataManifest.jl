@@ -11,6 +11,18 @@
   is already semantically identical (same keys, same canonical order), differing
   only in TOML-library formatting. Default behavior is unchanged.
 
+### Fixes
+
+- **Legacy datasets are found again (storage migration).** spec-v1.1 moved the
+  default `data` store to `platformdirs.user_data_dir` (under a `datamanifest/`
+  namespace), which orphaned datasets downloaded by older versions in the flat
+  `$XDG_CACHE_HOME/Datasets`. Read resolution now probes that legacy folder
+  **last and read-only**, so existing downloads resolve again; new fetches still
+  go to the new store. A one-time warning points at the manual-migration escape
+  hatch (`DATAMANIFEST_DATA_DIR`, or `rsync`). Also wires the cross-store read
+  resolution (`repo`→`data`→`cache`) into the download/load path, which was
+  defined but unused.
+
 ## [0.16.0] - 2026-06-02 — spec-v1.1: storage model, parameterized bindings, verify-once
 
 ### New features

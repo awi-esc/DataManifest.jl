@@ -21,7 +21,7 @@ environment.
 """
 module Storage
 
-export store_root
+export store_root, legacy_data_root
 
 # --- glob matching (`*`, `?`) for `_HOST` patterns ---------------------------
 
@@ -120,6 +120,21 @@ function _default_root(store::AbstractString, project_root::AbstractString, env)
     else  # "data", "mount" (no v1.1 default specified), and any unknown store
         return joinpath(_user_data_dir(env), "Datasets")
     end
+end
+
+"""
+    legacy_data_root(env=ENV) -> String
+
+The pre-v1.1 default datasets folder — `\$XDG_CACHE_HOME/Datasets` (default
+`~/.cache/Datasets`). A **read-only** back-compat probe location: spec-v1.1 moved
+the default `data` store under a `datamanifest/` namespace (see `_user_data_dir`),
+orphaning datasets downloaded by older versions here. Read resolution probes it
+last so old downloads still resolve; new writes never land here. Must match the
+Python tool's `storage.legacy_data_root()`.
+"""
+function legacy_data_root(env=ENV)::String
+    base = get(env, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
+    return joinpath(base, "Datasets")
 end
 
 # Finalize a configured/explicit value: expand vars/`~`, and resolve a relative
