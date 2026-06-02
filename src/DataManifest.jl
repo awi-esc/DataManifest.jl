@@ -13,6 +13,7 @@ if VERSION < v"1.11"
 end
 
 include("Config.jl")
+include("Storage.jl")
 include("Databases.jl")
 include("DefaultLoaders.jl")
 include("PipeLines.jl")
@@ -39,7 +40,7 @@ using .PipeLines: download_dataset, download_datasets, load_dataset, get_project
 
 const add_dataset = add
 
-export Databases, PipeLines, Loaders
+export Databases, PipeLines, Loaders, Storage
 export Database, DatasetEntry
 export set_datasets_folder, set_datasets, get_datasets_folder, get_datasets
 export repr_short, string_short
