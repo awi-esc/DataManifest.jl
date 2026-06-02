@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.16.0] - 2026-06-02 — spec-v1.1: storage, parameterized bindings, verify-once, canonical output, legacy fix
 
 ### New features
 
@@ -23,9 +23,7 @@
   resolution (`repo`→`data`→`cache`) into the download/load path, which was
   defined but unused.
 
-## [0.16.0] - 2026-06-02 — spec-v1.1: storage model, parameterized bindings, verify-once
-
-### New features
+### Storage & bindings (spec-v1.1)
 
 - **Storage model (`store` field + `[_STORAGE]`)**: each dataset may declare a
   `store` of `data` (default), `cache`, `repo`, or `mount` (parsed verbatim; not
