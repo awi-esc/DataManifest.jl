@@ -166,6 +166,51 @@ function _resolve_loader_reference(db::Database, code::String)
     return fn isa Function ? fn : nothing
 end
 
+# ----- v1 `module:function` ref resolution -----
+# v1 bindings (`_LANG.julia` fetcher/loader and `[_LANG.julia.loaders]`) are
+# expressed as `"Module[.Sub]:function"` refs, never inline code. Resolution
+# imports the module at runtime into the loader context (so project-local
+# packages on the load path are found) and walks via getfield to the function —
+# no `include_string` / `eval` of user code, only an import plus field access.
+function _resolve_ref(db::Database, ref::String)
+    s = strip(ref)
+    parts2 = split(s, ':'; limit=2)
+    length(parts2) == 2 || error("Invalid binding reference \"$ref\": expected \"Module:function\".")
+    modpath = strip(parts2[1])
+    fname = strip(parts2[2])
+    (isempty(modpath) || isempty(fname)) &&
+        error("Invalid binding reference \"$ref\": expected \"Module:function\".")
+    mod = _get_loader_module(db)
+    parts = split(modpath, '.')
+    Core.eval(mod, :(using $(Symbol(String(parts[1])))))
+    current = getfield(mod, Symbol(String(parts[1])))
+    for i in 2:length(parts)
+        current = getfield(current, Symbol(String(parts[i])))
+    end
+    fn = getfield(current, Symbol(fname))
+    fn isa Function || error("Binding reference \"$ref\" did not resolve to a function, got $(typeof(fn)).")
+    return fn
+end
+
+# Invoke a v1 Julia `fetcher` ref. The resolved function is called with the same
+# context the legacy inline path exposed, as keyword args (matching the
+# cross-language convention), inside the project root. `invokelatest` avoids
+# world-age errors from the runtime `using`.
+function _run_julia_ref(db::Database, dataset::DatasetEntry, download_path::String, project_root::String;
+                       required_paths_ordered::Vector{String}=String[])
+    fn = _resolve_ref(db, dataset.lang_julia_fetcher)
+    call() = Base.invokelatest(fn;
+        download_path=download_path, project_root=project_root, entry=dataset,
+        uri=dataset.uri, key=dataset.key, version=dataset.version, doi=dataset.doi,
+        format=dataset.format, branch=dataset.branch,
+        requires_paths=required_paths_ordered)
+    if project_root != ""
+        cd(call, project_root)
+    else
+        call()
+    end
+end
+
 function _get_loader_function(db::Database, name_or_code::String; cache_key::Union{String,Nothing}=nothing, _alias_chain::Set{String}=Set{String}())
     key = cache_key === nothing ? name_or_code : cache_key
     if haskey(db.loader_cache, key)
@@ -224,7 +269,12 @@ end
 function _download_dataset(dataset::DatasetEntry, download_path::String; project_root::String="", overwrite::Bool=false,
                           required_paths_by_ref::Dict{String,String}=Dict{String,String}(),
                           required_paths_ordered::Vector{String}=String[],
-                          loaders_julia_modules::Vector{String}=String[])
+                          loaders_julia_modules::Vector{String}=String[],
+                          db::Union{Database,Nothing}=nothing)
+
+    # Schema v1 resolves bindings only via `module:function` refs; the inline
+    # `julia=`/`Base.include_string` path below is retained for v0/legacy files.
+    v1 = db !== nothing && db.schema == 1
 
     mkpath(dirname(download_path))
 
@@ -248,7 +298,13 @@ function _download_dataset(dataset::DatasetEntry, download_path::String; project
         return
     end
 
-    if dataset.julia !== ""
+    if v1 && dataset.lang_julia_fetcher != ""
+        _run_julia_ref(db, dataset, download_path, project_root;
+                      required_paths_ordered=required_paths_ordered)
+        return
+    end
+
+    if !v1 && dataset.julia !== ""
         _run_julia(dataset, download_path, project_root;
                   required_paths_by_ref=required_paths_by_ref,
                   required_paths_ordered=required_paths_ordered,
@@ -378,7 +434,7 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
         end
         _download_dataset(dataset, download_path; project_root=project_root, overwrite=overwrite,
                          required_paths_by_ref=req_paths_by_ref, required_paths_ordered=req_paths_ordered,
-                         loaders_julia_modules=db.loaders_julia_modules)
+                         loaders_julia_modules=db.loaders_julia_modules, db=db)
     elseif !overwrite
         info("Dataset already exists at: $download_path")
     end
@@ -480,7 +536,12 @@ function load_dataset(db::Database, entry::DatasetEntry; loader=nothing, kwargs.
             end
         end
         return _call_loader(loader, path, entry)
-    elseif entry.loader != ""
+    elseif db.schema == 1 && entry.lang_julia_loader != ""
+        # v1: own `_LANG.julia.loader` ref (resolved via import, never include_string).
+        fn = _resolve_ref(db, entry.lang_julia_loader)
+        return _call_loader(fn, path, entry)
+    elseif db.schema != 1 && entry.loader != ""
+        # v0/legacy inline (or named/ref) loader.
         fn = _get_loader_function(db, entry.loader)
         return _call_loader(fn, path, entry)
     else
