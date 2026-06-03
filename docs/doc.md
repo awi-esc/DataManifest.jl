@@ -157,6 +157,20 @@ nulls raise. Each artifact is self-describing: `config.toml` (re-hashable key ta
 `<$cache>/cached/<project>/<cachetype>/[<version>/]<hash>/`, default `store = "$cache"`.
 `jls` is built in; register other formats with `DataManifest.Cache.register_format!`.
 
+On a produce, the artifact is registered in the project's **`cached.toml`** (the
+produced-dataset registry, sibling to `datasets.toml`) by its portable `cachetype` + `hash`
+key, with `ref = "<module>:<function>"`. Use `CachedIndex` / `read_index` / `register!` /
+`write_index` to read or build one. The index defaults to `<project_root>/cached.toml`; pass
+a `cached_toml` kwarg (declared on the wrapped function) to override it, or `name=` to set the
+registry name.
+
+`inspect_store(db)` (capability `inspect`) enumerates produced artifacts and present fetched
+datasets as field-bearing `CacheObject`s (`kind`, `key`/`hash`, `scope`, `format`, `size`,
+`created`, `last_access`, `referenced`); `referenced` is resolved from `cached.toml`. Act on a
+filtered selection with `delete_object` / `move_object` (produced artifacts only; no automatic
+GC). `last_access` is a best-effort RFC-3339 stamp (the artifact directory's access time),
+bumped on every cache hit and cross-tool with the Python CLI.
+
 ## Maintaining a local `Datasets.toml`
 
 The `Database` instance `db` is tied to a `Datasets.toml` definition file by default, provided the `datasets_toml=` is passed as initialization or you work in an active project, unless `persist=false`.

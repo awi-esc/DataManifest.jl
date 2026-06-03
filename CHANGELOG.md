@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.19.0] - 2026-06-03 — spec-v3: `cached.toml` index + store maintenance (`inspect`)
+
+Completes the produce-or-load companion layer with the second half of spec-v3: the
+`cached.toml` produced-dataset registry and the user-driven store-maintenance surface
+(capability **`inspect`**), plus best-effort last-access tracking that is cross-tool with
+the Python `datamanifest` CLI. `_META.schema` stays **1** (additive). Only `sync`
+(cross-machine `push`/`pull`) remains deferred.
+
+### New — `cached.toml` index (`DataManifest.CachedIndex`)
+
+- **`cached.toml`** is the produced-dataset registry — the `Manifest.toml` analogue, sibling
+  to `datasets.toml` — listing each produced dataset by its **portable** key (`cachetype` +
+  `hash`), never an absolute path. It carries its own `[_META].schema = 1` (+ optional
+  declared `project`); one table per dataset records `cachetype`, `hash`, `ref`, `format`,
+  `store`, and (when non-empty) `project` and recipe `version`.
+- **`CachedIndex`** + `read_index` / `read_index_or_empty` / `register!` / `index_keys` /
+  `write_index` read, build, and write it with the same canonical key ordering as the
+  manifest writer.
+- **Register-on-produce.** `@cached` (and `save_cache` when given a `name`) now register the
+  freshly-produced artifact into the project's `cached.toml` on a miss — `ref =
+  "<module>:<function>"`, the project-id `project` scope, the recipe `version` when set — and
+  the `metadata.toml` `[origin].cached_toml` back-pointer names that index. A cache hit
+  registers nothing. The index defaults to `<project_root>/cached.toml`; a `cached_toml`
+  kwarg overrides it. A new `name` macro argument overrides the registry name.
+
+### New — store maintenance (capability `inspect`)
+
+- **`inspect_store(db)`** is the composition root: it enumerates produced artifacts (the
+  cache layer) and present fetched datasets (the fetch layer) as one list of field-bearing
+  `CacheObject`s — `kind`, `key`/`hash`, `cachetype`, `version`, `scope`, `format`, `size`,
+  `location`, `created`, `last_access`, `referenced` — resolving `referenced` from the
+  project's `cached.toml`. Filter the result yourself and act with `delete_object` /
+  `move_object` (both refuse anything that is not a produced `cached` artifact; there is **no
+  automatic garbage collector** — deletion is always an explicit selection).
+- **`enumerate_artifacts(cache_root)`** / `find_produced_artifacts` walk a `$cache` root and
+  surface every produced artifact (a directory holding a `config.toml`), so a fetched
+  `store="$cache"` dataset is never enumerated or deleted.
+
+### New — last-access + usage log (best-effort, advisory; cross-tool with the Python CLI)
+
+- **Last-access.** `last_access(path)` reports a produced artifact's last-read time (the
+  filesystem access time of its directory) as an RFC-3339 UTC stamp; `touch_last_access!`
+  bumps it (preserving mtime) and is now called on every cache **hit**, so "not accessed in N
+  days" filters are meaningful. Advisory only — a `noatime` mount or manual `utime` can
+  defeat it; nothing depends on it for correctness. Matches the Python `cache/_usage.py`
+  contract.
+- **Usage log.** A single `usage.toml` under `user_state_dir("datamanifest")` (overridable
+  via `DATAMANIFEST_USAGE_LOG`) records every index path the cache layer reads/writes with a
+  `last_seen` stamp (`usage_log_path` / `record_path!` / `read_usage` / `known_paths`).
+
+### Conformance
+
+- The conformance suite now declares the **`inspect`** capability and validates the
+  `cached_index` fixture (reading a `cached.toml` and checking its entries + rooted key set).
+
 ## [0.18.0] - 2026-06-03 — spec-v3: storage roots/prefixes/scope + `@cached` produce-or-load
 
 Tracks datamanifest.toml **spec-v3**: a breaking behavioral revision of the storage model

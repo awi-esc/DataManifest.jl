@@ -191,6 +191,28 @@ string). Each artifact is self-describing — `config.toml` (the re-hashable key
 is the built-in format; register others (`nc`, `jld2`, …) with
 `DataManifest.Cache.register_format!`.
 
+### The `cached.toml` index and store maintenance (`inspect`)
+
+On a produce, the artifact is registered in the project's **`cached.toml`** — the
+produced-dataset registry (the `Manifest.toml` analogue, sibling to `datasets.toml`) that
+lists each produced dataset by its portable `cachetype` + `hash` key, never an absolute path.
+Read or build one with `CachedIndex` / `read_index` / `register!` / `write_index`.
+
+`inspect_store(db)` enumerates produced artifacts **and** present fetched datasets as one
+list of `CacheObject`s (`kind`, `key`/`hash`, `scope`, `format`, `size`, `created`,
+`last_access`, `referenced`), resolving `referenced` from `cached.toml`. Filter the list and
+act with `delete_object` / `move_object` — there is **no automatic garbage collector**;
+deletion is always an explicit selection, and only produced (`cached`) artifacts are eligible.
+A produced artifact's best-effort **last-access** time (`last_access`) is bumped on every
+cache hit, so age-based filters work (advisory; matches the Python CLI).
+
+```julia
+db = read_dataset("datasets.toml")
+for o in inspect_store(db)
+    o.kind == "cached" && o.referenced == false && delete_object(o)   # prune orphaned artifacts
+end
+```
+
 ## Parameterized bindings
 
 Fetcher and loader refs can carry `args`/`kwargs` for more flexible dispatch:
@@ -205,9 +227,9 @@ At call time, `$var` placeholders in string values are substituted with the data
 
 ## Conformance
 
-This release targets the **datamanifest.toml spec tag `spec-v1.1`** (source of truth: <https://github.com/perrette/datamanifest.toml>).
+This release targets the **datamanifest.toml spec tag `spec-v3`** (source of truth: <https://github.com/perrette/datamanifest.toml>).
 
-Implemented capabilities: **`lang-read`**, **`lang-write`**, **`shell-fetch`**, **`storage`**, **`binding-args`**, **`byte-identity`**.
+Implemented capabilities: **`lang-read`**, **`lang-write`**, **`shell-fetch`**, **`storage`**, **`binding-args`**, **`byte-identity`**, **`cache-produce`**, **`inspect`**. Only **`sync`** (cross-machine `push`/`pull`) is not yet implemented.
 
 The test suite downloads the spec's tagged tarball, verifies every fixture file against a pinned per-file sha256 map (`test/conformance_pin.toml`), and runs only the fixtures whose capability set is a subset of the above. Fixtures requiring unimplemented capabilities (e.g. delegation) are skipped with a logged reason.
 

@@ -26,11 +26,20 @@ using TOML
 using SHA
 using Dates
 using Serialization
-using ..Storage: store_dir, is_complete, marker_path
+using ..Storage: store_dir, selector_root, content_prefix, content_scope, project_id,
+    is_complete, marker_path, lock_path, tmp_path, user_state_dir
 using ..PipeLines: materialize
 
 export @cached, param_hash, cache_key, cached_dir,
-    save_cache, load_cache, has_cache, read_config, config_is_valid, register_format!
+    save_cache, load_cache, has_cache, read_config, config_is_valid, register_format!,
+    # cached.toml index (spec-v3 produced-dataset registry)
+    CachedIndex, read_index, read_index_or_empty, register!, index_keys, write_index,
+    CACHED_INDEX_NAME,
+    # usage log + last-access (best-effort, advisory; cross-tool with the Python CLI)
+    usage_log_path, record_path!, read_usage, known_paths,
+    iso_from_mtime, last_access, touch_last_access!,
+    # inspect (store maintenance: enumerate / delete / move)
+    CacheObject, find_produced_artifacts, enumerate_artifacts, delete_object, move_object
 
 # ── Canonical JSON (JCS, RFC 8785) + parameter hash ──────────────────────────
 
@@ -311,6 +320,481 @@ function write_metadata(dir::AbstractString; cachetype::AbstractString="",
     return path
 end
 
+# ── The `cached.toml` index (spec-v3 produced-dataset registry) ───────────────
+#
+# `cached.toml` is to produced datasets what `datasets.toml` is to fetched ones: a
+# registry, sibling to the manifest by default, that lists each produced dataset by its
+# PORTABLE key (`cachetype` + parameter `hash`) — never an absolute path — so it stays
+# relocatable. It carries its own `[_META].schema = 1` (+ an optional declared `project`)
+# and is the liveness root set for the `inspect` maintenance surface. One table per
+# produced dataset records `cachetype`, `hash`, `ref`, `format`, `store`, and (spec-v3,
+# when non-empty) `project` and recipe `version`. Mirrors the Python `cache/_index.py`.
+
+const CACHED_INDEX_NAME = "cached.toml"
+const CACHED_INDEX_SCHEMA = 1
+
+"""
+    CachedIndex(; entries=Dict(), path="", project="")
+
+In-memory view of a `cached.toml`: `entries` is a `name → Dict` map of produced datasets,
+`path` the file it was read from / will be written to, `project` the optional declared
+project id (`[_META].project`).
+"""
+mutable struct CachedIndex
+    entries::Dict{String,Any}
+    path::String
+    project::String
+end
+CachedIndex(; entries=Dict{String,Any}(), path::AbstractString="", project::AbstractString="") =
+    CachedIndex(Dict{String,Any}(entries), String(path), String(project))
+
+# Normalize `path` to a cached.toml file path (accepts a directory holding the default).
+function _index_resolve_path(path::AbstractString)::String
+    p = String(path)
+    endswith(p, CACHED_INDEX_NAME) && return p
+    isdir(p) && return joinpath(p, CACHED_INDEX_NAME)
+    return p
+end
+
+"""
+    read_index(path) -> CachedIndex
+
+Read a `cached.toml` from `path` (a file, or a directory holding the default-named index).
+The entries are every root table except the `[_META]` block.
+"""
+function read_index(path::AbstractString)::CachedIndex
+    target = _index_resolve_path(path)
+    t = TOML.parsefile(target)
+    meta = get(t, "_META", Dict{String,Any}())
+    entries = Dict{String,Any}(k => v for (k, v) in t if k != "_META")
+    return CachedIndex(entries=entries, path=target, project=String(get(meta, "project", "")))
+end
+
+"""
+    read_index_or_empty(path) -> CachedIndex
+
+Read the index at `path`, or return an empty one bound to that path when it does not exist.
+"""
+function read_index_or_empty(path::AbstractString)::CachedIndex
+    target = _index_resolve_path(path)
+    isfile(target) ? read_index(target) : CachedIndex(path=target)
+end
+
+"""
+    register!(index, name; cachetype, hash, ref="", format="", store="\$cache",
+              project="", version="")
+
+Add or update the produced dataset `name` (keyed by portable name). Identity is the
+portable `(cachetype, hash)` pair, never an absolute path. `project` (the artifact's
+project-id scope) and `version` (the optional recipe version) are recorded only when
+non-empty, so a plain entry keeps the original five fields. Re-registering overwrites.
+"""
+function register!(index::CachedIndex, name::AbstractString;
+                   cachetype::AbstractString, hash::AbstractString,
+                   ref::AbstractString="", format::AbstractString="",
+                   store::AbstractString="\$cache",
+                   project::AbstractString="", version::AbstractString="")
+    entry = Dict{String,Any}(
+        "cachetype" => String(cachetype),
+        "hash" => String(hash),
+        "ref" => String(ref),
+        "format" => String(format),
+        "store" => String(store),
+    )
+    !isempty(project) && (entry["project"] = String(project))
+    !isempty(version) && (entry["version"] = String(version))
+    index.entries[String(name)] = entry
+    return index
+end
+
+"""
+    index_keys(index) -> Set{String}
+
+The set of portable cache keys `"<cachetype>/<hash>"` this index roots — the produced
+live-key contribution to `inspect`'s `referenced` determination.
+"""
+function index_keys(index::CachedIndex)::Set{String}
+    out = Set{String}()
+    for (_, entry) in index.entries
+        entry isa AbstractDict || continue
+        ct = String(get(entry, "cachetype", ""))
+        h = String(get(entry, "hash", ""))
+        (!isempty(ct) && !isempty(h)) && push!(out, "$(ct)/$(h)")
+    end
+    return out
+end
+
+function _index_to_dict(index::CachedIndex)::Dict{String,Any}
+    meta = Dict{String,Any}("schema" => CACHED_INDEX_SCHEMA)
+    !isempty(index.project) && (meta["project"] = index.project)
+    out = Dict{String,Any}("_META" => meta)
+    for (name, entry) in index.entries
+        out[name] = entry isa AbstractDict ? Dict{String,Any}(entry) : entry
+    end
+    return out
+end
+
+"""
+    write_index(index, path="") -> String
+
+Write the index to `path` (or its loaded `path`), canonically (lexicographically) ordered
+like the manifest writer. Returns the path written.
+"""
+function write_index(index::CachedIndex, path::AbstractString="")::String
+    target = isempty(path) ? index.path : path
+    isempty(target) && error("write_index: no path given and CachedIndex has no loaded path")
+    target = _index_resolve_path(target)
+    dir = dirname(target)
+    !isempty(dir) && mkpath(dir)
+    open(target, "w") do io
+        TOML.print(io, _index_to_dict(index); sorted=true)
+    end
+    index.path = target
+    return target
+end
+
+# ── Usage log + last-access (best-effort, advisory; cross-tool with Python) ───
+#
+# Two facilities, both stdlib-only and never required for correctness:
+#
+#   1. usage log — a single `usage.toml` (under `user_state_dir`) recording every
+#      datasets.toml / cached.toml index path the cache layer has read/written, each with a
+#      `last_seen` RFC-3339 UTC stamp. A cheap index of where artifacts were registered.
+#   2. last-access — the filesystem access time of a produced artifact directory: read by
+#      `last_access`, bumped by `touch_last_access!` (touch-on-read). Advisory; a `noatime`
+#      mount or manual `utime` can defeat it. Matches the Python `cache/_usage.py` contract.
+
+const USAGE_LOG_NAME = "usage.toml"
+const _USAGE_ENV_OVERRIDE = "DATAMANIFEST_USAGE_LOG"
+
+"""
+    usage_log_path(env=ENV) -> String
+
+The absolute path of the depot usage log. `\$DATAMANIFEST_USAGE_LOG` overrides; otherwise
+`user_state_dir("datamanifest")/usage.toml`.
+"""
+function usage_log_path(env=ENV)::String
+    override = get(env, _USAGE_ENV_OVERRIDE, "")
+    !isempty(override) && return String(override)
+    return joinpath(user_state_dir(env), USAGE_LOG_NAME)
+end
+
+_now_iso() = Dates.format(Dates.now(Dates.UTC), dateformat"yyyy-mm-dd\THH:MM:SS\Z")
+
+# RFC-3339 UTC stamp of a unix-epoch time.
+_iso_from_epoch(ts::Real) = Dates.format(Dates.unix2datetime(ts), dateformat"yyyy-mm-dd\THH:MM:SS\Z")
+
+"""
+    iso_from_mtime(path) -> String
+
+RFC-3339 UTC stamp of `path`'s modification time (empty when `path` is absent).
+"""
+function iso_from_mtime(path::AbstractString)::String
+    ispath(path) || return ""
+    try
+        return _iso_from_epoch(mtime(path))
+    catch
+        return ""
+    end
+end
+
+# The filesystem access time (unix epoch) of `path`, or `nothing`. Base `stat` does not
+# expose atime, so shell out to `stat` (GNU `-c %X`, BSD `-f %a`); unix-only, best-effort.
+function _atime_epoch(path::AbstractString)
+    try
+        if Sys.isapple()
+            return parse(Float64, strip(read(`stat -f %a $path`, String)))
+        elseif Sys.isunix()
+            return parse(Float64, strip(read(`stat -c %X $path`, String)))
+        end
+    catch
+    end
+    return nothing
+end
+
+"""
+    last_access(path) -> String
+
+The last time a produced artifact at `path` was read, as an RFC-3339 UTC stamp (empty when
+`path` is absent or its access time is unavailable). Implemented as the filesystem access
+time of the artifact directory, bumped on read by [`touch_last_access!`]. Advisory only.
+"""
+function last_access(path::AbstractString)::String
+    ispath(path) || return ""
+    ts = _atime_epoch(path)
+    ts === nothing ? "" : _iso_from_epoch(ts)
+end
+
+"""
+    touch_last_access!(path)
+
+Bump `path`'s last-access stamp to now (best-effort, never raises). `touch -a` sets the
+access time while preserving the modification time, so a touch-on-read does not masquerade
+as a fresh write. Silently does nothing when `path` is gone or the filesystem refuses it.
+"""
+function touch_last_access!(path::AbstractString)
+    try
+        Sys.isunix() && ispath(path) &&
+            run(pipeline(`touch -a $path`; stdout=devnull, stderr=devnull))
+    catch
+    end
+    return nothing
+end
+
+"""
+    read_usage(env=ENV) -> Dict{String,Any}
+
+The parsed usage log as `abspath => Dict("last_seen" => <iso>)` (empty when absent/unreadable).
+"""
+function read_usage(env=ENV)::Dict{String,Any}
+    path = usage_log_path(env)
+    isfile(path) || return Dict{String,Any}()
+    try
+        data = TOML.parsefile(path)
+        paths = get(data, "paths", Dict{String,Any}())
+        return paths isa AbstractDict ? Dict{String,Any}(paths) : Dict{String,Any}()
+    catch
+        return Dict{String,Any}()
+    end
+end
+
+"""
+    record_path!(index_path; env=ENV, now="") -> String
+
+Record `index_path` (a datasets.toml / cached.toml) as seen now, stored absolute with a
+`last_seen` RFC-3339 UTC stamp. Best-effort (never raises). Returns the absolute path.
+"""
+function record_path!(index_path::AbstractString; env=ENV, now::AbstractString="")::String
+    ap = abspath(index_path)
+    try
+        paths = read_usage(env)
+        paths[ap] = Dict{String,Any}("last_seen" => isempty(now) ? _now_iso() : String(now))
+        log = usage_log_path(env)
+        d = dirname(log)
+        !isempty(d) && mkpath(d)
+        open(log, "w") do io
+            TOML.print(io, Dict{String,Any}("paths" => paths); sorted=true)
+        end
+    catch
+    end
+    return ap
+end
+
+"""
+    known_paths(env=ENV) -> Vector{String}
+
+The recorded index/manifest paths (sorted).
+"""
+known_paths(env=ENV)::Vector{String} = sort!(collect(keys(read_usage(env))))
+
+# ── Inspect: enumerate / delete / move produced artifacts (spec-v3 `inspect`) ─
+#
+# The cache-layer half of the user-driven `datamanifest list … --delete` maintenance
+# surface (spec-v3, replacing the retired automatic GC). Given a `$cache` root it
+# enumerates the PRODUCED artifacts under it as field-bearing `CacheObject`s and deletes /
+# moves an explicitly-selected subset. It reads only the folder it is handed — never the
+# manifests, never `$data`/`$repo`. A produced artifact is exactly a directory holding a
+# `config.toml` sidecar (which a fetched `store="$cache"` dataset lacks), so a fetched
+# `$cache` dataset is never enumerated and never deleted. `referenced` is NOT decided here —
+# the composition root (`DataManifest.inspect_store`) tags it from the project's cached.toml.
+# Mirrors the Python `cache/_inspect.py`.
+
+const _SIDECAR_NAMES = ("config.toml", "metadata.toml")
+
+"""
+    CacheObject
+
+A maintenance view of one store object. `kind` is `"cached"` (produced artifact) or
+`"datasets"` (fetched dataset). `key` is `"<cachetype>/<hash>"` (produced) or the dataset
+name (fetched). `hash`/`cachetype`/`version` are produced-artifact identity; `scope`,
+`format`, `size`, `created`, `last_access` are inspectable fields; `referenced` is
+`true`/`false` once a composition root resolves reachability, `nothing` while unknown.
+"""
+Base.@kwdef mutable struct CacheObject
+    kind::String
+    location::String
+    key::String = ""
+    hash::String = ""
+    cachetype::String = ""
+    version::String = ""
+    scope::String = ""
+    format::String = ""
+    size::Int = 0
+    created::String = ""
+    last_access::String = ""
+    referenced::Union{Bool,Nothing} = nothing
+end
+
+"""
+    find_produced_artifacts(cache_root) -> Vector{Tuple{String,String}}
+
+`(artifact_dir, key)` for every produced artifact under `cache_root`. A produced artifact
+is a directory holding a `config.toml` sidecar; its key is `"<cachetype>/<hash>"`. Walking
+does not descend into an artifact directory once found.
+"""
+function find_produced_artifacts(cache_root::AbstractString)::Vector{Tuple{String,String}}
+    out = Tuple{String,String}[]
+    isdir(cache_root) || return out
+    for (dirpath, dirnames, filenames) in walkdir(cache_root)
+        if "config.toml" in filenames
+            ct, h = "", ""
+            try
+                c = read_config(dirpath)
+                ct, h = String(c.cachetype), String(c.hash)
+            catch
+                continue
+            end
+            (!isempty(ct) && !isempty(h)) && push!(out, (abspath(dirpath), "$(ct)/$(h)"))
+            empty!(dirnames)  # an artifact dir is a leaf for enumeration
+        end
+    end
+    return out
+end
+
+# Total size in bytes of all files under `path` (best-effort).
+function _dir_size(path::AbstractString)::Int
+    total = 0
+    for (dirpath, _dirnames, filenames) in walkdir(path)
+        for name in filenames
+            try
+                total += filesize(joinpath(dirpath, name))
+            catch
+            end
+        end
+    end
+    return total
+end
+
+# The serialized value's format — extension of the first non-sidecar, non-hidden file.
+function _guess_format(artifact_dir::AbstractString)::String
+    names = try
+        sort!(readdir(artifact_dir))
+    catch
+        return ""
+    end
+    for name in names
+        (name in _SIDECAR_NAMES || startswith(name, ".")) && continue
+        full = joinpath(artifact_dir, name)
+        if isfile(full)
+            stem, dot, ext = rpartition(name, '.')
+            (!isempty(ext) && !isempty(stem)) && return ext
+        end
+    end
+    return ""
+end
+
+# Last `.`-split of `s` → (before, ".", after); ("", "", "") when no `.`.
+function rpartition(s::AbstractString, c::Char)
+    i = findlast(==(c), s)
+    i === nothing && return ("", "", "")
+    return (s[1:prevind(s, i)], string(c), s[nextind(s, i):end])
+end
+
+# The artifact's creation stamp — metadata.toml's `created` if present, else dir mtime.
+function _created(artifact_dir::AbstractString)::String
+    mpath = joinpath(artifact_dir, "metadata.toml")
+    if isfile(mpath)
+        try
+            created = String(get(TOML.parsefile(mpath), "created", ""))
+            !isempty(created) && return created
+        catch
+        end
+    end
+    return iso_from_mtime(artifact_dir)
+end
+
+# Scope segment(s) of `artifact_dir` relative to `cache_root`: whatever path components sit
+# between the content prefix and the trailing `<cachetype>/[<version>/]<hash>` key.
+function _scope_of(artifact_dir::AbstractString, cache_root::AbstractString;
+                   prefix::AbstractString, version::AbstractString)::String
+    rel = relpath(artifact_dir, cache_root)
+    parts = String[p for p in split(rel, ('/', '\\')) if !(p in ("", "."))]
+    pp = String[p for p in split(prefix, '/') if !isempty(p)]
+    if length(parts) >= length(pp) && parts[1:length(pp)] == pp
+        parts = parts[length(pp)+1:end]
+    end
+    tail = isempty(version) ? 2 : 3  # cachetype[/version]/hash
+    scope_parts = parts[1:max(0, length(parts) - tail)]
+    return join(scope_parts, "/")
+end
+
+"""
+    enumerate_artifacts(cache_root; prefix="cached") -> Vector{CacheObject}
+
+A `CacheObject` for every produced artifact under `cache_root`. `prefix` is the content
+prefix produced artifacts compose under (default `"cached"`), stripped when deriving each
+object's `scope`. `referenced` is left `nothing` — a composition root resolves it.
+"""
+function enumerate_artifacts(cache_root::AbstractString; prefix::AbstractString="cached")::Vector{CacheObject}
+    out = CacheObject[]
+    for (artifact_dir, key) in find_produced_artifacts(cache_root)
+        local c
+        try
+            c = read_config(artifact_dir)
+        catch
+            continue
+        end
+        version = c.version === nothing ? "" : String(c.version)
+        push!(out, CacheObject(
+            kind="cached",
+            location=abspath(artifact_dir),
+            key=key,
+            hash=String(c.hash),
+            cachetype=String(c.cachetype),
+            version=version,
+            scope=_scope_of(artifact_dir, cache_root; prefix=prefix, version=version),
+            format=_guess_format(artifact_dir),
+            size=_dir_size(artifact_dir),
+            created=_created(artifact_dir),
+            last_access=last_access(artifact_dir),
+        ))
+    end
+    return out
+end
+
+# Remove a path and its sibling completion/lock/tmp markers (best-effort).
+function _remove_artifact(location::AbstractString)
+    rm(location; force=true, recursive=true)
+    for suffix in (".complete", ".lock", ".tmp")
+        rm(string(location, suffix); force=true, recursive=true)
+    end
+end
+
+"""
+    delete_object(obj::CacheObject)
+
+Delete a produced artifact directory and its sibling completion/lock/tmp markers. Refuses
+anything that is not `kind="cached"` — fetched datasets, `\$data`/`\$repo` and `local_path`
+data are never removed by the maintenance surface.
+"""
+function delete_object(obj::CacheObject)
+    obj.kind == "cached" || error("refusing to delete a \"$(obj.kind)\" object at " *
+        "$(obj.location) — only produced (cached) artifacts are deletable")
+    _remove_artifact(obj.location)
+    return nothing
+end
+
+"""
+    move_object(obj::CacheObject, dest_root) -> String
+
+Move a produced artifact to `dest_root`, preserving its `<cachetype>/[<version>/]<hash>` key
+path. Returns the new location. Refuses anything not `kind="cached"`.
+"""
+function move_object(obj::CacheObject, dest_root::AbstractString)::String
+    obj.kind == "cached" || error("refusing to move a \"$(obj.kind)\" object at " *
+        "$(obj.location) — only produced (cached) artifacts are movable")
+    parts = isempty(obj.version) ? (obj.cachetype, obj.hash) : (obj.cachetype, obj.version, obj.hash)
+    dest = joinpath(String(dest_root), parts...)
+    d = dirname(dest)
+    !isempty(d) && mkpath(d)
+    mv(obj.location, dest; force=true)
+    for suffix in (".complete", ".lock")
+        marker = string(obj.location, suffix)
+        ispath(marker) && mv(marker, string(dest, suffix); force=true)
+    end
+    return dest
+end
+
 # ── Artifact serialization (format registry; jls built-in) ────────────────────
 #
 # The produced-artifact byte format is per-tool / per-`format` and NOT assumed
@@ -367,29 +851,76 @@ function _cache_context()
     return (storage_config=Dict{String,Any}(), project_root=proot, declared_project="")
 end
 
+# Resolve the `cached.toml` path a produced artifact is registered in (the spec's
+# "sibling of datasets.toml" convention, with pragmatic fallbacks): an explicit
+# `cached_toml` (file, or a directory holding the default) → `<project_root>/cached.toml`
+# → `<cwd>/cached.toml`. Mirrors the Python `_locate_cached_toml`.
+function _locate_cached_toml(cached_toml, project_root::AbstractString)::String
+    if cached_toml !== nothing && !isempty(string(cached_toml))
+        ct = String(cached_toml)
+        return isdir(ct) ? joinpath(ct, CACHED_INDEX_NAME) : ct
+    end
+    !isempty(project_root) && return joinpath(project_root, CACHED_INDEX_NAME)
+    return joinpath(pwd(), CACHED_INDEX_NAME)
+end
+
+# Register a freshly-produced artifact into its cached.toml and stamp the depot usage log.
+# Reads any existing index (so one entry is added/updated without dropping the rest),
+# registers the portable key, writes canonically, records the index path. Returns the path.
+function _register_produced(cached_toml_path::AbstractString, name::AbstractString;
+                            cachetype::AbstractString, hash::AbstractString,
+                            ref::AbstractString="", format::AbstractString="",
+                            store::AbstractString="\$cache",
+                            project::AbstractString="", version::AbstractString="")::String
+    index = read_index_or_empty(cached_toml_path)
+    register!(index, name; cachetype=cachetype, hash=hash, ref=ref, format=format,
+              store=store, project=project, version=version)
+    written = write_index(index, cached_toml_path)
+    record_path!(written)
+    return written
+end
+
 # ── save / load / has (functional API used by the macro and directly) ─────────
 
 """
     save_cache(data, cachetype, key_table; ext="jls", basename="data", version=nothing,
-               store="\$cache", cache_dir=nothing, extras=Dict()) -> String
+               store="\$cache", cache_dir=nothing, extras=Dict(),
+               name="", ref="", cached_toml=nothing) -> String
 
 Materialize `data` as a produced artifact at the composed cache directory and write the
 `config.toml` / `metadata.toml` sidecars. Returns the artifact directory.
+
+When a non-empty `name` is given, the artifact is also registered in `cached.toml` (resolved
+from `cached_toml` → `<project_root>/cached.toml` → `<cwd>/cached.toml`) with `ref`/`format`/
+`store`/`project`/`version`, and that index is stamped into the depot usage log — mirroring
+the `@cached` macro. With an empty `name` (the default) registration is skipped.
 """
 function save_cache(data, cachetype::AbstractString, key_table;
                     ext::AbstractString="jls", basename::AbstractString="data",
                     version=nothing, store::AbstractString="\$cache", cache_dir=nothing,
-                    extras=Dict{String,Any}())::String
+                    extras=Dict{String,Any}(),
+                    name::AbstractString="", ref::AbstractString="", cached_toml=nothing)::String
     ctx = _cache_context()
     h = param_hash(key_table)
     dir = cached_dir(cachetype, h; version=version, store=store, cache_dir=cache_dir,
                      storage_config=ctx.storage_config, project_root=ctx.project_root,
                      declared_project=ctx.declared_project)
+    # Register in cached.toml when a portable `name` is given (the @cached macro always
+    # passes the function name); record the index back-pointer in metadata.toml.
+    written_index = ""
+    if !isempty(name)
+        written_index = _register_produced(
+            _locate_cached_toml(cached_toml, ctx.project_root), name;
+            cachetype=cachetype, hash=h, ref=ref, format=ext, store=store,
+            project=project_id(ctx.project_root; declared=ctx.declared_project),
+            version=(version === nothing ? "" : String(version)))
+    end
     materialize(dir) do tmp
         mkpath(tmp)
         _produce_save(data, joinpath(tmp, "$(basename).$(ext)"), ext)
         write_config(tmp, key_table, cachetype; version=version, hash=h)
-        write_metadata(tmp; cachetype=cachetype, extras=extras, project_root=ctx.project_root)
+        write_metadata(tmp; cachetype=cachetype, extras=extras, project_root=ctx.project_root,
+                       cached_toml=(isempty(written_index) ? nothing : written_index))
     end
     return dir
 end
@@ -424,6 +955,7 @@ function load_cache(cachetype::AbstractString, key_table;
                      storage_config=ctx.storage_config, project_root=ctx.project_root,
                      declared_project=ctx.declared_project)
     (is_complete(dir) && config_is_valid(dir)) || return nothing
+    touch_last_access!(dir)
     return _produce_load(joinpath(dir, "$(basename).$(ext)"), ext)
 end
 
@@ -432,7 +964,8 @@ end
 function _run_cached(body::Function, cachetype::AbstractString, key_table;
                      ext::AbstractString="jls", basename::AbstractString="data",
                      version=nothing, store::AbstractString="\$cache", cache_dir=nothing,
-                     extras=Dict{String,Any}())
+                     extras=Dict{String,Any}(),
+                     name::AbstractString="", ref::AbstractString="", cached_toml=nothing)
     ctx = _cache_context()
     h = param_hash(key_table)
     dir = cached_dir(cachetype, h; version=version, store=store, cache_dir=cache_dir,
@@ -440,7 +973,18 @@ function _run_cached(body::Function, cachetype::AbstractString, key_table;
                      declared_project=ctx.declared_project)
     artifact = joinpath(dir, "$(basename).$(ext)")
     if is_complete(dir) && config_is_valid(dir)
+        touch_last_access!(dir)                 # touch-on-read (advisory)
         return _produce_load(artifact, ext)
+    end
+    # Miss: register the produced artifact in the project's cached.toml (the liveness root
+    # for `inspect`) and stamp the usage log, then materialize with the back-pointer.
+    written_index = ""
+    if !isempty(name)
+        written_index = _register_produced(
+            _locate_cached_toml(cached_toml, ctx.project_root), name;
+            cachetype=cachetype, hash=h, ref=ref, format=ext, store=store,
+            project=project_id(ctx.project_root; declared=ctx.declared_project),
+            version=(version === nothing ? "" : String(version)))
     end
     local result
     materialize(dir) do tmp
@@ -448,7 +992,8 @@ function _run_cached(body::Function, cachetype::AbstractString, key_table;
         result = body()
         _produce_save(result, joinpath(tmp, "$(basename).$(ext)"), ext)
         write_config(tmp, key_table, cachetype; version=version, hash=h)
-        write_metadata(tmp; cachetype=cachetype, extras=extras, project_root=ctx.project_root)
+        write_metadata(tmp; cachetype=cachetype, extras=extras, project_root=ctx.project_root,
+                       cached_toml=(isempty(written_index) ? nothing : written_index))
     end
     return result
 end
@@ -488,11 +1033,23 @@ Wrap a **keyword-only** function with transparent produce-or-load disk caching (
   built in; register others with `DataManifest.Cache.register_format!`.
 - `basename` (default `"data"`), `version` (optional recipe/code version → a path segment,
   not in the hash), `store` (default `"\$cache"`).
+- `name` (String literal, optional): the portable registry name listed in `cached.toml`
+  (default: the wrapped function's name).
 
 The wrapper injects a `cached::Bool=true` escape hatch (`cached=false` runs the body with no
-disk I/O). A kwarg named exactly `_metadata_extras` (NamedTuple/Dict/`nothing`) is an
-audit-only channel merged into `metadata.toml` without affecting the hash; any other
-`_`-prefixed kwarg is a runtime knob excluded from the hash but visible in the body.
+disk I/O and no registration). A kwarg named exactly `_metadata_extras`
+(NamedTuple/Dict/`nothing`) is an audit-only channel merged into `metadata.toml` without
+affecting the hash; any other `_`-prefixed kwarg is a runtime knob excluded from the hash but
+visible in the body. A declared `cached_toml` kwarg, if present, overrides the index path
+(see below); a declared `cache_dir` kwarg overrides the artifact location verbatim.
+
+**Registration (spec-v3 `inspect`).** On a **produce** (miss) the artifact is registered in
+the project's `cached.toml` (the produced-dataset registry / liveness root) by its portable
+key — `cachetype`, `hash`, `ref = "<module>:<function>"`, `format`, `store`, the project-id
+`project` scope, and the recipe `version` when set — and that index path is stamped into the
+depot usage log; the `metadata.toml` `[origin].cached_toml` back-pointer names it. The index
+defaults to `<project_root>/cached.toml` (a `cached_toml` kwarg overrides it). A cache **hit**
+re-registers nothing and only bumps the artifact's best-effort last-access time.
 
 **Produced datasets are keyword-only** — a function with positional arguments is rejected
 (a positional list has no stable name→value identity to hash).
@@ -508,28 +1065,32 @@ macro cached(args...)
     basename = nothing
     version = nothing
     store = nothing
+    regname = nothing
     for kw in kw_args
         Meta.isexpr(kw, :(=)) || error("@cached: expected `name=value`, got $(kw)")
-        name, val = kw.args
-        if name === :cachetype
+        kwname, val = kw.args
+        if kwname === :cachetype
             isa(val, String) || error("@cached: `cachetype` must be a String literal")
             cachetype = val
-        elseif name === :key
+        elseif kwname === :key
             keyfn = val
-        elseif name === :ext
+        elseif kwname === :ext
             isa(val, String) || error("@cached: `ext` must be a String literal")
             ext = val
-        elseif name === :basename
+        elseif kwname === :basename
             isa(val, String) || error("@cached: `basename` must be a String literal")
             basename = val
-        elseif name === :version
+        elseif kwname === :version
             isa(val, String) || error("@cached: `version` must be a String literal")
             version = val
-        elseif name === :store
+        elseif kwname === :store
             isa(val, String) || error("@cached: `store` must be a String literal")
             store = val
+        elseif kwname === :name
+            isa(val, String) || error("@cached: `name` must be a String literal")
+            regname = val
         else
-            error("@cached: unknown argument `$name`. Expected `cachetype`, `key`, `ext`, `basename`, `version`, or `store`.")
+            error("@cached: unknown argument `$kwname`. Expected `cachetype`, `key`, `ext`, `basename`, `version`, `store`, or `name`.")
         end
     end
     cachetype === nothing && error("@cached: missing required `cachetype=...`")
@@ -575,6 +1136,7 @@ macro cached(args...)
 
     has_meta_extras = :_metadata_extras in kw_names
     has_cache_dir = :cache_dir in kw_names
+    has_cached_toml = :cached_toml in kw_names
 
     new_kw_params = copy(kw_params)
     push!(new_kw_params, Expr(:kw, :(cached::Bool), true))
@@ -599,10 +1161,14 @@ macro cached(args...)
     end
 
     cd_expr = has_cache_dir ? :(cache_dir) : :(nothing)
+    ct_expr = has_cached_toml ? :(cached_toml) : :(nothing)
     _ext = ext === nothing ? "jls" : ext
     _basename = basename === nothing ? "data" : basename
     _version = version === nothing ? nothing : version
     _store = store === nothing ? "\$cache" : store
+    # cached.toml registry name (default: the function name) and producing-function ref.
+    _name = regname === nothing ? string(fname) : regname
+    _ref = "$(__module__):$(fname)"
     _run = GlobalRef(@__MODULE__, :_run_cached)
 
     body_fn = Expr(:(->), Expr(:tuple), body)
@@ -615,7 +1181,8 @@ macro cached(args...)
         _kt = $(keyfn)($nt_args)
         return $_run(_body_fn, $cachetype, _kt;
             ext=$_ext, basename=$_basename, version=$_version, store=$_store,
-            cache_dir=$cd_expr, extras=$build_extras)
+            cache_dir=$cd_expr, extras=$build_extras,
+            name=$_name, ref=$_ref, cached_toml=$ct_expr)
     end
 
     return esc(Expr(:function, new_sig, wrapper))
