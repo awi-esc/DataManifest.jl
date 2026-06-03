@@ -96,11 +96,13 @@ fetcher = "make model_output OUTPUT=$download_path"
 
 A `"Module:function"` ref is resolved at runtime by `using Module` followed by `getfield(Module, :function)` — no `eval`, no `include_string`.
 
-**Fetch ladder** (per dataset, in order): own `_LANG.julia.fetcher` → `_LANG.shell.fetcher` (shell template) → **cross-language fetch (rung 3)** → `uri`/`uris` → error. Rung 3 is the rare case where a dataset's bytes can be produced only by a foreign-language fetcher (e.g. `[<ds>._LANG.python].fetcher`): DataManifest.jl delegates to the Python `datamanifest` CLI when it is on `PATH` (`datamanifest download <name>`), which materializes the result in the shared store; it falls through to `uri` when the peer is absent, disabled (`delegate = false`), or fails.
+**Fetch ladder** (per dataset, in order): own `_LANG.julia.fetcher` (or the bare `fetcher`) → the dataset's `shell` command → **cross-language fetch (rung 3)** → `uri`/`uris` → error. Rung 3 is the rare case where a dataset's bytes can be produced only by a foreign-language fetcher (e.g. `[<ds>._LANG.python].fetcher`): DataManifest.jl delegates to the Python `datamanifest` CLI when it is on `PATH` (`datamanifest download <name>`), which materializes the result in the shared store; it falls through to `uri` when the peer is absent, disabled (`delegate = false`), or fails.
 
-**Load ladder** (per dataset, in order): own `_LANG.julia.loader` → manifest `[_LANG.julia.loaders][format]` → built-in format default → error. Never spawns a subprocess.
+**Load ladder** (per dataset, in order): own `_LANG.julia.loader` (or the bare `loader`) → manifest `[_LANG.julia.loaders][format]` (or `[_LOADERS][format]`) → built-in format default → error. Never spawns a subprocess.
 
-Bindings are **string or table** at every site (spec-v3.3) — a bare `module:function` string, or a `{ ref, args, kwargs }` table — including the project-wide `[_LANG.julia.loaders]` map, so a format default can be parameterized exactly like a per-dataset loader. Foreign `_LANG.<other>` subtrees (e.g. `[bar._LANG.python]`) and unknown `_*` top-level tables are carried through verbatim on every read→write cycle; only the Julia subtree is regenerated from the model.
+**Bindings are string or table** at every site (spec-v3.3) — a bare `module:function` string, or a `{ ref, args, kwargs }` table — including the project-wide `[_LANG.julia.loaders]` map, so a format default can be parameterized exactly like a per-dataset loader.
+
+**Language-implicit (bare) bindings** (spec-v3.4): for a single-language project you may skip the `_LANG.julia` wrapper and write a bare `fetcher`/`loader` directly on the dataset (and a top-level `[_LOADERS]` format map) — read as the running tool's **own-language** binding. An explicit `_LANG.julia` binding takes precedence; a bare binding that doesn't resolve in Julia warns and falls through. The **`shell`** field is the language-*agnostic* sibling (spec-v3.5) — the same command for every tool. Foreign `_LANG.<other>` subtrees, bare bindings, `[_LOADERS]`, and unknown `_*` tables all round-trip verbatim; only the Julia `_LANG` subtree is regenerated from the model.
 
 ### Parameterized bindings
 
@@ -233,7 +235,7 @@ end
 
 ## Conformance
 
-This release targets the **datamanifest.toml spec tag `spec-v3.3`** (source of truth: <https://github.com/perrette/datamanifest.toml>). A complete, annotated example manifest lives there: [`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml).
+This release targets the **datamanifest.toml spec tag `spec-v3.5`** (source of truth: <https://github.com/perrette/datamanifest.toml>). A complete, annotated example manifest lives there: [`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml).
 
 Implemented capabilities: **`lang-read`**, **`lang-write`**, **`shell-fetch`**, **`storage`**, **`binding-args`**, **`byte-identity`**, **`cache-produce`**, **`inspect`**, **`delegation`**. Only **`sync`** (cross-machine `push`/`pull`) is not yet implemented.
 

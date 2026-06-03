@@ -1,10 +1,24 @@
 # Changelog
 
-## [0.20.0] - 2026-06-03 — spec-v3.3: cross-language fetch (`delegation`) + binding harmonization
+## [0.20.0] - 2026-06-03 — spec-v3.5: cross-language fetch + language-implicit & bare-shell bindings
 
-Tracks datamanifest.toml **spec-v3.3**. Adds the cross-language fetch rung (capability
-**`delegation`**) and harmonizes binding forms (string|table everywhere). `_META.schema`
-stays **1**. With this release, only **`sync`** remains unimplemented.
+Tracks datamanifest.toml **spec-v3.5**. Adds the cross-language fetch rung (capability
+**`delegation`**), harmonizes binding forms (string|table everywhere), and adds
+**language-implicit (bare) bindings** + the **bare language-agnostic `shell` field**.
+`_META.schema` stays **1**. With this release, only **`sync`** remains unimplemented.
+
+### New — language-implicit bindings (spec-v3.4) + bare `shell` field (spec-v3.5)
+
+- **Bare `fetcher` / `loader`** on a dataset are read as the running tool's **own-language**
+  binding (equivalent to `[<ds>._LANG.julia].fetcher`/`.loader`), and the top-level
+  **`[_LOADERS]`** map is the language-implicit counterpart of `[_LANG.julia.loaders]`. The
+  load/fetch ladders now consult them: own `_LANG.julia` rung → bare rung, with the explicit
+  `_LANG.julia` binding **taking precedence**. A bare binding that fails to resolve in Julia
+  **warns and falls through** (tolerant; never a hard error on that account), and bare
+  bindings are **preserved verbatim** on write (never promoted into `_LANG.julia`).
+- **Bare `shell`** is now a language-agnostic dataset field (the same command for every tool),
+  the canonical form of the shell fetcher; the legacy `[<ds>._LANG.shell].fetcher` is still
+  read. Fetch-ladder rung 2 runs `entry.shell` (else the legacy form).
 
 ### New — cross-language fetch (capability `delegation`)
 
@@ -28,8 +42,9 @@ stays **1**. With this release, only **`sync`** remains unimplemented.
 
 ### Conformance
 
-- Targets spec tag **`spec-v3.3`** and declares the **`delegation`** capability (the fixture
-  suite is unchanged from spec-v3.2). 229 unit + 194 conformance tests pass.
+- Targets spec tag **`spec-v3.5`** and declares the **`delegation`** capability; validates
+  the new `lang_implicit` fixture (bare bindings + `[_LOADERS]`) and the updated `multilang`
+  fixture (bare `shell` field). 229 unit + 231 conformance tests pass.
 
 ### Docs
 

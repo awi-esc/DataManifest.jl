@@ -17,7 +17,13 @@ end
 
 # ----- conformance helpers (used by the conformance testset below) -----
 
+# A binding's ref: the bare string, or a `{ ref … }` table's `ref` ("" otherwise).
+_conf_binding_ref(b) = b isa AbstractString ? String(b) :
+    (b isa AbstractDict && get(b, "ref", "") isa AbstractString ? String(get(b, "ref", "")) : "")
+
+# spec-v3.5: the dataset's shell command — bare `shell` field, else legacy `[_LANG.shell].fetcher`.
 function _conf_shell_fetcher(entry::DatasetEntry)::String
+    entry.shell != "" && return entry.shell
     lang = get(entry.extra, "_LANG", nothing)
     lang isa AbstractDict || return ""
     shell = get(lang, "shell", nothing)
@@ -26,8 +32,14 @@ function _conf_shell_fetcher(entry::DatasetEntry)::String
     f isa AbstractString ? String(f) : ""
 end
 
+# spec-v3.4: the bare (language-implicit) fetcher ref, or "".
+_conf_bare_fetcher(entry::DatasetEntry)::String = _conf_binding_ref(get(entry.extra, "fetcher", nothing))
+
 function _conf_infer_fetcher(db::Database, entry::DatasetEntry)
+    # rung 1: explicit own fetcher, else bare (language-implicit) fetcher.
     entry.lang_julia_fetcher != "" && return ("own-fetcher", entry.lang_julia_fetcher)
+    bf = _conf_bare_fetcher(entry)
+    bf != "" && return ("own-fetcher", bf)
     sf = _conf_shell_fetcher(entry)
     sf != "" && return ("shell", sf)
     (entry.uri != "" || !isempty(entry.uris)) && return ("uri", nothing)
@@ -35,11 +47,17 @@ function _conf_infer_fetcher(db::Database, entry::DatasetEntry)
 end
 
 function _conf_infer_loader(db::Database, entry::DatasetEntry)
+    # rung 1: explicit own loader, else bare (language-implicit) loader.
     entry.lang_julia_loader != "" && return ("per-dataset", entry.lang_julia_loader)
+    entry.loader != "" && return ("per-dataset", entry.loader)
     fmt = lowercase(strip(entry.format))
     if !isempty(fmt)
-        for (k, ref) in pairs(db.lang_julia_loaders)
-            lowercase(strip(k)) == fmt && return ("manifest-format-default", ref)
+        # rung 2: `[_LANG.julia.loaders][fmt]`, else `[_LOADERS][fmt]` (language-implicit).
+        for (k, b) in pairs(db.lang_julia_loaders)
+            lowercase(strip(k)) == fmt && return ("manifest-format-default", _conf_binding_ref(b))
+        end
+        for (k, b) in pairs(db.loaders)
+            lowercase(strip(k)) == fmt && return ("manifest-format-default", _conf_binding_ref(b))
         end
     end
     return ("builtin", nothing)
@@ -1000,6 +1018,40 @@ try
         # _delegate_fetch is a no-op (false) when there is no manifest on disk.
         db_mem = DB.Database(persist=false)
         @test P._delegate_fetch(db_mem, "ds") == false
+
+        # spec-v3.5: the dataset's shell command is the bare `shell` field (preferred over
+        # the legacy [_LANG.shell].fetcher).
+        e_bare = DB.DatasetEntry(; shell="make x")
+        @test P._shell_command(e_bare) == "make x"
+        e_legacy = DB.DatasetEntry(; extra=Dict{String,Any}(
+            "_LANG" => Dict{String,Any}("shell" => Dict{String,Any}("fetcher" => "old"))))
+        @test P._shell_command(e_legacy) == "old"
+        # spec-v3.4: bare fetcher ref (string + table form).
+        @test P._bare_fetcher_ref(DB.DatasetEntry(; extra=Dict{String,Any}("fetcher" => "M:f"))) == "M:f"
+        @test P._bare_fetcher_ref(DB.DatasetEntry(; extra=Dict{String,Any}(
+            "fetcher" => Dict{String,Any}("ref" => "M:f")))) == "M:f"
+    end
+
+    @testset "spec-v3.5 bare shell fetch (end-to-end)" begin
+        # A v1 dataset with a bare `shell` command and no uri is produced via fetch ladder
+        # rung 2 (bare shell), then resolves on disk — no _LANG.shell wrapper needed.
+        mktempdir() do d
+            src = joinpath(d, "src.txt"); write(src, "from-bare-shell")
+            toml = joinpath(d, "datasets.toml")
+            write(toml, """
+            [_META]
+            schema = 1
+
+            [made]
+            format = "txt"
+            key    = "made"
+            shell  = "cp $src \$download_path"
+            """)
+            db = read_dataset(toml, joinpath(d, "store"); persist=false)
+            path = download_dataset(db, "made")
+            @test isfile(path)
+            @test strip(read(path, String)) == "from-bare-shell"
+        end
     end
 end
 

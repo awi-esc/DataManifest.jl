@@ -306,6 +306,48 @@ function _lang_shell_fetcher(entry::DatasetEntry)::String
     return f isa AbstractString ? String(f) : ""
 end
 
+# ----- Language-implicit (bare) fetcher (spec-v3.4) -----
+# A dataset MAY carry a bare `fetcher` binding read as the running tool's own language
+# (equivalent to `[<ds>._LANG.julia].fetcher`). Explicit `_LANG.julia.fetcher` wins; a bare
+# fetcher that fails to resolve in Julia warns and falls through (tolerant).
+
+# The bare fetcher's `module:function` ref (string or `{ ref … }` table), or "" when absent.
+function _bare_fetcher_ref(entry::DatasetEntry)::String
+    f = get(entry.extra, "fetcher", nothing)
+    f isa AbstractString && return String(f)
+    if f isa AbstractDict
+        r = get(f, "ref", nothing)
+        return r isa AbstractString ? String(r) : ""
+    end
+    return ""
+end
+
+# Resolve + run a bare fetcher `ref` as the own-language fetcher (conventional keyword-arg
+# call, like the bare-string `_LANG.julia.fetcher`). Returns true when it ran; false when the
+# ref does not resolve in Julia (→ warn and fall through to the next rung).
+function _run_bare_fetcher(db::Database, dataset::DatasetEntry, ref::String,
+                          download_path::String, project_root::String;
+                          required_paths_ordered::Vector{String}=String[])::Bool
+    local fn
+    try
+        fn = _resolve_ref(db, ref)
+    catch e
+        @warn "Bare `fetcher` did not resolve in Julia; falling through" ref = ref exception = e
+        return false
+    end
+    call = () -> Base.invokelatest(fn;
+        download_path=download_path, project_root=project_root, entry=dataset,
+        uri=dataset.uri, key=dataset.key, version=dataset.version, doi=dataset.doi,
+        format=dataset.format, branch=dataset.branch, requires_paths=required_paths_ordered)
+    project_root != "" ? cd(call, project_root) : call()
+    return true
+end
+
+# The dataset's shell fetcher command (spec-v3.5): the bare, language-agnostic `shell` field,
+# else the legacy `[<ds>._LANG.shell].fetcher`. "" when neither is present.
+_shell_command(entry::DatasetEntry)::String =
+    entry.shell != "" ? entry.shell : _lang_shell_fetcher(entry)
+
 # ----- Cross-language fetch (fetch ladder rung 3): delegate to the peer CLI -----
 # The rare case: a dataset's bytes can be produced only by a fetcher defined in another
 # language (no own Julia fetcher, no shell fetcher, no `uri`). The Python `datamanifest` is
@@ -475,21 +517,29 @@ function _download_dataset(dataset::DatasetEntry, download_path::String; project
     # uri rung falls through to the uris/scheme handling below, and the absence of
     # every rung is a clear error.
     if v1
+        # rung 1 — own `_LANG.julia.fetcher`, else the bare (language-implicit) `fetcher`.
         if dataset.lang_julia_fetcher != ""
             _run_julia_ref(db, dataset, download_path, project_root;
                           required_paths_ordered=required_paths_ordered)
             return
         end
-        shell_fetcher = _lang_shell_fetcher(dataset)
-        if shell_fetcher != ""
-            _run_shell(shell_fetcher, dataset, download_path, project_root;
+        bare_fetcher = _bare_fetcher_ref(dataset)
+        if bare_fetcher != "" &&
+           _run_bare_fetcher(db, dataset, bare_fetcher, download_path, project_root;
+                            required_paths_ordered=required_paths_ordered)
+            return
+        end
+        # rung 2 — the dataset's `shell` command (bare field, else legacy `_LANG.shell`).
+        shell_cmd = _shell_command(dataset)
+        if shell_cmd != ""
+            _run_shell(shell_cmd, dataset, download_path, project_root;
                       required_paths_by_ref=required_paths_by_ref,
                       required_paths_ordered=required_paths_ordered)
             return
         end
         if isempty(dataset.uris) && dataset.uri == ""
-            error("No fetcher resolved for dataset \"$(dataset.key)\": no own " *
-                  "`_LANG.julia.fetcher`, no `_LANG.shell.fetcher`, and no `uri`/`uris`.")
+            error("No fetcher resolved for dataset \"$(dataset.key)\": no own/bare " *
+                  "`fetcher`, no `shell` command, and no `uri`/`uris`.")
         end
     end
 
@@ -630,7 +680,8 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
     # shell fetcher, no `uri`, but a foreign-language fetcher exists. Delegate to the peer
     # `datamanifest` CLI, which materializes the result in the shared store; we then read it.
     if db.schema == 1 && (overwrite || !(isfile(download_path) || isdir(download_path))) &&
-       dataset.lang_julia_fetcher == "" && _lang_shell_fetcher(dataset) == "" &&
+       dataset.lang_julia_fetcher == "" && _bare_fetcher_ref(dataset) == "" &&
+       _shell_command(dataset) == "" &&
        isempty(dataset.uris) && dataset.uri == "" &&
        _should_delegate(dataset) && !isempty(_foreign_fetcher_langs(dataset))
         if _delegate_fetch(db, name)
@@ -731,47 +782,69 @@ function default_loader(db::Database, format::AbstractString)
     return builtin_default_loader(format)
 end
 
-# v1 load ladder: own `_LANG.julia.loader` ref → manifest
-# `[_LANG.julia.loaders][format]` ref → built-in format default → error. Every
-# rung resolves by import + getfield or a built-in lookup; a v1 loader never
-# spawns a subprocess and never goes through `include_string`. (Delegation — a
-# foreign-language loader — is out of scope.)
+# Resolve a loader binding (string or `{ ref, args, kwargs }` table) to a `path -> value`
+# function: the conventional call `fn(path)` for a ref-only binding, or a parameterized call
+# `ref(args...; kwargs...)` (with `$var`/`$path` substitution) when args/kwargs are present.
+function _loader_from_binding(db::Database, entry::DatasetEntry, b)
+    ref, args, kwargs = _parse_binding(b)
+    isempty(ref) && error("loader binding has no `ref`.")
+    fn = _resolve_ref(db, ref)
+    (isempty(args) && isempty(kwargs)) && return fn
+    return function (path)
+        subs = _binding_subst_pairs(entry, "\$path" => path, get_project_root(db))
+        a = _subst_binding_value(args, subs)
+        kw = _kwargs_pairs(_subst_binding_value(kwargs, subs))
+        return Base.invokelatest(fn, a...; kw...)
+    end
+end
+
+# v1 load ladder (spec-v3.4):
+#   1. own `[<ds>._LANG.julia].loader`, else the bare (language-implicit) `loader`;
+#   2. `[_LANG.julia.loaders][format]`, else `[_LOADERS][format]` (language-implicit);
+#   3. built-in format default; else error.
+# At each own-language rung the explicit `_LANG.julia` binding wins over the bare one; a bare
+# binding that fails to resolve in Julia warns and falls through (tolerant, never a hard
+# error on that account). A v1 loader never spawns a subprocess / never `include_string`s.
 function _resolve_loader_v1(db::Database, entry::DatasetEntry)
+    # rung 1 — explicit own loader, else the bare language-implicit loader.
     if entry.lang_julia_loader != ""
-        return _resolve_ref(db, entry.lang_julia_loader)
+        return _loader_from_binding(db, entry, entry.lang_julia_loader)
+    end
+    if entry.loader != ""
+        try
+            return _loader_from_binding(db, entry, entry.loader)
+        catch e
+            @warn "Bare `loader` did not resolve in Julia; falling through to format defaults" ref = entry.loader exception = e
+        end
     end
     # For extracted archives, path is a directory; no single-file format to load.
     format = (entry.extract && entry.format in COMPRESSED_FORMATS) ? "" : entry.format
     fmt = lowercase(strip(format))
     if !isempty(fmt)
+        # rung 2 — `[_LANG.julia.loaders][fmt]`, else `[_LOADERS][fmt]` (language-implicit).
         for (k, b) in pairs(db.lang_julia_loaders)
+            lowercase(strip(k)) == fmt && return _loader_from_binding(db, entry, b)
+        end
+        for (k, b) in pairs(db.loaders)
             if lowercase(strip(k)) == fmt
-                # spec-v3.3: a project loader is a binding (string or `{ ref, args, kwargs }`).
-                ref, args, kwargs = _parse_binding(b)
-                isempty(ref) && error("Project loader for format \"$fmt\" has no `ref`.")
-                fn = _resolve_ref(db, ref)
-                if isempty(args) && isempty(kwargs)
-                    return fn   # ref-only: conventional call fn(path)
-                end
-                # Parameterized: substitute `$var` (incl. `$path`) and call ref(args...; kwargs...).
-                return function (path)
-                    subs = _binding_subst_pairs(entry, "\$path" => path, get_project_root(db))
-                    a = _subst_binding_value(args, subs)
-                    kw = _kwargs_pairs(_subst_binding_value(kwargs, subs))
-                    return Base.invokelatest(fn, a...; kw...)
+                try
+                    return _loader_from_binding(db, entry, b)
+                catch e
+                    @warn "Bare `[_LOADERS]` loader did not resolve in Julia; falling through" format = fmt exception = e
                 end
             end
         end
     end
+    # rung 3 — built-in format default.
     if isempty(fmt)
-        error("No loader resolved for dataset \"$(entry.key)\": no own " *
-              "`_LANG.julia.loader`, no `[_LANG.julia.loaders]` entry, and the dataset format is empty.")
+        error("No loader resolved for dataset \"$(entry.key)\": no own/bare `loader`, no " *
+              "`[_LANG.julia.loaders]`/`[_LOADERS]` entry, and the dataset format is empty.")
     end
     try
         return builtin_default_loader(format)
     catch
-        error("No loader resolved for dataset \"$(entry.key)\" (format \"$format\"): no own " *
-              "`_LANG.julia.loader`, no `[_LANG.julia.loaders][$fmt]`, and no built-in loader for \"$format\".")
+        error("No loader resolved for dataset \"$(entry.key)\" (format \"$format\"): no own/bare " *
+              "`loader`, no `[_LANG.julia.loaders][$fmt]`/`[_LOADERS][$fmt]`, and no built-in loader.")
     end
 end
 

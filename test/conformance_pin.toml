@@ -3,18 +3,20 @@
 # The tag + per-file content hashes below are this tool's machine-checkable
 # conformance claim. Hashes are computed from fixture file contents (not the
 # tarball bytes) so the pin stays correct if GitHub re-packs the auto-archive.
-spec_tag = "spec-v3.3"
+spec_tag = "spec-v3.5"
 
 [files]
-"tests/fixtures/README.md" = "487a6f15bc978f4b0e1695409f9292ed2c867d1518f4d0ec3510a4d6af6136a0"
+"tests/fixtures/README.md" = "0957890490e2850073bb37ab785666329bbfab7a09fa42ed561af69fea06d679"
 "tests/fixtures/cached_index.expected.json" = "2f8ab1ffe68f0e15d5f444568c283cf58eb0456d51f2974155a2dda4ae3548ac"
 "tests/fixtures/cached_index.toml" = "4fb123b0da25e60e6bad9e47ef079639e3899cac006f17d98002f4ba8b7d4da8"
 "tests/fixtures/config_sidecar.expected.json" = "3f3f34e31df88a44f7bd8b598fba93432b286109c7a1bea31953850aca7cbb0b"
 "tests/fixtures/config_sidecar.toml" = "46df73bb0bf0449018107729b9ea2587bc8d1931be1250f076b490eedc5bed98"
 "tests/fixtures/config_sidecar_float.expected.json" = "c47d76f5f3d66379ac5d1ef8718de008f7aff52e56fff6336174035521dd923a"
 "tests/fixtures/config_sidecar_float.toml" = "ceada3c4baf50cb5c97299f2e1cbe84808a8366f9434dda0d99a4f49b9455bd0"
-"tests/fixtures/multilang.expected.json" = "e9227a25d704e84da11d18287bda8397dedecef6412d10534b919924dfb6cb43"
-"tests/fixtures/multilang.toml" = "60793653a61563c23dced82da81e6d2b69ae887f84abae659d5a0ab5df6c3014"
+"tests/fixtures/lang_implicit.expected.json" = "ea0f367fbeb62fa8cca0f7f2c8543f51409e81533d6fb33bb7bef8b816d61105"
+"tests/fixtures/lang_implicit.toml" = "99b7b62ad67a13558a1ff9bcb0fd4c73b702155f8976147f8b552969ac115936"
+"tests/fixtures/multilang.expected.json" = "77564105d84a5f5d488fc47603cf8401e14acbf18a21727f7115ed4968de5022"
+"tests/fixtures/multilang.toml" = "1d6d7c98bbd733b06b89002db809831c5f68bcf8786d43d60322766e9a3af310"
 "tests/fixtures/parameterized.expected.json" = "7c21ba2374778676c6dfd1ed3d4195380a3c041867a5b218f68edf25e5aa2fa5"
 "tests/fixtures/parameterized.toml" = "124587678d51e41fa224f642dd7f97aa11a5b15b8dc1c078b45c4986cfa2c287"
 "tests/fixtures/single_julia.expected.json" = "ca32e4171da18bcf03df7892deed73ed3ad088fd3da9076f76cd44cbfeccff3c"
