@@ -37,16 +37,17 @@ export @cached, param_hash, cache_key, cached_dir,
     CACHED_INDEX_NAME,
     # usage log + last-access (best-effort, advisory; cross-tool with the Python CLI)
     usage_log_path, record_path!, read_usage, known_paths,
-    iso_from_mtime, last_access, touch_last_access!,
+    iso_from_mtime, last_access,
     # inspect (store maintenance: enumerate / delete / move)
     CacheObject, find_produced_artifacts, enumerate_artifacts, delete_object, move_object
 
 # ── Canonical JSON (JCS, RFC 8785) + parameter hash ──────────────────────────
 
-# Normalize a hash-input value to the spec-v3 restricted set (string / integer /
-# boolean / array / object of those). Symbols are coerced to strings (a clean,
-# deterministic projection). Floats, nulls, and anything else are a hard error —
-# spec-v3 disallows them in hash inputs (pass a float as a string).
+# Normalize a hash-input value to the spec-v3.1 restricted set (string / integer / boolean /
+# finite float / array / object of those). Symbols are coerced to strings (a clean,
+# deterministic projection); finite floats are kept as Float64 (serialized via the normative
+# Python `json.dumps` float form, see `_python_float_repr`). Non-finite floats (NaN/±Inf),
+# nulls (nothing/missing), and anything else are a hard error.
 function _normalize_hashval(x)
     if x isa Bool
         return x
@@ -63,16 +64,82 @@ function _normalize_hashval(x)
     elseif x isa AbstractDict
         return Dict{String,Any}(String(k) => _normalize_hashval(v) for (k, v) in x)
     elseif x isa AbstractFloat
-        error("@cached: hash input contains a float ($x); spec-v3 disallows floats in " *
-              "hash inputs — pass it as a string (e.g. \"$(x)\"), which is also more " *
-              "hash-stable.")
+        isfinite(x) || error("@cached: hash input contains a non-finite float ($x); NaN/±Inf " *
+              "have no JSON representation and are not hash-stable — pass a finite float or a string.")
+        return Float64(x)
     elseif x === nothing || x === missing
         error("@cached: hash input contains null/nothing; spec-v3 disallows nulls in hash " *
               "inputs. Omit the parameter or pass a sentinel string instead.")
     else
         error("@cached: hash input contains an unsupported value of type $(typeof(x)); " *
-              "allowed: string, integer, boolean, and arrays/objects of those.")
+              "allowed: string, integer, boolean, finite float, and arrays/objects of those.")
     end
+end
+
+# ── Normative finite-float serialization (Python `json.dumps` form, spec-v3.1) ─
+#
+# spec-v3.1 permits finite floats as hash inputs and pins their canonical-JSON byte form to
+# the Python reference `json.dumps` (= CPython `repr`): shortest round-tripping digits, with
+# `1.0` → "1.0", `0.5` → "0.5", `1e20` → "1e+20", `1e-5` → "1e-05". Julia's `string(::Float64)`
+# differs in scientific notation (`1.0e20`, no `+`, always `.0`), so we recover the shortest
+# digits + decimal exponent from Julia's (Ryū) shortest repr and reformat per CPython's
+# `format_float_short` rules: exponential iff `decpt <= -4 || decpt > 16`, else fixed, with a
+# signed ≥2-digit exponent and a trailing `.0` only on integer-valued fixed output.
+
+# Reformat (significant `digits`, decimal point position `decpt`) into CPython's `repr` form.
+function _python_format_digits(digits::String, decpt::Int)::String
+    n = length(digits)
+    if decpt <= -4 || decpt > 16
+        expo = decpt - 1
+        mant = n == 1 ? string(digits[1]) : string(digits[1], ".", digits[2:end])
+        sgn = expo < 0 ? "-" : "+"
+        ea = abs(expo)
+        es = ea < 10 ? string("0", ea) : string(ea)
+        return string(mant, "e", sgn, es)
+    elseif decpt <= 0
+        return string("0.", "0"^(-decpt), digits)
+    elseif decpt >= n
+        return string(digits, "0"^(decpt - n), ".0")
+    else
+        return string(digits[1:decpt], ".", digits[decpt+1:end])
+    end
+end
+
+"""
+    _python_float_repr(x::Float64) -> String
+
+A finite `Float64` formatted byte-for-byte like Python's `repr` / `json.dumps` (the spec-v3.1
+normative canonical-JSON float form). Reproduces e.g. `1.0`→"1.0", `0.5`→"0.5",
+`1e20`→"1e+20", `1e-5`→"1e-05".
+"""
+function _python_float_repr(x::Float64)::String
+    x == 0.0 && return signbit(x) ? "-0.0" : "0.0"
+    neg = x < 0
+    s = string(abs(x))                       # Julia shortest round-trip repr (Ryū)
+    eidx = findfirst(==('e'), s)
+    if eidx !== nothing
+        mant = s[1:eidx-1]
+        expo = parse(Int, s[eidx+1:end])
+        dotidx = findfirst(==('.'), mant)
+        intpart = dotidx === nothing ? mant : mant[1:dotidx-1]
+        fracpart = dotidx === nothing ? "" : mant[dotidx+1:end]
+        digits = intpart * fracpart
+        decpt = expo + length(intpart)       # Julia normalizes to one leading digit
+    else
+        dotidx = findfirst(==('.'), s)
+        intpart = dotidx === nothing ? s : s[1:dotidx-1]
+        fracpart = dotidx === nothing ? "" : s[dotidx+1:end]
+        digits = intpart * fracpart
+        decpt = length(intpart)
+    end
+    while length(digits) > 1 && first(digits) == '0'   # strip leading zeros
+        digits = digits[2:end]; decpt -= 1
+    end
+    while length(digits) > 1 && last(digits) == '0'     # strip trailing zeros
+        digits = digits[1:end-1]
+    end
+    out = _python_format_digits(digits, decpt)
+    return neg ? string("-", out) : out
 end
 
 # The normalized, hash-ready key table: every top-level key except `_`-prefixed runtime
@@ -119,6 +186,8 @@ function _jcs(io::IO, x)
         print(io, x ? "true" : "false")
     elseif x isa Integer
         print(io, string(x))
+    elseif x isa AbstractFloat
+        print(io, _python_float_repr(Float64(x)))   # normative Python json.dumps form
     elseif x isa AbstractString
         _jcs_string(io, x)
     elseif x isa AbstractVector
@@ -460,9 +529,14 @@ end
 #   1. usage log — a single `usage.toml` (under `user_state_dir`) recording every
 #      datasets.toml / cached.toml index path the cache layer has read/written, each with a
 #      `last_seen` RFC-3339 UTC stamp. A cheap index of where artifacts were registered.
-#   2. last-access — the filesystem access time of a produced artifact directory: read by
-#      `last_access`, bumped by `touch_last_access!` (touch-on-read). Advisory; a `noatime`
-#      mount or manual `utime` can defeat it. Matches the Python `cache/_usage.py` contract.
+#   2. last-access — the filesystem access time of a produced artifact directory, read at
+#      inspect time by `last_access` (falling back to the modification time when atime is
+#      unreadable). spec-v3.2: it is **filesystem-derived and never written on read** — the
+#      reader MUST NOT touch any file/sidecar/index to record access (that would contend with
+#      the produce `.lock`, serialize readers, and put I/O on the hot path for a purely
+#      advisory value). The signal is coarse and may be absent (`relatime` advances atime at
+#      most once a day; `noatime`/network/read-only filesystems record nothing); `created`
+#      (stamped once at produce time) is the always-available age signal.
 
 const USAGE_LOG_NAME = "usage.toml"
 const _USAGE_ENV_OVERRIDE = "DATAMANIFEST_USAGE_LOG"
@@ -515,30 +589,18 @@ end
 """
     last_access(path) -> String
 
-The last time a produced artifact at `path` was read, as an RFC-3339 UTC stamp (empty when
-`path` is absent or its access time is unavailable). Implemented as the filesystem access
-time of the artifact directory, bumped on read by [`touch_last_access!`]. Advisory only.
+The last time a produced artifact at `path` was read, as an RFC-3339 UTC stamp — read purely
+from the filesystem (the directory's `stat` access time), **never written on read** (spec-v3.2).
+Falls back to the modification time when atime is unreadable (e.g. an unsupported platform);
+empty only when `path` is absent. Advisory and coarse: `relatime` advances atime at most once
+a day and `noatime`/network/read-only filesystems record nothing, so this may be stale or
+track mtime — use `created` for an always-available age signal, and never as the sole basis
+for deletion.
 """
 function last_access(path::AbstractString)::String
     ispath(path) || return ""
     ts = _atime_epoch(path)
-    ts === nothing ? "" : _iso_from_epoch(ts)
-end
-
-"""
-    touch_last_access!(path)
-
-Bump `path`'s last-access stamp to now (best-effort, never raises). `touch -a` sets the
-access time while preserving the modification time, so a touch-on-read does not masquerade
-as a fresh write. Silently does nothing when `path` is gone or the filesystem refuses it.
-"""
-function touch_last_access!(path::AbstractString)
-    try
-        Sys.isunix() && ispath(path) &&
-            run(pipeline(`touch -a $path`; stdout=devnull, stderr=devnull))
-    catch
-    end
-    return nothing
+    ts === nothing ? iso_from_mtime(path) : _iso_from_epoch(ts)
 end
 
 """
@@ -955,7 +1017,6 @@ function load_cache(cachetype::AbstractString, key_table;
                      storage_config=ctx.storage_config, project_root=ctx.project_root,
                      declared_project=ctx.declared_project)
     (is_complete(dir) && config_is_valid(dir)) || return nothing
-    touch_last_access!(dir)
     return _produce_load(joinpath(dir, "$(basename).$(ext)"), ext)
 end
 
@@ -973,8 +1034,7 @@ function _run_cached(body::Function, cachetype::AbstractString, key_table;
                      declared_project=ctx.declared_project)
     artifact = joinpath(dir, "$(basename).$(ext)")
     if is_complete(dir) && config_is_valid(dir)
-        touch_last_access!(dir)                 # touch-on-read (advisory)
-        return _produce_load(artifact, ext)
+        return _produce_load(artifact, ext)     # spec-v3.2: never written on read
     end
     # Miss: register the produced artifact in the project's cached.toml (the liveness root
     # for `inspect`) and stamp the usage log, then materialize with the back-pointer.
@@ -1027,8 +1087,9 @@ Wrap a **keyword-only** function with transparent produce-or-load disk caching (
 - `key` (required): a callable receiving a NamedTuple of the function's hash-affecting
   keyword arguments (every declared kwarg except `_`-prefixed runtime knobs) and returning
   the **key table** (a NamedTuple/Dict). Its canonical-JSON SHA-256 is the parameter hash.
-  Hash inputs are restricted to strings/integers/booleans/arrays/objects of those — floats
-  and nulls raise (pass a float as a string).
+  Hash inputs are strings/integers/booleans/**finite floats**/arrays/objects of those
+  (spec-v3.1); finite floats serialize via the normative Python `json.dumps` form
+  (`1.0`→"1.0"). `NaN`/`±Inf` and nulls raise.
 - `ext` (default `"jls"`): artifact serialization format. `jls` (stdlib `Serialization`) is
   built in; register others with `DataManifest.Cache.register_format!`.
 - `basename` (default `"data"`), `version` (optional recipe/code version → a path segment,
@@ -1049,7 +1110,8 @@ key — `cachetype`, `hash`, `ref = "<module>:<function>"`, `format`, `store`, t
 `project` scope, and the recipe `version` when set — and that index path is stamped into the
 depot usage log; the `metadata.toml` `[origin].cached_toml` back-pointer names it. The index
 defaults to `<project_root>/cached.toml` (a `cached_toml` kwarg overrides it). A cache **hit**
-re-registers nothing and only bumps the artifact's best-effort last-access time.
+re-registers nothing and (spec-v3.2) **writes nothing on read** — last-access is read from the
+filesystem at inspect time, never recorded by the reader.
 
 **Produced datasets are keyword-only** — a function with positional arguments is rejected
 (a positional list has no stable name→value identity to hash).

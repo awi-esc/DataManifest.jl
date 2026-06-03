@@ -183,9 +183,9 @@ load_anomaly(; grid="5x5", cached=false) # escape hatch: run the body, no disk I
 ```
 
 The cache key is the SHA-256 of the **canonical JSON** of the hash-affecting keyword
-parameters (cross-tool reproducible). Produced datasets are **keyword-only**; hash inputs
-must be strings/integers/booleans/arrays/objects — floats and nulls raise (pass a float as a
-string). Each artifact is self-describing — `config.toml` (the re-hashable key table) and
+parameters (cross-tool reproducible). Produced datasets are **keyword-only**; hash inputs are
+strings/integers/booleans/**finite floats**/arrays/objects of those — finite floats use the
+normative Python `json.dumps` form (`1.0`→`1.0`), while `NaN`/`±Inf` and nulls raise. Each artifact is self-describing — `config.toml` (the re-hashable key table) and
 `metadata.toml` (provenance) sit alongside it at
 `<$cache>/cached/<project>/<cachetype>/[<version>/]<hash>/`. `jls` (stdlib `Serialization`)
 is the built-in format; register others (`nc`, `jld2`, …) with
@@ -203,8 +203,9 @@ list of `CacheObject`s (`kind`, `key`/`hash`, `scope`, `format`, `size`, `create
 `last_access`, `referenced`), resolving `referenced` from `cached.toml`. Filter the list and
 act with `delete_object` / `move_object` — there is **no automatic garbage collector**;
 deletion is always an explicit selection, and only produced (`cached`) artifacts are eligible.
-A produced artifact's best-effort **last-access** time (`last_access`) is bumped on every
-cache hit, so age-based filters work (advisory; matches the Python CLI).
+A produced artifact's **last-access** time (`last_access`) is read purely from the filesystem
+at inspect time — never written on read (spec-v3.2) — so it is coarse and may track mtime on
+`noatime`/`relatime` mounts; `created` is the always-available age signal.
 
 ```julia
 db = read_dataset("datasets.toml")
@@ -227,7 +228,7 @@ At call time, `$var` placeholders in string values are substituted with the data
 
 ## Conformance
 
-This release targets the **datamanifest.toml spec tag `spec-v3`** (source of truth: <https://github.com/perrette/datamanifest.toml>).
+This release targets the **datamanifest.toml spec tag `spec-v3.2`** (source of truth: <https://github.com/perrette/datamanifest.toml>).
 
 Implemented capabilities: **`lang-read`**, **`lang-write`**, **`shell-fetch`**, **`storage`**, **`binding-args`**, **`byte-identity`**, **`cache-produce`**, **`inspect`**. Only **`sync`** (cross-machine `push`/`pull`) is not yet implemented.
 

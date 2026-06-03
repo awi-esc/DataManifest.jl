@@ -46,11 +46,11 @@ export Databases, PipeLines, Loaders, Storage, Cache
 using .Cache: @cached, param_hash, cache_key,
     CachedIndex, read_index, read_index_or_empty, register!, index_keys, write_index,
     CacheObject, enumerate_artifacts, delete_object, move_object,
-    last_access, touch_last_access!, iso_from_mtime
+    last_access, iso_from_mtime
 export @cached, param_hash, cache_key
 export CachedIndex, read_index, read_index_or_empty, register!, index_keys, write_index
 export CacheObject, enumerate_artifacts, delete_object, move_object
-export last_access, touch_last_access!, iso_from_mtime
+export last_access, iso_from_mtime
 export inspect_store
 
 """

@@ -778,8 +778,31 @@ try
         @test param_hash((; grid="5x5", skip_models=["CESM.*", "FGOALS.*"])) == param_hash(kt)
         @test param_hash((; grid="5x5", skip_models=["CESM.*", "FGOALS.*"], _parallel=true)) == param_hash(kt)
 
-        # Spec-disallowed hash inputs are a hard error (floats, nulls).
-        @test_throws ErrorException param_hash(Dict("x" => 0.15))
+        # spec-v3.1: finite floats are valid hash inputs, serialized via the normative
+        # Python `json.dumps` form. Cross-tool reference vectors (from the Python tool):
+        @test C._python_float_repr(1.0) == "1.0"
+        @test C._python_float_repr(0.5) == "0.5"
+        @test C._python_float_repr(0.15) == "0.15"
+        @test C._python_float_repr(1e20) == "1e+20"
+        @test C._python_float_repr(1e-5) == "1e-05"
+        @test C._python_float_repr(1e16) == "1e+16"
+        @test C._python_float_repr(1e15) == "1000000000000000.0"
+        @test C._python_float_repr(100.0) == "100.0"
+        @test C._python_float_repr(-3.25) == "-3.25"
+        @test C._python_float_repr(6.022e23) == "6.022e+23"
+        @test C.canonical_json(Dict("x" => 0.15)) == "{\"x\":0.15}"
+        @test param_hash(Dict("x" => 0.15)) ==
+              "f894f9f6b958c1f5ca3b592741e0e8eda12c480b412b4c4dc810290e1f828cdb"
+        @test param_hash(Dict("a" => 1.0, "b" => [2.5, 1e20])) ==
+              "6eee4cb6553cb6fd00a62fadbe82bfcc65c23e59564e99cb456ad4f62818ac90"
+        # A float and the equal integer render differently → distinct keys.
+        @test param_hash(Dict("x" => 1.0)) != param_hash(Dict("x" => 1))
+        @test param_hash((; sigma=0.5)) == param_hash(Dict("sigma" => 0.5))  # NamedTuple parity
+        # Non-finite floats and nulls remain a hard error, anywhere in the structure.
+        @test_throws ErrorException param_hash(Dict("x" => NaN))
+        @test_throws ErrorException param_hash(Dict("x" => Inf))
+        @test_throws ErrorException param_hash(Dict("x" => -Inf))
+        @test_throws ErrorException param_hash(Dict("nested" => [1, Inf]))
         @test_throws ErrorException param_hash(Dict("x" => nothing))
 
         # @cached round-trip with an explicit cache_dir (jls), + the on-disk layout.
@@ -874,15 +897,13 @@ try
         C.record_path!("/tmp/other/datasets.toml"; env=env)
         @test Set(C.known_paths(env)) == Set([abspath(idx_path), "/tmp/other/datasets.toml"])
 
-        # last-access of a file: empty for a missing path; a stamp once it exists;
-        # touch_last_access! bumps it forward (best-effort; skip if atime unavailable).
+        # last-access (spec-v3.2): purely filesystem-derived, never written on read.
+        # Empty for a missing path; a non-empty stamp for an existing one (atime, or the
+        # mtime fallback when atime is unreadable). No reader-side write API exists.
         @test last_access(joinpath(dir, "nope")) == ""
         f = joinpath(dir, "stamp.txt"); write(f, "x")
-        la0 = last_access(f)
-        if !isempty(la0)
-            touch_last_access!(f)
-            @test last_access(f) != "" || true   # advisory; never a hard failure
-        end
+        @test !isempty(last_access(f))
+        @test !isdefined(C, :touch_last_access!)   # no touch-on-read mechanism
 
         # --- enumerate / delete / move via a real produce -------------------------
         cache_dir = joinpath(dir, "store")
@@ -924,8 +945,8 @@ try
     end
 end
 
-@testset "Conformance suite (spec-v3)" begin
-    # Source of truth: github.com/perrette/datamanifest.toml, tag spec-v3.
+@testset "Conformance suite (spec-v3.x)" begin
+    # Source of truth: github.com/perrette/datamanifest.toml (tag pinned below).
     # The pin file records the spec tag + per-file sha256 of each fixture; hashes
     # are over file contents (not the tarball), keeping the pin robust to GitHub
     # re-generating the auto-archive. The tag + content pin is this tool's

@@ -40,20 +40,32 @@ the Python `datamanifest` CLI. `_META.schema` stays **1** (additive). Only `sync
 
 ### New — last-access + usage log (best-effort, advisory; cross-tool with the Python CLI)
 
-- **Last-access.** `last_access(path)` reports a produced artifact's last-read time (the
-  filesystem access time of its directory) as an RFC-3339 UTC stamp; `touch_last_access!`
-  bumps it (preserving mtime) and is now called on every cache **hit**, so "not accessed in N
-  days" filters are meaningful. Advisory only — a `noatime` mount or manual `utime` can
-  defeat it; nothing depends on it for correctness. Matches the Python `cache/_usage.py`
-  contract.
+- **Last-access.** `last_access(path)` reports a produced artifact's last-read time, read
+  purely from the filesystem at inspect time (the directory's `stat` access time) as an
+  RFC-3339 UTC stamp — see the spec-v3.2 note below for the "never written on read" rule.
+  Matches the Python `cache/_usage.py` contract.
 - **Usage log.** A single `usage.toml` under `user_state_dir("datamanifest")` (overridable
   via `DATAMANIFEST_USAGE_LOG`) records every index path the cache layer reads/writes with a
   `last_seen` stamp (`usage_log_path` / `record_path!` / `read_usage` / `known_paths`).
 
+### Changed — spec-v3.1 finite floats + spec-v3.2 last-access
+
+- **Finite floats are valid hash inputs** (spec-v3.1). The parameter hash now accepts finite
+  `Float64`/`Float32` anywhere in the key table, serialized via the **normative Python
+  `json.dumps` float form** (`1.0`→`1.0`, `0.5`→`0.5`, `1e20`→`1e+20`, `1e-5`→`1e-05`) so the
+  digest is cross-tool reproducible; `_python_float_repr` reproduces CPython's `repr`
+  byte-for-byte. `NaN` / `±Inf` and nulls still raise. (Previously any float raised.)
+- **Last-access is filesystem-derived and never written on read** (spec-v3.2). A cache hit no
+  longer touches the artifact's access time; `last_access` reads the `stat` access time at
+  inspect time (falling back to mtime when unreadable, possibly absent on `noatime`/network
+  mounts), and the reader writes no sidecar/index/atime. `touch_last_access!` is removed —
+  `created` (stamped once at produce time) is the always-available age signal.
+
 ### Conformance
 
-- The conformance suite now declares the **`inspect`** capability and validates the
-  `cached_index` fixture (reading a `cached.toml` and checking its entries + rooted key set).
+- Targets spec tag **`spec-v3.2`**. The suite declares the **`inspect`** capability and
+  validates the `cached_index` fixture (reading a `cached.toml`, checking its entries + rooted
+  key set) and the `config_sidecar_float` fixture (finite-float hash reproduction).
 
 ## [0.18.0] - 2026-06-03 — spec-v3: storage roots/prefixes/scope + `@cached` produce-or-load
 
