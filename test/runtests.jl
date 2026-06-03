@@ -766,10 +766,61 @@ try
         @test fn(tmp) == "hello"
         rm(tmp; force=true)
     end
+
+    @testset "Cache (@cached produce-or-load)" begin
+        C = DataManifest.Cache
+
+        # Normative parameter hash: canonical JSON (JCS) → SHA-256 reference vector.
+        kt = Dict("grid" => "5x5", "skip_models" => ["CESM.*", "FGOALS.*"])
+        @test C.canonical_json(kt) == "{\"grid\":\"5x5\",\"skip_models\":[\"CESM.*\",\"FGOALS.*\"]}"
+        @test param_hash(kt) == "83425a30d111562d46c1fce9de7618ea7f1f54e1be72e086cba0ac63c6f2ce9b"
+        # NamedTuple + Symbol coercion + `_`-key exclusion give the same hash.
+        @test param_hash((; grid="5x5", skip_models=["CESM.*", "FGOALS.*"])) == param_hash(kt)
+        @test param_hash((; grid="5x5", skip_models=["CESM.*", "FGOALS.*"], _parallel=true)) == param_hash(kt)
+
+        # Spec-disallowed hash inputs are a hard error (floats, nulls).
+        @test_throws ErrorException param_hash(Dict("x" => 0.15))
+        @test_throws ErrorException param_hash(Dict("x" => nothing))
+
+        # @cached round-trip with an explicit cache_dir (jls), + the on-disk layout.
+        dir = mktempdir()
+        calls = Ref(0)
+        @cached cachetype="demo" key=(a -> (; a.grid, a.n)) function demo(;
+                grid::String="5x5", n::Int=3, _verbose::Bool=false, cache_dir=nothing)
+            calls[] += 1
+            return Dict("grid" => grid, "n" => n, "sum" => n * 2)
+        end
+        r1 = demo(; grid="5x5", n=3, cache_dir=dir)
+        r2 = demo(; grid="5x5", n=3, cache_dir=dir, _verbose=true)  # hit; knob ignored
+        @test calls[] == 1
+        @test r1 == r2
+        hh = param_hash((; grid="5x5", n=3))
+        d = joinpath(dir, "demo", hh)
+        for f in ("data.jls", "config.toml", "metadata.toml", ".complete")
+            @test isfile(joinpath(d, f))
+        end
+        @test C.config_is_valid(d)
+        @test C.read_config(d).cachetype == "demo"
+        @test C.cache_key("demo", hh) == "demo/$hh"
+        # cached=false bypasses disk entirely.
+        demo(; grid="z", n=9, cache_dir=dir, cached=false)
+        @test calls[] == 2
+
+        # Produced datasets are keyword-only: a positional arg is rejected at macro time.
+        kwonly_err = try
+            @eval @cached cachetype="bad" key=(a -> (; a.x)) function _bad_pos(y; x=1)
+                y
+            end
+            ""
+        catch e
+            sprint(showerror, e)
+        end
+        @test occursin("keyword-only", kwonly_err)
+    end
 end
 
-@testset "Conformance suite (spec-v2.1)" begin
-    # Source of truth: github.com/perrette/datamanifest.toml, tag spec-v2.1.
+@testset "Conformance suite (spec-v3)" begin
+    # Source of truth: github.com/perrette/datamanifest.toml, tag spec-v3.
     # The pin file records the spec tag + per-file sha256 of each fixture; hashes
     # are over file contents (not the tarball), keeping the pin robust to GitHub
     # re-generating the auto-archive. The tag + content pin is this tool's
@@ -823,9 +874,12 @@ end
                 end
             end
 
-            # Capabilities this tool implements; drives which fixtures are run
+            # Capabilities this tool implements; drives which fixtures are run.
+            # `cache-produce` = the @cached produce-or-load layer (DataManifest.Cache).
+            # `inspect` / `sync` (cached.toml index + maintenance) are not yet implemented.
             SUPPORTED_CAPABILITIES = Set(["lang-read", "lang-write", "shell-fetch",
-                                          "storage", "binding-args", "byte-identity"])
+                                          "storage", "binding-args", "byte-identity",
+                                          "cache-produce"])
 
             toml_fnames = sort(filter(f -> endswith(f, ".toml"), readdir(fixtures_top)))
             for toml_fname in toml_fnames
@@ -845,6 +899,22 @@ end
                 @testset "Fixture: $base" begin
                     tmp_dir = mktempdir()
                     try
+                        if haskey(expected, "config_sidecar")
+                            # cache-produce: a config.toml sidecar (NOT a datasets.toml).
+                            # Recompute the param hash from the key table (every root key
+                            # except [_META]) and check it equals both the recorded
+                            # _META.hash and the fixture's expected hash + key.
+                            cs = expected["config_sidecar"]
+                            cfg = TOML.parsefile(toml_path)
+                            meta = cfg["_META"]
+                            key_table = Dict{String,Any}(k => v for (k, v) in cfg if k != "_META")
+                            ph = DataManifest.Cache.param_hash(key_table)
+                            @test ph == cs["param_hash"]
+                            @test ph == meta["hash"]
+                            @test String(meta["cachetype"]) == cs["cachetype"]
+                            @test DataManifest.Cache.cache_key(String(meta["cachetype"]), ph) == cs["key"]
+                            @test key_table == Dict{String,Any}(String(k) => v for (k, v) in cs["key_table"])
+                        else
                         db = read_dataset(toml_path, tmp_dir; persist=false)
 
                         # Resolution check: compare model against expected Julia rows
@@ -995,6 +1065,7 @@ end
                         write(db2, tmp_toml2)
                         s2 = read(tmp_toml2, String)
                         @test s1 == s2
+                        end  # config_sidecar vs datasets.toml branch
                     finally
                         rm(tmp_dir; force=true, recursive=true)
                     end

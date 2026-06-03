@@ -17,6 +17,7 @@ include("Storage.jl")
 include("Databases.jl")
 include("DefaultLoaders.jl")
 include("PipeLines.jl")
+include("Cache.jl")
 
 # Extend Base.write for Database (Databases.write is the implementation)
 write(db::Databases.Database, path::String; kwargs...) = Databases.write(db, path; kwargs...)
@@ -40,7 +41,10 @@ using .PipeLines: download_dataset, download_datasets, load_dataset, get_project
 
 const add_dataset = add
 
-export Databases, PipeLines, Loaders, Storage
+export Databases, PipeLines, Loaders, Storage, Cache
+# Produce-or-load (`@cached`) companion layer — spec-v3 `cache-produce`.
+using .Cache: @cached, param_hash, cache_key
+export @cached, param_hash, cache_key
 export Database, DatasetEntry
 export set_datasets_folder, set_datasets, get_datasets_folder, get_datasets
 export repr_short, string_short

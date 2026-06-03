@@ -1,12 +1,14 @@
 name = "DataManifest"
 uuid = "b8ee69ef-a20a-4d38-bceb-a68d72817f72"
-version = "0.17.0"
+version = "0.18.0"
 authors = ["Mahé Perrette <mahe.perrette@gmail.com>"]
 
 [deps]
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
@@ -19,7 +21,6 @@ julia = "1.10"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
-Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 DimensionalData = "0703355e-b756-11e9-17c0-8b28908087d0"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
@@ -30,4 +31,4 @@ YAML = "ddb6d928-2868-570f-bddf-ab3f9cf99eb6"
 ZipFile = "a5390f91-8eb1-5f08-bee0-b1d1ffed6cea"
 
 [targets]
-test = ["CodecZlib", "CSV", "DataFrames", "Dates", "DimensionalData", "JSON", "NCDatasets", "OrderedCollections", "Parquet", "Tar", "YAML", "ZipFile"]
+test = ["CodecZlib", "CSV", "DataFrames", "DimensionalData", "JSON", "NCDatasets", "OrderedCollections", "Parquet", "Tar", "YAML", "ZipFile"]

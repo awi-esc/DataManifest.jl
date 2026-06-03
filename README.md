@@ -108,8 +108,9 @@ Moves ref-shaped `julia=`/`loader=` fields and `[_LOADERS]` ref entries into `[<
 
 ## Storage model
 
-As of v0.17.0 (spec-v2), DataManifest uses a portable **`$`-folder-variable storage
-model** that keeps dataset paths consistent across languages:
+As of v0.18.0 (spec-v3), DataManifest uses a portable **`$`-folder-variable storage
+model**: a folder names a **bare root**, and the layer composes the rest of the path
+(`datasets/` for fetched data, `cached/` for produced artifacts) plus an optional **scope**:
 
 ```toml
 [_META]
@@ -117,42 +118,78 @@ schema = 1
 
 [_STORAGE]
 default = "$data"                # project-wide default selector (defaults to $data)
-scratch = "$TMPDIR/datasets"     # user-defined folder variable -> $scratch
+scratch = "$TMPDIR"              # user-defined folder variable (a bare root) -> $scratch
 
 [_STORAGE._HOST."login*.hpc.edu"]
-scratch = "/scratch/$USER/datasets"   # same variable, host-specific resolution
+scratch = "/scratch/$USER"       # same variable, host-specific resolution
+
+[_STORAGE._SCOPE]
+# datasets = "shared-pool"        # share fetched downloads within a group (default: shared)
 
 [my_dataset]
-store = "$cache"                 # put this dataset in the cache folder
+store = "$cache"                 # put this dataset under the cache folder's datasets/ tree
 uri   = "https://example.com/ds.nc"
 
 [big]
-store = "$cache/derived"         # sub-path: keyed under <cache_root>/derived/<key>
+store = "$cache/derived"         # sub-path: keyed under <cache>/derived/datasets/<key>
 uri   = "https://example.com/big.nc"
 ```
 
-A **folder** is referenced as a `$`-variable. Built-in folders resolve to
-language-independent default roots (Python's `platformdirs`):
+A **folder** is referenced as a `$`-variable resolving to a **bare top-level root**; the
+consuming layer adds `datasets/[<scope>/]` (fetch) or `cached/[<scope>/]` (produce) on top:
 
-| Folder   | Linux default                              |
-|----------|--------------------------------------------|
-| `$data`  | `$XDG_DATA_HOME/datamanifest/Datasets`     |
-| `$cache` | `$XDG_CACHE_HOME/datamanifest/Datasets`    |
-| `$repo`  | `<project_root>/datasets`                  |
+| Folder   | Bare root (Linux)                                   | Fetched dataset path           |
+|----------|-----------------------------------------------------|--------------------------------|
+| `$data`  | `$DATAMANIFEST_DIR` or `$XDG_DATA_HOME/datamanifest` | `<root>/datasets/<key>`        |
+| `$cache` | `$DATAMANIFEST_DIR` or `$XDG_CACHE_HOME/datamanifest`| `<root>/datasets/<key>`        |
+| `$repo`  | `<project_root>`                                    | `<root>/datasets/<key>`        |
 
 Any other `[_STORAGE]` key defines a **user folder** (`scratch = "…"` → `$scratch`).
-A dataset's `store` (and the `[_STORAGE].default`) is a `$`-folder **selector**,
-optionally with a sub-path (`$cache/derived`); `[_STORAGE]` values and `local_path`
-are **path expressions** that interpolate `$`-folder variables, `$USER`/env, and `~`.
+A dataset's `store` (and `[_STORAGE].default`) is a `$`-folder **selector**, optionally with
+a sub-path (`$cache/derived`); `[_STORAGE]` values and `local_path` are **path expressions**
+interpolating `$`-folder variables, `$USER`/env, and `~`. The `datasets` scope is empty by
+default (downloads are shared across projects); produced artifacts default to a
+project-isolated `cached` scope.
 
-> **Breaking change in v0.17.0**: bare store names (`store = "cache"`) are replaced
-> by `$`-references (`store = "$cache"`). Bare built-in names are auto-upgraded on
-> read (with a warning) and rewritten in `$`-form; the `mount` store was removed.
-> Default roots are unchanged from v0.16.0, so nothing needs re-downloading.
+> **Breaking change in v0.18.0 (spec-v3)**: folders are now bare roots and the layer applies
+> a lowercase `datasets/` prefix, so the fetched path moved `…/datamanifest/Datasets/<key>`
+> → `…/datamanifest/datasets/<key>`. Existing v0.17.0 downloads still resolve (read-only
+> probe); set `DATAMANIFEST_DIR` to put everything under one tree. `_PROFILE` is shelved
+> (preserved, not resolved) — use the auto-matched `_HOST`.
 
 Every folder variable resolves through one ladder:
-`DATAMANIFEST_<NAME>_DIR` env-var → `_PROFILE.<name>` (when `DATAMANIFEST_PROFILE`
-set) → first matching `_HOST.<glob>` → `[_STORAGE]` base → built-in default.
+`DATAMANIFEST_<NAME>_DIR` env-var → first matching `_HOST.<glob>` → `[_STORAGE]` base →
+built-in default. Prefixes/scopes resolve through `DATAMANIFEST_PREFIX_<KIND>` /
+`DATAMANIFEST_SCOPE_<KIND>` → `[_STORAGE._PREFIX | _SCOPE].<kind>` → default.
+
+## Produce-or-load caching (`@cached`)
+
+Beyond *fetching* declared datasets, DataManifest can *produce-or-load* — cache the result
+of a project function on disk, keyed by its parameters (spec-v3 `cache-produce`):
+
+```julia
+using DataManifest
+
+@cached cachetype="esm_anomaly" ext="jls" key=(a -> (; a.grid, a.skip_models)) function load_anomaly(;
+        grid::String = "5x5",
+        skip_models::Vector{String} = ["CESM.*", "FGOALS.*"],
+        _verbose::Bool = false)          # `_`-prefixed = runtime knob, excluded from the hash
+    # … expensive computation …
+    return result
+end
+
+load_anomaly(; grid="5x5")               # computes once, then loads from disk on repeat calls
+load_anomaly(; grid="5x5", cached=false) # escape hatch: run the body, no disk I/O
+```
+
+The cache key is the SHA-256 of the **canonical JSON** of the hash-affecting keyword
+parameters (cross-tool reproducible). Produced datasets are **keyword-only**; hash inputs
+must be strings/integers/booleans/arrays/objects — floats and nulls raise (pass a float as a
+string). Each artifact is self-describing — `config.toml` (the re-hashable key table) and
+`metadata.toml` (provenance) sit alongside it at
+`<$cache>/cached/<project>/<cachetype>/[<version>/]<hash>/`. `jls` (stdlib `Serialization`)
+is the built-in format; register others (`nc`, `jld2`, …) with
+`DataManifest.Cache.register_format!`.
 
 ## Parameterized bindings
 

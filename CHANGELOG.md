@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.18.0] - 2026-06-03 — spec-v3: storage roots/prefixes/scope + `@cached` produce-or-load
+
+Tracks datamanifest.toml **spec-v3**: a breaking behavioral revision of the storage model
+(it supersedes the spec-v2 model shipped in 0.17.0), plus the first half of the
+produce-or-load companion layer (`cache-produce`). `inspect` (the `cached.toml` index +
+maintenance) and `sync` are deferred to a follow-up.
+
+### Breaking — storage roots, prefixes, and scope
+
+- **Folder variables are bare top-level roots.** `$data` = `user_data_dir` (no `/Datasets`),
+  `$cache` = `user_cache_dir`, `$repo` = `<project_root>`. The lowercase content prefix
+  `datasets/` is applied by the layer, so a fetched dataset now lands at
+  `<root>/datasets/[<scope>/]<key>` (previously `…/Datasets/<key>`).
+- **New `DATAMANIFEST_DIR`** application base: when set, the default root of `$data` and
+  `$cache` (so everything lands under `$DATAMANIFEST_DIR/datasets/…` and `…/cached/…`).
+- **New `[_STORAGE._PREFIX]` / `[_STORAGE._SCOPE]`** tables and `DATAMANIFEST_PREFIX_<KIND>` /
+  `DATAMANIFEST_SCOPE_<KIND>` env vars. The **scope** partition controls sharing — empty for
+  `datasets` (shared), the project id for `cached` (project-isolated).
+- **`_PROFILE` is shelved**: reserved and preserved verbatim, no longer resolved (host
+  specificity is covered by the auto-matched `_HOST`).
+- **Read-only migration probe.** Existing 0.17.0 downloads under `…/datamanifest/Datasets`
+  still resolve (probed read-only, alongside the pre-v1.1 `~/.cache/Datasets` probe), so
+  nothing needs re-downloading; the probe is skipped when `DATAMANIFEST_DATA_DIR` or
+  `DATAMANIFEST_DIR` is set.
+
+### New — produce-or-load (`@cached`, `DataManifest.Cache`, capability `cache-produce`)
+
+- **`@cached cachetype=… key=(args -> (;…)) [ext=] [basename=] [version=] [store=]`** wraps a
+  **keyword-only** function with transparent disk caching: a `cached::Bool=true` escape
+  hatch, `_`-prefixed runtime knobs excluded from the hash, and a `_metadata_extras` audit
+  channel merged into the sidecar. (The macro is a non-normative ergonomic surface, ported
+  from LGMIO's `@cached`.)
+- **Parameter-hash keying.** The key is the SHA-256 of the **canonical JSON (JCS, RFC 8785)**
+  of the hash-affecting keyword parameters — cross-tool reproducible (reference vector
+  `83425a30…`). Hash inputs are restricted to strings/integers/booleans/arrays/objects;
+  **floats and nulls are a hard error**, and positional arguments are rejected (produced
+  datasets are keyword-only).
+- **Self-describing artifacts** at `<folder>/cached/[<scope>/]<cachetype>/[<version>/]<hash>/`:
+  the produced artifact plus `config.toml` (re-hashable key table + `[_META]`) and
+  `metadata.toml` (provenance: `created`/`tool`/`host`/`user`/`[git]`, write-if-absent),
+  materialized via the shared safe-materialization primitive. Default `store = "$cache"`.
+- **Artifact format registry.** `jls` (stdlib `Serialization`) is built in; other formats
+  (`nc`/`jld2`/…) register a `(save, load)` pair via `DataManifest.Cache.register_format!`
+  (the produced byte format is per-tool, not cross-language).
+- Conformance pin advanced to **`spec-v3`**; the `config_sidecar` fixture (param-hash
+  re-check) passes. `Dates` and `Serialization` are now declared dependencies.
+
 ## [0.17.0] - 2026-06-03 — spec-v2: `$`-folder-variable storage model
 
 Implements the spec-v2 storage-model revision (datamanifest.toml `spec-v2` /
