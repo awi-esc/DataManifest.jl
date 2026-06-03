@@ -71,39 +71,49 @@ See the [full documentation](/docs/doc.md) and the [API](/docs/api.md).
 
 ## Per-language bindings (`_LANG`)
 
-Custom fetch and load logic lives in a dedicated `_LANG` namespace, so a single manifest can serve multiple language implementations without conflicts. Bindings are `module:function` references — never inline code:
+Custom fetch and load logic lives in a dedicated `_LANG` namespace, so a single manifest can serve multiple language implementations without conflicts. Bindings are `module:function` references — never inline code (the snippets below are drawn from the spec's [`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml)):
 
 ```toml
 [_META]
 schema = 1
 
+# Project-wide default loaders, per language: format -> binding.
 [_LANG.julia.loaders]
-nc = "MyProject:load_netcdf"          # per-format default loader for this manifest
+csv = "CSV:read"
+nc  = "NCDatasets:Dataset"
 
-[my_dataset._LANG.julia]
-fetcher = "MyFetchers:fetch_my_data"  # called instead of the built-in URI download
-loader  = "MyLoaders:load_my_data"    # called instead of the format default
+# A per-dataset loader override (overrides the nc format default for this dataset only).
+[ocean_temp._LANG.julia]
+loader = "MyClimate:load_argo"
+
+# A dataset with no public URI: produced by a fetcher. The own-language fetcher runs
+# in-process; the shell fetcher is a cheap cross-language fallback that writes $download_path.
+[model_output._LANG.julia]
+fetcher = "MyClimate:build_model_output"
+[model_output._LANG.shell]
+fetcher = "make model_output OUTPUT=$download_path"
 ```
 
 A `"Module:function"` ref is resolved at runtime by `using Module` followed by `getfield(Module, :function)` — no `eval`, no `include_string`.
 
-**Fetch ladder** (per dataset, in order): own `_LANG.julia.fetcher` → `_LANG.shell.fetcher` (shell template) → `uri`/`uris` → error. Delegation to peer CLIs is not yet implemented.
+**Fetch ladder** (per dataset, in order): own `_LANG.julia.fetcher` → `_LANG.shell.fetcher` (shell template) → **cross-language fetch (rung 3)** → `uri`/`uris` → error. Rung 3 is the rare case where a dataset's bytes can be produced only by a foreign-language fetcher (e.g. `[<ds>._LANG.python].fetcher`): DataManifest.jl delegates to the Python `datamanifest` CLI when it is on `PATH` (`datamanifest download <name>`), which materializes the result in the shared store; it falls through to `uri` when the peer is absent, disabled (`delegate = false`), or fails.
 
 **Load ladder** (per dataset, in order): own `_LANG.julia.loader` → manifest `[_LANG.julia.loaders][format]` → built-in format default → error. Never spawns a subprocess.
 
-Foreign `_LANG.<other>` subtrees (e.g. `[bar._LANG.python]`) and unknown `_*` top-level tables are carried through verbatim on every read→write cycle; only the Julia subtree is regenerated from the model.
+Bindings are **string or table** at every site (spec-v3.3) — a bare `module:function` string, or a `{ ref, args, kwargs }` table — including the project-wide `[_LANG.julia.loaders]` map, so a format default can be parameterized exactly like a per-dataset loader. Foreign `_LANG.<other>` subtrees (e.g. `[bar._LANG.python]`) and unknown `_*` top-level tables are carried through verbatim on every read→write cycle; only the Julia subtree is regenerated from the model.
 
 ### Parameterized bindings
 
-Fetcher and loader refs can carry `args`/`kwargs` for more flexible dispatch — reusing one function across datasets that differ only in arguments:
+A binding's **table form** carries `args`/`kwargs`, reusing one function across datasets that differ only in arguments:
 
 ```toml
-[my_dataset._LANG.julia]
-fetcher = { ref = "MyFetchers:fetch", args = ["$download_path"], kwargs = { format = "nc" } }
-loader  = { ref = "MyLoaders:load",  args = ["$path"],           kwargs = { grid = "5x5" } }
+[esm_5x5._LANG.julia.loader]
+ref    = "MyClimate:load_esm"
+args   = ["$path"]
+kwargs = { grid = "5x5", skip_models = ["CESM.*"] }
 ```
 
-At call time, `$var` placeholders in string values are substituted with the dataset's context variables (`$download_path` / `$path`, `$key`, `$uri`, `$version`, `$doi`, `$format`, `$branch`, `$project_root`) and the function is called as `ref(args...; kwargs...)`. Bare-string bindings (`fetcher = "Mod:fn"`) keep the conventional keyword-argument call.
+At call time, `$var` placeholders in string values are substituted with the dataset's context variables (`$download_path` / `$path`, `$key`, `$uri`, `$version`, `$doi`, `$format`, `$branch`, `$project_root`) and the function is called as `ref(args...; kwargs...)`. A ref-only binding — the bare string `"Mod:fn"`, equivalently `{ ref = "Mod:fn" }` — keeps the conventional call and is written back as the string.
 
 ### Migration
 
@@ -223,11 +233,11 @@ end
 
 ## Conformance
 
-This release targets the **datamanifest.toml spec tag `spec-v3.2`** (source of truth: <https://github.com/perrette/datamanifest.toml>).
+This release targets the **datamanifest.toml spec tag `spec-v3.3`** (source of truth: <https://github.com/perrette/datamanifest.toml>). A complete, annotated example manifest lives there: [`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml).
 
-Implemented capabilities: **`lang-read`**, **`lang-write`**, **`shell-fetch`**, **`storage`**, **`binding-args`**, **`byte-identity`**, **`cache-produce`**, **`inspect`**. Only **`sync`** (cross-machine `push`/`pull`) is not yet implemented.
+Implemented capabilities: **`lang-read`**, **`lang-write`**, **`shell-fetch`**, **`storage`**, **`binding-args`**, **`byte-identity`**, **`cache-produce`**, **`inspect`**, **`delegation`**. Only **`sync`** (cross-machine `push`/`pull`) is not yet implemented.
 
-The test suite downloads the spec's tagged tarball, verifies every fixture file against a pinned per-file sha256 map (`test/conformance_pin.toml`), and runs only the fixtures whose capability set is a subset of the above. Fixtures requiring unimplemented capabilities (e.g. delegation) are skipped with a logged reason.
+The test suite downloads the spec's tagged tarball, verifies every fixture file against a pinned per-file sha256 map (`test/conformance_pin.toml`), and runs only the fixtures whose capability set is a subset of the above. Fixtures requiring unimplemented capabilities (e.g. `sync`) are skipped with a logged reason.
 
 ## Roadmap
 

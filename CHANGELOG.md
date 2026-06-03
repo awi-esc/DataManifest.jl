@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.20.0] - 2026-06-03 — spec-v3.3: cross-language fetch (`delegation`) + binding harmonization
+
+Tracks datamanifest.toml **spec-v3.3**. Adds the cross-language fetch rung (capability
+**`delegation`**) and harmonizes binding forms (string|table everywhere). `_META.schema`
+stays **1**. With this release, only **`sync`** remains unimplemented.
+
+### New — cross-language fetch (capability `delegation`)
+
+- **Fetch ladder rung 3.** When a dataset's bytes can be produced only by a foreign-language
+  fetcher (no own `_LANG.julia.fetcher`, no `_LANG.shell.fetcher`, no `uri`, but e.g. a
+  `[<ds>._LANG.python].fetcher`), DataManifest.jl **delegates to the Python `datamanifest`
+  CLI** when it is on `PATH`: it runs `datamanifest download <name>` (pointing the peer at the
+  manifest via `DATAMANIFEST_TOML`), the peer materializes the result in the shared store
+  (verifying `sha256`), and we read it back. Falls through to `uri` when the peer is absent,
+  the call fails, or the dataset sets `delegate = false`. Native (Julia) and `shell` datasets
+  never reach this rung; it applies to fetched datasets only (never produced `@cached` ones).
+
+### Changed — spec-v3.3 binding harmonization (string|table everywhere)
+
+- A **binding** (`fetcher`/`loader`) is now string *or* table at **every** site — including the
+  project-wide `[_LANG.julia.loaders]` map, whose values may now be a `{ ref, args, kwargs }`
+  table (a parameterized format-default loader), not just a `module:function` string.
+- **Canonical write:** a ref-only binding (`{ ref = "M:f" }`) is normalized to the bare string
+  `"M:f"` on write; a binding carrying `args`/`kwargs` is written as a table. (Per-dataset
+  bindings already followed this; project loaders now do too.)
+
+### Conformance
+
+- Targets spec tag **`spec-v3.3`** and declares the **`delegation`** capability (the fixture
+  suite is unchanged from spec-v3.2). 229 unit + 194 conformance tests pass.
+
+### Docs
+
+- README aligned with the spec's annotated [`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml) (linked, and the binding snippets drawn from it).
+
 ## [0.19.0] - 2026-06-03 — spec-v3: `cached.toml` index + store maintenance (`inspect`)
 
 Completes the produce-or-load companion layer with the second half of spec-v3: the

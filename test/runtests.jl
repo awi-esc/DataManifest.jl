@@ -943,6 +943,64 @@ try
         @test !isdir(survivor.location)
         @test newloc == joinpath(dest, survivor.cachetype, survivor.hash)
     end
+
+    @testset "spec-v3.3 bindings + delegation (rung 3)" begin
+        DB = DataManifest.Databases
+        P  = DataManifest.PipeLines
+
+        # --- Project-wide loaders accept string|table; ref-only writes as a string ---
+        mktempdir() do d
+            toml = joinpath(d, "datasets.toml")
+            write(toml, """
+            [_META]
+            schema = 1
+
+            [_LANG.julia.loaders]
+            nc  = "NCDatasets:Dataset"
+            csv = { ref = "CSV:read" }
+            grid = { ref = "MyPkg:load", kwargs = { res = "5x5" } }
+
+            [ds]
+            uri = "https://example.com/x.nc"
+            format = "nc"
+            """)
+            db = read_dataset(toml, d; persist=false)
+            @test db.lang_julia_loaders["nc"] == "NCDatasets:Dataset"
+            @test db.lang_julia_loaders["csv"] isa AbstractDict     # raw binding kept
+            @test db.lang_julia_loaders["grid"]["kwargs"]["res"] == "5x5"
+
+            out = joinpath(d, "out.toml")
+            write(db, out)
+            txt = read(out, String)
+            @test occursin("nc = \"NCDatasets:Dataset\"", txt)
+            @test occursin("csv = \"CSV:read\"", txt)         # ref-only → bare string
+            @test occursin("ref = \"MyPkg:load\"", txt)       # parameterized → table
+            # Round-trips back identically.
+            db2 = read_dataset(out, d; persist=false)
+            @test db2.lang_julia_loaders["csv"] == "CSV:read"  # normalized on write
+            @test db2.lang_julia_loaders["grid"]["kwargs"]["res"] == "5x5"
+        end
+
+        # --- Delegation (rung 3) gating helpers ---
+        # A foreign (python) fetcher with no julia/shell fetcher and no uri is delegated.
+        e = DB.DatasetEntry(; extra=Dict{String,Any}(
+            "_LANG" => Dict{String,Any}("python" => Dict{String,Any}("fetcher" => "m:f"))))
+        @test P._foreign_fetcher_langs(e) == ["python"]
+        @test P._should_delegate(e) == true
+        # `delegate = false` disables it.
+        e_off = DB.DatasetEntry(; extra=Dict{String,Any}(
+            "delegate" => false,
+            "_LANG" => Dict{String,Any}("python" => Dict{String,Any}("fetcher" => "m:f"))))
+        @test P._should_delegate(e_off) == false
+        # julia/shell fetchers are not "foreign"; a uri-only dataset has none.
+        e_shell = DB.DatasetEntry(; extra=Dict{String,Any}(
+            "_LANG" => Dict{String,Any}("shell" => Dict{String,Any}("fetcher" => "make x"))))
+        @test isempty(P._foreign_fetcher_langs(e_shell))
+        @test isempty(P._foreign_fetcher_langs(DB.DatasetEntry(; uri="https://x/y.nc")))
+        # _delegate_fetch is a no-op (false) when there is no manifest on disk.
+        db_mem = DB.Database(persist=false)
+        @test P._delegate_fetch(db_mem, "ds") == false
+    end
 end
 
 @testset "Conformance suite (spec-v3.x)" begin
@@ -1003,10 +1061,11 @@ end
             # Capabilities this tool implements; drives which fixtures are run.
             # `cache-produce` = the @cached produce-or-load layer (DataManifest.Cache).
             # `inspect` = the cached.toml index + store-maintenance surface (Phase 2).
+            # `delegation` = cross-language fetch rung 3 via the peer `datamanifest` CLI.
             # `sync` (cross-machine push/pull) is not yet implemented.
             SUPPORTED_CAPABILITIES = Set(["lang-read", "lang-write", "shell-fetch",
                                           "storage", "binding-args", "byte-identity",
-                                          "cache-produce", "inspect"])
+                                          "cache-produce", "inspect", "delegation"])
 
             toml_fnames = sort(filter(f -> endswith(f, ".toml"), readdir(fixtures_top)))
             for toml_fname in toml_fnames

@@ -247,9 +247,10 @@ mutable struct Database
     extra::Dict{String,Any}
     # Schema version from `[_META].schema`; `nothing` ⇒ v0 (legacy flat).
     schema::Union{Int,Nothing}
-    # Own v1 default loaders parsed from `[_LANG.julia.loaders]`: a
-    # `format → module:function` ref map. Empty ⇒ none declared.
-    lang_julia_loaders::Dict{String,String}
+    # Own v1 default loaders parsed from `[_LANG.julia.loaders]`: a `format → binding`
+    # map (spec-v3.3 — each binding is a `module:function` string or a `{ ref, args,
+    # kwargs }` table, exactly like a per-dataset loader). Empty ⇒ none declared.
+    lang_julia_loaders::Dict{String,Any}
     # Parsed copy of `[_STORAGE]` for the path resolver; verbatim copy stays in
     # `extra` for lossless round-trip. Empty when `[_STORAGE]` is absent.
     storage_config::Dict{String,Any}
@@ -266,7 +267,7 @@ mutable struct Database
             loader_context_module::Union{Module,Nothing},
             extra::Dict{String,Any}=Dict{String,Any}(),
             schema::Union{Int,Nothing}=nothing,
-            lang_julia_loaders::Dict{String,String}=Dict{String,String}(),
+            lang_julia_loaders::Dict{String,Any}=Dict{String,Any}(),
             storage_config::Dict{String,Any}=Dict{String,Any}())
         new(datasets, datasets_toml, datasets_folder, skip_checksum, skip_checksum_folders,
             loaders, loaders_julia_modules, loaders_julia_includes, loader_cache, loader_context_module,
@@ -311,8 +312,12 @@ function to_dict(db::Database; kwargs...)
     # map) from the parsed model and merge it with any foreign top-level
     # `[_LANG.<other>]` kept verbatim in `db.extra` (already spliced above).
     if !isempty(db.lang_julia_loaders)
+        # Canonical write (spec-v3.3): a ref-only binding emits the bare string, a
+        # parameterized one a `{ ref, args, kwargs }` table — via the same normalization
+        # as per-dataset bindings.
         julia_block = Dict{String,Any}(
-            "loaders" => Dict{String,Any}(k => v for (k, v) in db.lang_julia_loaders),
+            "loaders" => Dict{String,Any}(
+                k => _binding_to_dict(_parse_binding(v)...) for (k, v) in db.lang_julia_loaders),
         )
         lang = (haskey(result, "_LANG") && result["_LANG"] isa AbstractDict) ?
             copy(result["_LANG"]) : Dict{String,Any}()
@@ -714,9 +719,13 @@ function _parse_database_lang!(db::Database)
     if julia isa AbstractDict
         loaders = get(julia, "loaders", nothing)
         if loaders isa AbstractDict
-            for (fmt, ref) in loaders
-                if ref isa AbstractString
-                    db.lang_julia_loaders[String(fmt)] = String(ref)
+            for (fmt, b) in loaders
+                # spec-v3.3: a project loader is a binding (string or `{ ref, … }` table);
+                # keep it raw for lossless round-trip + parameterized resolution.
+                if b isa AbstractString
+                    db.lang_julia_loaders[String(fmt)] = String(b)
+                elseif b isa AbstractDict
+                    db.lang_julia_loaders[String(fmt)] = Dict{String,Any}(String(k) => v for (k, v) in b)
                 end
             end
         end

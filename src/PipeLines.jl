@@ -5,7 +5,7 @@ import Downloads
 using ..Config: info, COMPRESSED_FORMATS
 using ..Databases: DatasetEntry, Database, get_datasets, get_dataset_path, resolve_existing_path,
     search_dataset, verify_checksum,
-    extract_file, get_project_root, get_default_database, parse_uri_metadata
+    extract_file, get_project_root, get_default_database, parse_uri_metadata, _parse_binding
 using ..Storage: tmp_path, lock_path, marker_path, is_complete
 using ..DefaultLoaders: default_loader as builtin_default_loader
 
@@ -306,6 +306,57 @@ function _lang_shell_fetcher(entry::DatasetEntry)::String
     return f isa AbstractString ? String(f) : ""
 end
 
+# ----- Cross-language fetch (fetch ladder rung 3): delegate to the peer CLI -----
+# The rare case: a dataset's bytes can be produced only by a fetcher defined in another
+# language (no own Julia fetcher, no shell fetcher, no `uri`). The Python `datamanifest` is
+# the reference peer and aims to cover every language, so we invoke it: it resolves its own
+# store (matching ours by default) and materializes the result there, which our
+# read-resolution then finds. Falls through to the normal path (→ a clear "no fetcher"
+# error) when delegation is disabled, the CLI is absent, or the call fails.
+
+const PEER_CLI = "datamanifest"
+
+# Languages other than julia/shell that declare a `fetcher` for this dataset — i.e. a
+# foreign fetcher only the peer CLI can run.
+function _foreign_fetcher_langs(entry::DatasetEntry)::Vector{String}
+    lang = get(entry.extra, "_LANG", nothing)
+    lang isa AbstractDict || return String[]
+    out = String[]
+    for (k, v) in lang
+        ks = String(k)
+        (ks == "julia" || ks == "shell") && continue
+        v isa AbstractDict && haskey(v, "fetcher") && push!(out, ks)
+    end
+    return out
+end
+
+# Whether to attempt cross-language delegation for this dataset. The optional `delegate`
+# field forces it on/off; absent, it defaults on — delegation is the only way to fetch a
+# foreign-only dataset, so the alternative is a hard "no fetcher" error.
+function _should_delegate(entry::DatasetEntry)::Bool
+    d = get(entry.extra, "delegate", nothing)
+    return d isa Bool ? d : true
+end
+
+# Run `datamanifest download <name>`, pointing the peer at our manifest via
+# `DATAMANIFEST_TOML`. The peer writes into the shared store (verifying `sha256`) and exits
+# non-zero on failure. Returns true on a zero exit; false when the CLI is absent / no
+# manifest on disk / the call fails.
+function _delegate_fetch(db::Database, name::AbstractString)::Bool
+    (Sys.which(PEER_CLI) === nothing) && return false
+    isempty(db.datasets_toml) && return false
+    env = copy(ENV)
+    env["DATAMANIFEST_TOML"] = abspath(db.datasets_toml)
+    try
+        info("Cross-language fetch: delegating \"$name\" to the peer CLI (`$PEER_CLI download`)")
+        run(setenv(`$PEER_CLI download $name`, env))
+        return true
+    catch e
+        info("Peer-CLI fetch for \"$name\" failed; falling through ($(sprint(showerror, e)))")
+        return false
+    end
+end
+
 # Expand and run a shell fetch template. Shared by the v0 `shell=` field and the
 # v1 `_LANG.shell.fetcher` rung so both behave identically.
 function _run_shell(template::String, dataset::DatasetEntry, download_path::String, project_root::String;
@@ -574,6 +625,25 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
     end
 
     did_fetch = false
+
+    # Fetch ladder rung 3 — cross-language fetch (the rare case): no own Julia fetcher, no
+    # shell fetcher, no `uri`, but a foreign-language fetcher exists. Delegate to the peer
+    # `datamanifest` CLI, which materializes the result in the shared store; we then read it.
+    if db.schema == 1 && (overwrite || !(isfile(download_path) || isdir(download_path))) &&
+       dataset.lang_julia_fetcher == "" && _lang_shell_fetcher(dataset) == "" &&
+       isempty(dataset.uris) && dataset.uri == "" &&
+       _should_delegate(dataset) && !isempty(_foreign_fetcher_langs(dataset))
+        if _delegate_fetch(db, name)
+            existing = resolve_existing_path(db, dataset; extract=extract)
+            if isfile(existing) || isdir(existing)
+                info("Dataset fetched via peer CLI: $existing")
+                verify_checksum(db, dataset; extract=extract, skip_if_complete=true)
+                return existing
+            end
+        end
+        # delegation off/unavailable/failed → fall through (the path below errors clearly).
+    end
+
     if overwrite || !(isfile(download_path) || isdir(download_path))
         info("Downloading dataset: $(dataset.uri) to $download_path")
         project_root = get_project_root(db)
@@ -674,8 +744,23 @@ function _resolve_loader_v1(db::Database, entry::DatasetEntry)
     format = (entry.extract && entry.format in COMPRESSED_FORMATS) ? "" : entry.format
     fmt = lowercase(strip(format))
     if !isempty(fmt)
-        for (k, ref) in pairs(db.lang_julia_loaders)
-            lowercase(strip(k)) == fmt && return _resolve_ref(db, ref)
+        for (k, b) in pairs(db.lang_julia_loaders)
+            if lowercase(strip(k)) == fmt
+                # spec-v3.3: a project loader is a binding (string or `{ ref, args, kwargs }`).
+                ref, args, kwargs = _parse_binding(b)
+                isempty(ref) && error("Project loader for format \"$fmt\" has no `ref`.")
+                fn = _resolve_ref(db, ref)
+                if isempty(args) && isempty(kwargs)
+                    return fn   # ref-only: conventional call fn(path)
+                end
+                # Parameterized: substitute `$var` (incl. `$path`) and call ref(args...; kwargs...).
+                return function (path)
+                    subs = _binding_subst_pairs(entry, "\$path" => path, get_project_root(db))
+                    a = _subst_binding_value(args, subs)
+                    kw = _kwargs_pairs(_subst_binding_value(kwargs, subs))
+                    return Base.invokelatest(fn, a...; kw...)
+                end
+            end
         end
     end
     if isempty(fmt)
