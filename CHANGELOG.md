@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.20.0] - 2026-06-03 — spec-v3.6: cross-language fetch + language-implicit & bare-shell bindings
+
+Tracks datamanifest.toml **spec-v3.6**. Adds the cross-language fetch rung (capability
+**`delegation`**), harmonizes binding forms (string|table everywhere), and adds
+**language-implicit (bare) bindings** + the **bare language-agnostic `shell` field**.
+`_META.schema` stays **1**. With this release, only **`sync`** remains unimplemented.
+
+### New — language-implicit bindings (spec-v3.4/3.6) + bare `shell` field (spec-v3.5)
+
+- **Bare `fetcher` / `loader`** on a dataset are read as the running tool's **own-language**
+  binding (equivalent to `[<ds>._LANG.julia].fetcher`/`.loader`), and the top-level
+  **`[_LOADERS]`** map is the language-implicit counterpart of `[_LANG.julia.loaders]`. The
+  load/fetch ladders now consult them: own `_LANG.julia` rung → bare rung, with the explicit
+  `_LANG.julia` binding **taking precedence**. A bare binding is **present** for Julia, so
+  (spec-v3.6) it is treated exactly like an explicit `_LANG.julia` binding — **fail loud**: a
+  resolution failure errors and a runtime error propagates, never a silent fall-through to a
+  different loader/fetcher; the ladder only skips bindings that are **absent** for Julia.
+  Bare bindings are **preserved verbatim** on write (never promoted into `_LANG.julia`).
+- **Bare `shell`** is now a language-agnostic dataset field (the same command for every tool),
+  the canonical form of the shell fetcher; the legacy `[<ds>._LANG.shell].fetcher` is still
+  read. Fetch-ladder rung 2 runs `entry.shell` (else the legacy form).
+
+### New — cross-language fetch (capability `delegation`)
+
+- **Fetch ladder rung 3.** When a dataset's bytes can be produced only by a foreign-language
+  fetcher (no own `_LANG.julia.fetcher`, no `_LANG.shell.fetcher`, no `uri`, but e.g. a
+  `[<ds>._LANG.python].fetcher`), DataManifest.jl **delegates to the Python `datamanifest`
+  CLI** when it is on `PATH`: it runs `datamanifest download <name>` (pointing the peer at the
+  manifest via `DATAMANIFEST_TOML`), the peer materializes the result in the shared store
+  (verifying `sha256`), and we read it back. Falls through to `uri` when the peer is absent,
+  the call fails, or the dataset sets `delegate = false`. Native (Julia) and `shell` datasets
+  never reach this rung; it applies to fetched datasets only (never produced `@cached` ones).
+
+### Changed — spec-v3.3 binding harmonization (string|table everywhere)
+
+- A **binding** (`fetcher`/`loader`) is now string *or* table at **every** site — including the
+  project-wide `[_LANG.julia.loaders]` map, whose values may now be a `{ ref, args, kwargs }`
+  table (a parameterized format-default loader), not just a `module:function` string.
+- **Canonical write:** a ref-only binding (`{ ref = "M:f" }`) is normalized to the bare string
+  `"M:f"` on write; a binding carrying `args`/`kwargs` is written as a table. (Per-dataset
+  bindings already followed this; project loaders now do too.)
+
+### Conformance
+
+- Targets spec tag **`spec-v3.6`** and declares the **`delegation`** capability; validates
+  the new `lang_implicit` fixture (bare bindings + `[_LOADERS]`) and the updated `multilang`
+  fixture (bare `shell` field). 235 unit + 231 conformance tests pass.
+
+### Docs
+
+- README aligned with the spec's annotated [`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml) (linked, and the binding snippets drawn from it).
+
 ## [0.19.0] - 2026-06-03 — spec-v3: `cached.toml` index + store maintenance (`inspect`)
 
 Completes the produce-or-load companion layer with the second half of spec-v3: the

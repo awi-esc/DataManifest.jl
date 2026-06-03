@@ -17,7 +17,13 @@ end
 
 # ----- conformance helpers (used by the conformance testset below) -----
 
+# A binding's ref: the bare string, or a `{ ref … }` table's `ref` ("" otherwise).
+_conf_binding_ref(b) = b isa AbstractString ? String(b) :
+    (b isa AbstractDict && get(b, "ref", "") isa AbstractString ? String(get(b, "ref", "")) : "")
+
+# spec-v3.5: the dataset's shell command — bare `shell` field, else legacy `[_LANG.shell].fetcher`.
 function _conf_shell_fetcher(entry::DatasetEntry)::String
+    entry.shell != "" && return entry.shell
     lang = get(entry.extra, "_LANG", nothing)
     lang isa AbstractDict || return ""
     shell = get(lang, "shell", nothing)
@@ -26,8 +32,14 @@ function _conf_shell_fetcher(entry::DatasetEntry)::String
     f isa AbstractString ? String(f) : ""
 end
 
+# spec-v3.4: the bare (language-implicit) fetcher ref, or "".
+_conf_bare_fetcher(entry::DatasetEntry)::String = _conf_binding_ref(get(entry.extra, "fetcher", nothing))
+
 function _conf_infer_fetcher(db::Database, entry::DatasetEntry)
+    # rung 1: explicit own fetcher, else bare (language-implicit) fetcher.
     entry.lang_julia_fetcher != "" && return ("own-fetcher", entry.lang_julia_fetcher)
+    bf = _conf_bare_fetcher(entry)
+    bf != "" && return ("own-fetcher", bf)
     sf = _conf_shell_fetcher(entry)
     sf != "" && return ("shell", sf)
     (entry.uri != "" || !isempty(entry.uris)) && return ("uri", nothing)
@@ -35,11 +47,17 @@ function _conf_infer_fetcher(db::Database, entry::DatasetEntry)
 end
 
 function _conf_infer_loader(db::Database, entry::DatasetEntry)
+    # rung 1: explicit own loader, else bare (language-implicit) loader.
     entry.lang_julia_loader != "" && return ("per-dataset", entry.lang_julia_loader)
+    entry.loader != "" && return ("per-dataset", entry.loader)
     fmt = lowercase(strip(entry.format))
     if !isempty(fmt)
-        for (k, ref) in pairs(db.lang_julia_loaders)
-            lowercase(strip(k)) == fmt && return ("manifest-format-default", ref)
+        # rung 2: `[_LANG.julia.loaders][fmt]`, else `[_LOADERS][fmt]` (language-implicit).
+        for (k, b) in pairs(db.lang_julia_loaders)
+            lowercase(strip(k)) == fmt && return ("manifest-format-default", _conf_binding_ref(b))
+        end
+        for (k, b) in pairs(db.loaders)
+            lowercase(strip(k)) == fmt && return ("manifest-format-default", _conf_binding_ref(b))
         end
     end
     return ("builtin", nothing)
@@ -943,6 +961,103 @@ try
         @test !isdir(survivor.location)
         @test newloc == joinpath(dest, survivor.cachetype, survivor.hash)
     end
+
+    @testset "spec-v3.3 bindings + delegation (rung 3)" begin
+        DB = DataManifest.Databases
+        P  = DataManifest.PipeLines
+
+        # --- Project-wide loaders accept string|table; ref-only writes as a string ---
+        mktempdir() do d
+            toml = joinpath(d, "datasets.toml")
+            write(toml, """
+            [_META]
+            schema = 1
+
+            [_LANG.julia.loaders]
+            nc  = "NCDatasets:Dataset"
+            csv = { ref = "CSV:read" }
+            grid = { ref = "MyPkg:load", kwargs = { res = "5x5" } }
+
+            [ds]
+            uri = "https://example.com/x.nc"
+            format = "nc"
+            """)
+            db = read_dataset(toml, d; persist=false)
+            @test db.lang_julia_loaders["nc"] == "NCDatasets:Dataset"
+            @test db.lang_julia_loaders["csv"] isa AbstractDict     # raw binding kept
+            @test db.lang_julia_loaders["grid"]["kwargs"]["res"] == "5x5"
+
+            out = joinpath(d, "out.toml")
+            write(db, out)
+            txt = read(out, String)
+            @test occursin("nc = \"NCDatasets:Dataset\"", txt)
+            @test occursin("csv = \"CSV:read\"", txt)         # ref-only → bare string
+            @test occursin("ref = \"MyPkg:load\"", txt)       # parameterized → table
+            # Round-trips back identically.
+            db2 = read_dataset(out, d; persist=false)
+            @test db2.lang_julia_loaders["csv"] == "CSV:read"  # normalized on write
+            @test db2.lang_julia_loaders["grid"]["kwargs"]["res"] == "5x5"
+        end
+
+        # --- Delegation (rung 3) gating helpers ---
+        # A foreign (python) fetcher with no julia/shell fetcher and no uri is delegated.
+        e = DB.DatasetEntry(; extra=Dict{String,Any}(
+            "_LANG" => Dict{String,Any}("python" => Dict{String,Any}("fetcher" => "m:f"))))
+        @test P._foreign_fetcher_langs(e) == ["python"]
+        @test P._should_delegate(e) == true
+        # `delegate = false` disables it.
+        e_off = DB.DatasetEntry(; extra=Dict{String,Any}(
+            "delegate" => false,
+            "_LANG" => Dict{String,Any}("python" => Dict{String,Any}("fetcher" => "m:f"))))
+        @test P._should_delegate(e_off) == false
+        # julia/shell fetchers are not "foreign"; a uri-only dataset has none.
+        e_shell = DB.DatasetEntry(; extra=Dict{String,Any}(
+            "_LANG" => Dict{String,Any}("shell" => Dict{String,Any}("fetcher" => "make x"))))
+        @test isempty(P._foreign_fetcher_langs(e_shell))
+        @test isempty(P._foreign_fetcher_langs(DB.DatasetEntry(; uri="https://x/y.nc")))
+        # _delegate_fetch is a no-op (false) when there is no manifest on disk.
+        db_mem = DB.Database(persist=false)
+        @test P._delegate_fetch(db_mem, "ds") == false
+
+        # spec-v3.5: the dataset's shell command is the bare `shell` field (preferred over
+        # the legacy [_LANG.shell].fetcher).
+        e_bare = DB.DatasetEntry(; shell="make x")
+        @test P._shell_command(e_bare) == "make x"
+        e_legacy = DB.DatasetEntry(; extra=Dict{String,Any}(
+            "_LANG" => Dict{String,Any}("shell" => Dict{String,Any}("fetcher" => "old"))))
+        @test P._shell_command(e_legacy) == "old"
+        # spec-v3.4: bare fetcher ref (string + table form).
+        @test P._bare_fetcher_ref(DB.DatasetEntry(; extra=Dict{String,Any}("fetcher" => "M:f"))) == "M:f"
+        @test P._bare_fetcher_ref(DB.DatasetEntry(; extra=Dict{String,Any}(
+            "fetcher" => Dict{String,Any}("ref" => "M:f")))) == "M:f"
+
+        # spec-v3.6: a present bare loader that does not resolve is an ERROR — it MUST NOT
+        # fall through to the built-in csv loader (which would otherwise succeed here).
+        e_bad = DB.DatasetEntry(; format="csv", loader="NoSuchModule12345abc:nope")
+        @test_throws Exception P._resolve_loader_v1(DB.Database(persist=false), e_bad)
+    end
+
+    @testset "spec-v3.5 bare shell fetch (end-to-end)" begin
+        # A v1 dataset with a bare `shell` command and no uri is produced via fetch ladder
+        # rung 2 (bare shell), then resolves on disk — no _LANG.shell wrapper needed.
+        mktempdir() do d
+            src = joinpath(d, "src.txt"); write(src, "from-bare-shell")
+            toml = joinpath(d, "datasets.toml")
+            write(toml, """
+            [_META]
+            schema = 1
+
+            [made]
+            format = "txt"
+            key    = "made"
+            shell  = "cp $src \$download_path"
+            """)
+            db = read_dataset(toml, joinpath(d, "store"); persist=false)
+            path = download_dataset(db, "made")
+            @test isfile(path)
+            @test strip(read(path, String)) == "from-bare-shell"
+        end
+    end
 end
 
 @testset "Conformance suite (spec-v3.x)" begin
@@ -1003,10 +1118,11 @@ end
             # Capabilities this tool implements; drives which fixtures are run.
             # `cache-produce` = the @cached produce-or-load layer (DataManifest.Cache).
             # `inspect` = the cached.toml index + store-maintenance surface (Phase 2).
+            # `delegation` = cross-language fetch rung 3 via the peer `datamanifest` CLI.
             # `sync` (cross-machine push/pull) is not yet implemented.
             SUPPORTED_CAPABILITIES = Set(["lang-read", "lang-write", "shell-fetch",
                                           "storage", "binding-args", "byte-identity",
-                                          "cache-produce", "inspect"])
+                                          "cache-produce", "inspect", "delegation"])
 
             toml_fnames = sort(filter(f -> endswith(f, ".toml"), readdir(fixtures_top)))
             for toml_fname in toml_fnames
