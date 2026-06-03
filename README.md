@@ -87,11 +87,20 @@ nc  = "NCDatasets:Dataset"
 loader = "MyClimate:load_argo"
 
 # A dataset with no public URI: produced by a fetcher. The own-language fetcher runs
-# in-process; the shell fetcher is a cheap cross-language fallback that writes $download_path.
+# in-process; the bare, language-agnostic `shell` command is the same for every tool
+# and writes to $download_path.
+[model_output]
+format = "nc"
+shell  = "make model_output OUTPUT=$download_path"
+
 [model_output._LANG.julia]
 fetcher = "MyClimate:build_model_output"
-[model_output._LANG.shell]
-fetcher = "make model_output OUTPUT=$download_path"
+
+# Single-language shorthand: a bare `loader` (no `_LANG` wrapper) is read as Julia's own.
+[sea_ice]
+uri    = "https://example.com/sea_ice.nc"
+format = "nc"
+loader = "MyClimate:load_sea_ice"
 ```
 
 A `"Module:function"` ref is resolved at runtime by `using Module` followed by `getfield(Module, :function)` — no `eval`, no `include_string`.
