@@ -1,16 +1,21 @@
-[![CI](https://github.com/awi-esc/DataManifest.jl/actions/workflows/ci.yaml/badge.svg)](https://github.com/awi-esc/DataManifest.jl/actions/workflows/ci.yaml)
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/perrette/datamanifest.toml/main/design/logo/lockup-dark.svg">
+    <img src="https://raw.githubusercontent.com/perrette/datamanifest.toml/main/design/logo/lockup.svg" alt="datamanifest.toml" height="76">
+  </picture>
+</p>
 
 # DataManifest.jl
 
+[![CI](https://github.com/awi-esc/DataManifest.jl/actions/workflows/ci.yaml/badge.svg)](https://github.com/awi-esc/DataManifest.jl/actions/workflows/ci.yaml)
+
 Keep track of datasets used in a project.
 
-Provide a simple and straightforward way to keep track of datasets downloaded from the web.
+`DataManifest.jl` provides a simple way to declare data dependencies — URLs, git repositories, checksums, formats — in a `Datasets.toml` file, and handles download, verification, extraction, and loading. It can also cache your own computed results (versioned), reusing the same infrastructure.
 
-Currently DataManifest supports download from a set of URLs suited for repositories like PANGEA or ZENODO, as well as git-based repositories such as github. Support for more remote repositories will be added along the way as necessary.
+It supports downloads from data repositories such as PANGAEA or Zenodo and from git-based hosts such as GitHub; support for more remotes is added as needed. DataManifest.jl is the Julia implementation of a [multi-language specification](https://github.com/perrette/datamanifest.toml): the same `Datasets.toml` can be shared with sibling tools in other languages (e.g. the [Python implementation](https://github.com/perrette/datamanifest)) via the `_LANG` namespace.
 
-It provides declarative functions to register and download datasets, as well as a way to write to and read from an equivalent (and optional) `toml` config file.
-
-`DataManifest.jl` is still actively developped, with breaking changes until v1.0.0 is reached (see [roadmap](#roadmap) below).
+`DataManifest.jl` is still actively developed, with breaking changes until v1.0.0 is reached (see [roadmap](#roadmap) below).
 
 ## How to install?
 
@@ -44,7 +49,7 @@ extract = true
 ```
 and download and extract the corresponding dataset, which can be accessed via
 ```julia
-get_dataset_path("jesstierney/lgmDA")  # defaults to ~/.cache/Datasets/...
+get_dataset_path("jesstierney/lgmDA")  # resolves under the $data folder, e.g. ~/.local/share/datamanifest/datasets/...
 ```
 
 If you're not working in an activated environment, or want to be more explicit for your readers, you can specify the paths and simply prefix every command with the loaded database:
@@ -64,53 +69,55 @@ add(db, ...) # will simply download things and update db without writing any tom
 
 See the [full documentation](/docs/doc.md) and the [API](/docs/api.md).
 
-## Schema v1 and the `_LANG` namespace
+## Per-language bindings (`_LANG`)
 
-DataManifest now supports **schema v1** (`_META.schema = 1`), which introduces a language-namespaced binding model. Under v1, custom fetch and load logic is expressed as `module:function` references stored in a `_LANG.julia` subtable rather than as inline Julia code.
-
-### Declaring bindings in a v1 manifest
+Custom fetch and load logic lives in a dedicated `_LANG` namespace, so a single manifest can serve multiple language implementations without conflicts. Bindings are `module:function` references — never inline code:
 
 ```toml
 [_META]
 schema = 1
 
 [_LANG.julia.loaders]
-nc = "MyProject:load_netcdf"          # format-level default loader
+nc = "MyProject:load_netcdf"          # per-format default loader for this manifest
 
 [my_dataset._LANG.julia]
-fetcher = "MyFetchers:fetch_my_data"  # called instead of built-in URI download
-loader  = "MyLoaders:load_my_data"    # called instead of format default
+fetcher = "MyFetchers:fetch_my_data"  # called instead of the built-in URI download
+loader  = "MyLoaders:load_my_data"    # called instead of the format default
 ```
 
-Bindings are resolved at runtime: `"Module:function"` causes `using Module` followed by `getfield(Module, :function)` — no `eval`, no `include_string`.
+A `"Module:function"` ref is resolved at runtime by `using Module` followed by `getfield(Module, :function)` — no `eval`, no `include_string`.
 
-### Resolution ladders
+**Fetch ladder** (per dataset, in order): own `_LANG.julia.fetcher` → `_LANG.shell.fetcher` (shell template) → `uri`/`uris` → error. Delegation to peer CLIs is not yet implemented.
 
-**Load** (in order): own `_LANG.julia.loader` → manifest `[_LANG.julia.loaders][format]` → built-in format default → error. Never spawns a subprocess.
+**Load ladder** (per dataset, in order): own `_LANG.julia.loader` → manifest `[_LANG.julia.loaders][format]` → built-in format default → error. Never spawns a subprocess.
 
-**Fetch** (in order): own `_LANG.julia.fetcher` → `_LANG.shell.fetcher` (shell template) → `uri`/`uris` → error. Delegation to peer CLIs is not yet implemented.
+Foreign `_LANG.<other>` subtrees (e.g. `[bar._LANG.python]`) and unknown `_*` top-level tables are carried through verbatim on every read→write cycle; only the Julia subtree is regenerated from the model.
 
-### v0/v1 split for inline code
+### Parameterized bindings
 
-Legacy manifests (no `_META.schema`) continue to work: inline `julia=`/`loader=` fields and `[_LOADERS]` are still read and executed. Under v1 (`schema = 1`) only `module:function` refs are used for bindings; the inline execution path is skipped.
+Fetcher and loader refs can carry `args`/`kwargs` for more flexible dispatch — reusing one function across datasets that differ only in arguments:
 
-### Multi-language round-trip
+```toml
+[my_dataset._LANG.julia]
+fetcher = { ref = "MyFetchers:fetch", args = ["$download_path"], kwargs = { format = "nc" } }
+loader  = { ref = "MyLoaders:load",  args = ["$path"],           kwargs = { grid = "5x5" } }
+```
 
-Foreign `_LANG.<other>` subtrees (e.g. `[bar._LANG.python]`) and unknown `_*` top-level tables are carried through verbatim on every read→write cycle. Only the Julia subtree is regenerated from the model; all other language namespaces are never modified.
+At call time, `$var` placeholders in string values are substituted with the dataset's context variables (`$download_path` / `$path`, `$key`, `$uri`, `$version`, `$doi`, `$format`, `$branch`, `$project_root`) and the function is called as `ref(args...; kwargs...)`. Bare-string bindings (`fetcher = "Mod:fn"`) keep the conventional keyword-argument call.
 
-### Migrating a v0 manifest
+### Migration
 
 ```julia
 DataManifest.migrate("Datasets.toml")
 ```
 
-Moves ref-shaped `julia=`/`loader=` fields and `[_LOADERS]` ref entries into `[<ds>._LANG.julia]` / `[_LANG.julia.loaders]` and sets `_META.schema = 1`. Inline code that cannot become a ref is preserved verbatim with a log note. The call is idempotent: already-v1 files are left unchanged.
+Legacy manifests (no `_META` header, inline `julia=`/`loader=` fields, `[_LOADERS]`) are still read and executed. `migrate` moves ref-shaped fields into `[<ds>._LANG.julia]` / `[_LANG.julia.loaders]` and adds the `[_META]` header; inline code that cannot become a ref is preserved verbatim with a log note. The call is idempotent.
 
 ## Storage model
 
-As of v0.18.0 (spec-v3), DataManifest uses a portable **`$`-folder-variable storage
-model**: a folder names a **bare root**, and the layer composes the rest of the path
-(`datasets/` for fetched data, `cached/` for produced artifacts) plus an optional **scope**:
+DataManifest uses a portable **`$`-folder-variable storage model**: a folder names a **bare
+root**, and the layer composes the rest of the path (`datasets/` for fetched data, `cached/`
+for produced artifacts) plus an optional **scope**:
 
 ```toml
 [_META]
@@ -151,11 +158,11 @@ interpolating `$`-folder variables, `$USER`/env, and `~`. The `datasets` scope i
 default (downloads are shared across projects); produced artifacts default to a
 project-isolated `cached` scope.
 
-> **Breaking change in v0.18.0 (spec-v3)**: folders are now bare roots and the layer applies
+> **Behavior change from earlier releases.** Folders are now bare roots and the layer applies
 > a lowercase `datasets/` prefix, so the fetched path moved `…/datamanifest/Datasets/<key>`
-> → `…/datamanifest/datasets/<key>`. Existing v0.17.0 downloads still resolve (read-only
-> probe); set `DATAMANIFEST_DIR` to put everything under one tree. `_PROFILE` is shelved
-> (preserved, not resolved) — use the auto-matched `_HOST`.
+> → `…/datamanifest/datasets/<key>`. Existing downloads still resolve (read-only probe); set
+> `DATAMANIFEST_DIR` to put everything under one tree. `_PROFILE` is accepted and
+> round-tripped but not applied during resolution — use the auto-matched `_HOST`.
 
 Every folder variable resolves through one ladder:
 `DATAMANIFEST_<NAME>_DIR` env-var → first matching `_HOST.<glob>` → `[_STORAGE]` base →
@@ -165,7 +172,7 @@ built-in default. Prefixes/scopes resolve through `DATAMANIFEST_PREFIX_<KIND>` /
 ## Produce-or-load caching (`@cached`)
 
 Beyond *fetching* declared datasets, DataManifest can *produce-or-load* — cache the result
-of a project function on disk, keyed by its parameters (spec-v3 `cache-produce`):
+of a project function on disk, keyed by its parameters:
 
 ```julia
 using DataManifest
@@ -204,7 +211,7 @@ list of `CacheObject`s (`kind`, `key`/`hash`, `scope`, `format`, `size`, `create
 act with `delete_object` / `move_object` — there is **no automatic garbage collector**;
 deletion is always an explicit selection, and only produced (`cached`) artifacts are eligible.
 A produced artifact's **last-access** time (`last_access`) is read purely from the filesystem
-at inspect time — never written on read (spec-v3.2) — so it is coarse and may track mtime on
+at inspect time — never written on read — so it is coarse and may track mtime on
 `noatime`/`relatime` mounts; `created` is the always-available age signal.
 
 ```julia
@@ -213,18 +220,6 @@ for o in inspect_store(db)
     o.kind == "cached" && o.referenced == false && delete_object(o)   # prune orphaned artifacts
 end
 ```
-
-## Parameterized bindings
-
-Fetcher and loader refs can carry `args`/`kwargs` for more flexible dispatch:
-
-```toml
-[my_dataset._LANG.julia]
-fetcher = { ref = "MyFetchers:fetch", args = ["$download_path"], kwargs = { format = "nc" } }
-loader  = { ref = "MyLoaders:load",  args = ["$path"],           kwargs = { grid = "5x5" } }
-```
-
-At call time, `$var` placeholders in string values are substituted with the dataset's context variables (`$download_path` / `$path`, `$key`, `$uri`, etc.) and the function is called as `ref(args...; kwargs...)`. Bare-string bindings (`fetcher = "Mod:fn"`) are unaffected.
 
 ## Conformance
 
