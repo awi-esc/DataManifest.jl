@@ -43,8 +43,71 @@ const add_dataset = add
 
 export Databases, PipeLines, Loaders, Storage, Cache
 # Produce-or-load (`@cached`) companion layer — spec-v3 `cache-produce`.
-using .Cache: @cached, param_hash, cache_key
+using .Cache: @cached, param_hash, cache_key,
+    CachedIndex, read_index, read_index_or_empty, register!, index_keys, write_index,
+    CacheObject, enumerate_artifacts, delete_object, move_object,
+    last_access, iso_from_mtime
 export @cached, param_hash, cache_key
+export CachedIndex, read_index, read_index_or_empty, register!, index_keys, write_index
+export CacheObject, enumerate_artifacts, delete_object, move_object
+export last_access, iso_from_mtime
+export inspect_store
+
+"""
+    inspect_store(db::Database; cache_root="", cached_toml="") -> Vector{Cache.CacheObject}
+
+The `inspect` composition root (spec-v3 store maintenance): enumerate produced artifacts
+(the cache layer) and present fetched datasets (the fetch layer) as one list of
+maintenance objects, resolving `referenced` — the one place that bridges both layers.
+
+A produced artifact is `referenced` iff its portable `<cachetype>/<hash>` key is rooted by
+the project's sibling `cached.toml`; a present fetched dataset is referenced by its manifest
+entry. `cache_root` / `cached_toml` override the resolved `\$cache` root and the index path
+(both default from `db`). Pass the result through your own filter (`kind`, `scope`,
+`referenced == false`, `last_access` age, …) and act with [`delete_object`] / [`move_object`].
+"""
+function inspect_store(db::Databases.Database; cache_root::AbstractString="",
+                       cached_toml::AbstractString="")::Vector{Cache.CacheObject}
+    project_root = PipeLines.get_project_root(db)
+    sc = db.storage_config
+    objects = Cache.CacheObject[]
+
+    # Produced artifacts under the resolved $cache root, tagged referenced via cached.toml.
+    croot = isempty(cache_root) ?
+        Storage.selector_root("\$cache"; project_root=project_root, storage_config=sc) :
+        String(cache_root)
+    prefix = Storage.content_prefix(:cached; storage_config=sc)
+    base = db.datasets_toml != "" ? dirname(db.datasets_toml) : pwd()
+    idx_path = isempty(cached_toml) ? joinpath(base, Cache.CACHED_INDEX_NAME) : String(cached_toml)
+    referenced_keys = Set{String}()
+    if isfile(idx_path)
+        try
+            referenced_keys = Cache.index_keys(Cache.read_index(idx_path))
+        catch
+        end
+    end
+    for obj in Cache.enumerate_artifacts(croot; prefix=prefix)
+        obj.referenced = obj.key in referenced_keys
+        push!(objects, obj)
+    end
+
+    # Present fetched datasets (always referenced — they are manifest entries).
+    for (name, entry) in db.datasets
+        path = try
+            Databases.resolve_existing_path(db, entry)
+        catch
+            continue
+        end
+        (isfile(path) || isdir(path)) || continue
+        sz = isfile(path) ? (try; filesize(path); catch; 0; end) : Cache._dir_size(path)
+        push!(objects, Cache.CacheObject(
+            kind="datasets", location=abspath(path), key=name,
+            format=entry.format, size=sz,
+            created=Cache.iso_from_mtime(path), last_access=Cache.last_access(path),
+            referenced=true))
+    end
+    return objects
+end
 export Database, DatasetEntry
 export set_datasets_folder, set_datasets, get_datasets_folder, get_datasets
 export repr_short, string_short

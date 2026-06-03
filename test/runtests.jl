@@ -778,33 +778,79 @@ try
         @test param_hash((; grid="5x5", skip_models=["CESM.*", "FGOALS.*"])) == param_hash(kt)
         @test param_hash((; grid="5x5", skip_models=["CESM.*", "FGOALS.*"], _parallel=true)) == param_hash(kt)
 
-        # Spec-disallowed hash inputs are a hard error (floats, nulls).
-        @test_throws ErrorException param_hash(Dict("x" => 0.15))
+        # spec-v3.1: finite floats are valid hash inputs, serialized via the normative
+        # Python `json.dumps` form. Cross-tool reference vectors (from the Python tool):
+        @test C._python_float_repr(1.0) == "1.0"
+        @test C._python_float_repr(0.5) == "0.5"
+        @test C._python_float_repr(0.15) == "0.15"
+        @test C._python_float_repr(1e20) == "1e+20"
+        @test C._python_float_repr(1e-5) == "1e-05"
+        @test C._python_float_repr(1e16) == "1e+16"
+        @test C._python_float_repr(1e15) == "1000000000000000.0"
+        @test C._python_float_repr(100.0) == "100.0"
+        @test C._python_float_repr(-3.25) == "-3.25"
+        @test C._python_float_repr(6.022e23) == "6.022e+23"
+        @test C.canonical_json(Dict("x" => 0.15)) == "{\"x\":0.15}"
+        @test param_hash(Dict("x" => 0.15)) ==
+              "f894f9f6b958c1f5ca3b592741e0e8eda12c480b412b4c4dc810290e1f828cdb"
+        @test param_hash(Dict("a" => 1.0, "b" => [2.5, 1e20])) ==
+              "6eee4cb6553cb6fd00a62fadbe82bfcc65c23e59564e99cb456ad4f62818ac90"
+        # A float and the equal integer render differently → distinct keys.
+        @test param_hash(Dict("x" => 1.0)) != param_hash(Dict("x" => 1))
+        @test param_hash((; sigma=0.5)) == param_hash(Dict("sigma" => 0.5))  # NamedTuple parity
+        # Non-finite floats and nulls remain a hard error, anywhere in the structure.
+        @test_throws ErrorException param_hash(Dict("x" => NaN))
+        @test_throws ErrorException param_hash(Dict("x" => Inf))
+        @test_throws ErrorException param_hash(Dict("x" => -Inf))
+        @test_throws ErrorException param_hash(Dict("nested" => [1, Inf]))
         @test_throws ErrorException param_hash(Dict("x" => nothing))
 
         # @cached round-trip with an explicit cache_dir (jls), + the on-disk layout.
+        # `cached_toml` / DATAMANIFEST_USAGE_LOG are pinned to a tempdir so register-on-
+        # produce (Phase 2) never touches the repo or the real depot usage log.
         dir = mktempdir()
+        idx_path = joinpath(dir, "cached.toml")
+        usage_path = joinpath(dir, "usage.toml")
         calls = Ref(0)
         @cached cachetype="demo" key=(a -> (; a.grid, a.n)) function demo(;
-                grid::String="5x5", n::Int=3, _verbose::Bool=false, cache_dir=nothing)
+                grid::String="5x5", n::Int=3, _verbose::Bool=false,
+                cache_dir=nothing, cached_toml=nothing)
             calls[] += 1
             return Dict("grid" => grid, "n" => n, "sum" => n * 2)
         end
-        r1 = demo(; grid="5x5", n=3, cache_dir=dir)
-        r2 = demo(; grid="5x5", n=3, cache_dir=dir, _verbose=true)  # hit; knob ignored
-        @test calls[] == 1
-        @test r1 == r2
-        hh = param_hash((; grid="5x5", n=3))
-        d = joinpath(dir, "demo", hh)
-        for f in ("data.jls", "config.toml", "metadata.toml", ".complete")
-            @test isfile(joinpath(d, f))
+        withenv("DATAMANIFEST_USAGE_LOG" => usage_path) do
+            r1 = demo(; grid="5x5", n=3, cache_dir=dir, cached_toml=idx_path)
+            r2 = demo(; grid="5x5", n=3, cache_dir=dir, cached_toml=idx_path, _verbose=true)  # hit
+            @test calls[] == 1
+            @test r1 == r2
+            hh = param_hash((; grid="5x5", n=3))
+            d = joinpath(dir, "demo", hh)
+            for f in ("data.jls", "config.toml", "metadata.toml", ".complete")
+                @test isfile(joinpath(d, f))
+            end
+            @test C.config_is_valid(d)
+            @test C.read_config(d).cachetype == "demo"
+            @test C.cache_key("demo", hh) == "demo/$hh"
+
+            # Phase 2: register-on-produce wrote the cached.toml entry (portable key +
+            # ref + format), and stamped the depot usage log.
+            @test isfile(idx_path)
+            idx = read_index(idx_path)
+            @test haskey(idx.entries, "demo")
+            @test idx.entries["demo"]["cachetype"] == "demo"
+            @test idx.entries["demo"]["hash"] == hh
+            @test idx.entries["demo"]["format"] == "jls"
+            @test endswith(idx.entries["demo"]["ref"], ":demo")
+            @test index_keys(idx) == Set(["demo/$hh"])
+            @test abspath(idx_path) in C.known_paths(ENV)
+            # metadata.toml [origin].cached_toml back-pointer names the index.
+            md = TOML.parsefile(joinpath(d, "metadata.toml"))
+            @test get(get(md, "origin", Dict()), "cached_toml", "") == abspath(idx_path)
+
+            # cached=false bypasses disk entirely (no recompute-skip, no registration).
+            demo(; grid="z", n=9, cache_dir=dir, cached_toml=idx_path, cached=false)
+            @test calls[] == 2
         end
-        @test C.config_is_valid(d)
-        @test C.read_config(d).cachetype == "demo"
-        @test C.cache_key("demo", hh) == "demo/$hh"
-        # cached=false bypasses disk entirely.
-        demo(; grid="z", n=9, cache_dir=dir, cached=false)
-        @test calls[] == 2
 
         # Produced datasets are keyword-only: a positional arg is rejected at macro time.
         kwonly_err = try
@@ -817,10 +863,90 @@ try
         end
         @test occursin("keyword-only", kwonly_err)
     end
+
+    @testset "Cache index + usage + inspect (spec-v3 inspect)" begin
+        C = DataManifest.Cache
+
+        # --- CachedIndex round-trip + portable keys -------------------------------
+        dir = mktempdir()
+        idx_path = joinpath(dir, "cached.toml")
+        idx = read_index_or_empty(idx_path)
+        @test isempty(idx.entries)
+        register!(idx, "load_20c"; cachetype="esm_20c", hash="a"^64,
+                  ref="P:load_20c", format="nc", version="v3")
+        register!(idx, "load_lgm"; cachetype="esm_lgm", hash="b"^64, ref="P:load_lgm")
+        write_index(idx)
+        @test isfile(idx_path)
+        back = read_index(idx_path)
+        @test Set(keys(back.entries)) == Set(["load_20c", "load_lgm"])
+        @test back.entries["load_20c"]["version"] == "v3"
+        @test index_keys(back) == Set(["esm_20c/$("a"^64)", "esm_lgm/$("b"^64)"])
+        # _META schema is written and stripped from entries on read.
+        @test TOML.parsefile(idx_path)["_META"]["schema"] == 1
+        @test !haskey(back.entries, "_META")
+        # Re-register overwrites a single entry without dropping the rest.
+        register!(back, "load_20c"; cachetype="esm_20c", hash="c"^64)
+        @test back.entries["load_20c"]["hash"] == "c"^64
+        @test haskey(back.entries, "load_lgm")
+
+        # --- usage log + last-access ----------------------------------------------
+        usage_path = joinpath(dir, "usage.toml")
+        env = Dict("DATAMANIFEST_USAGE_LOG" => usage_path)
+        @test C.usage_log_path(env) == usage_path
+        C.record_path!(idx_path; env=env)
+        C.record_path!("/tmp/other/datasets.toml"; env=env)
+        @test Set(C.known_paths(env)) == Set([abspath(idx_path), "/tmp/other/datasets.toml"])
+
+        # last-access (spec-v3.2): purely filesystem-derived, never written on read.
+        # Empty for a missing path; a non-empty stamp for an existing one (atime, or the
+        # mtime fallback when atime is unreadable). No reader-side write API exists.
+        @test last_access(joinpath(dir, "nope")) == ""
+        f = joinpath(dir, "stamp.txt"); write(f, "x")
+        @test !isempty(last_access(f))
+        @test !isdefined(C, :touch_last_access!)   # no touch-on-read mechanism
+
+        # --- enumerate / delete / move via a real produce -------------------------
+        cache_dir = joinpath(dir, "store")
+        usage2 = joinpath(dir, "usage2.toml")
+        @cached cachetype="thing" key=(a -> (; a.k)) function _thing(;
+                k::String="x", cache_dir=nothing, cached_toml=nothing)
+            return "value-$k"
+        end
+        withenv("DATAMANIFEST_USAGE_LOG" => usage2) do
+            _thing(; k="one", cache_dir=cache_dir, cached_toml=joinpath(dir, "c2.toml"))
+            _thing(; k="two", cache_dir=cache_dir, cached_toml=joinpath(dir, "c2.toml"))
+        end
+        # cache_dir bypasses the prefix/scope, so enumerate with prefix="".
+        objs = enumerate_artifacts(cache_dir; prefix="")
+        @test length(objs) == 2
+        @test all(o -> o.kind == "cached", objs)
+        @test all(o -> startswith(o.key, "thing/"), objs)
+        @test all(o -> o.format == "jls", objs)
+        @test all(o -> o.size > 0, objs)
+        @test all(o -> o.referenced === nothing, objs)   # composition root sets this
+
+        # delete refuses non-cached objects; deletes a cached one + its markers.
+        fetched = CacheObject(kind="datasets", location=cache_dir)
+        @test_throws ErrorException delete_object(fetched)
+        @test_throws ErrorException move_object(fetched, dir)
+        victim = objs[1]
+        delete_object(victim)
+        @test !isdir(victim.location)
+        @test !isfile(victim.location * ".complete")
+        @test length(enumerate_artifacts(cache_dir; prefix="")) == 1
+
+        # move preserves the <cachetype>/<hash> key path under the destination root.
+        survivor = enumerate_artifacts(cache_dir; prefix="")[1]
+        dest = joinpath(dir, "archive")
+        newloc = move_object(survivor, dest)
+        @test isdir(newloc)
+        @test !isdir(survivor.location)
+        @test newloc == joinpath(dest, survivor.cachetype, survivor.hash)
+    end
 end
 
-@testset "Conformance suite (spec-v3)" begin
-    # Source of truth: github.com/perrette/datamanifest.toml, tag spec-v3.
+@testset "Conformance suite (spec-v3.x)" begin
+    # Source of truth: github.com/perrette/datamanifest.toml (tag pinned below).
     # The pin file records the spec tag + per-file sha256 of each fixture; hashes
     # are over file contents (not the tarball), keeping the pin robust to GitHub
     # re-generating the auto-archive. The tag + content pin is this tool's
@@ -876,10 +1002,11 @@ end
 
             # Capabilities this tool implements; drives which fixtures are run.
             # `cache-produce` = the @cached produce-or-load layer (DataManifest.Cache).
-            # `inspect` / `sync` (cached.toml index + maintenance) are not yet implemented.
+            # `inspect` = the cached.toml index + store-maintenance surface (Phase 2).
+            # `sync` (cross-machine push/pull) is not yet implemented.
             SUPPORTED_CAPABILITIES = Set(["lang-read", "lang-write", "shell-fetch",
                                           "storage", "binding-args", "byte-identity",
-                                          "cache-produce"])
+                                          "cache-produce", "inspect"])
 
             toml_fnames = sort(filter(f -> endswith(f, ".toml"), readdir(fixtures_top)))
             for toml_fname in toml_fnames
@@ -914,6 +1041,25 @@ end
                             @test String(meta["cachetype"]) == cs["cachetype"]
                             @test DataManifest.Cache.cache_key(String(meta["cachetype"]), ph) == cs["key"]
                             @test key_table == Dict{String,Any}(String(k) => v for (k, v) in cs["key_table"])
+                        elseif haskey(expected, "cached_index")
+                            # inspect: a cached.toml produced-dataset index. Read it and
+                            # check each entry's portable fields + the rooted key set
+                            # match the fixture (it is NOT a datasets.toml).
+                            ci = expected["cached_index"]
+                            idx = DataManifest.Cache.read_index(toml_path)
+                            @test TOML.parsefile(toml_path)["_META"]["schema"] == 1
+                            exp_entries = ci["entries"]
+                            @test Set(keys(idx.entries)) == Set(keys(exp_entries))
+                            exp_keys = Set{String}()
+                            for (name, ee) in exp_entries
+                                @test haskey(idx.entries, name)
+                                entry = idx.entries[name]
+                                for (k, v) in ee
+                                    @test get(entry, k, nothing) == v
+                                end
+                                push!(exp_keys, "$(ee["cachetype"])/$(ee["hash"])")
+                            end
+                            @test DataManifest.Cache.index_keys(idx) == exp_keys
                         else
                         db = read_dataset(toml_path, tmp_dir; persist=false)
 

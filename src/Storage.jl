@@ -46,7 +46,7 @@ using SHA
 
 export folder_root, selector_root, store_dir, expand_path_expr,
     content_prefix, content_scope, project_id,
-    legacy_data_root, legacy_v2_roots, BUILTIN_FOLDERS
+    legacy_data_root, legacy_v2_roots, BUILTIN_FOLDERS, user_state_dir
 
 """Built-in folder variables (the only ones with a built-in default location)."""
 const BUILTIN_FOLDERS = ("data", "cache", "repo")
@@ -119,6 +119,26 @@ function _user_cache_dir(env)::String
         return joinpath(homedir(), "Library", "Caches", "datamanifest")
     else
         base = get(env, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
+        return joinpath(base, "datamanifest")
+    end
+end
+
+"""
+    user_state_dir(env=ENV) -> String
+
+`platformdirs.user_state_dir("datamanifest")` — the per-user, machine-local **state** dir
+(where the cache layer's `usage.toml` lives). Linux: `\$XDG_STATE_HOME` (default
+`~/.local/state`) + `/datamanifest`. macOS: `~/Library/Application Support/datamanifest`
+(state coincides with data). Windows: `%LOCALAPPDATA%` + `/datamanifest/datamanifest`.
+"""
+function user_state_dir(env=ENV)::String
+    if Sys.iswindows()
+        base = get(env, "LOCALAPPDATA", joinpath(homedir(), "AppData", "Local"))
+        return joinpath(base, "datamanifest", "datamanifest")
+    elseif Sys.isapple()
+        return joinpath(homedir(), "Library", "Application Support", "datamanifest")
+    else
+        base = get(env, "XDG_STATE_HOME", joinpath(homedir(), ".local", "state"))
         return joinpath(base, "datamanifest")
     end
 end
