@@ -288,7 +288,7 @@ struct DatasetEntry
     aliases::Vector{String} = []
     key::String = ""              # Unique key for the dataset, usually the DOI or a unique name
     local_path::String = ""       # Path to a user-managed local file; bypasses the cache (relative to Datasets.toml dir, or absolute)
-    store::String = ""            # Store name: "" or "data" (default), "cache", "repo", "mount"
+    store::String = ""            # $-folder selector: "" (project default -> $data), "$data", "$cache", "$repo", "$cache/sub", or a user "$folder"
     sha256::String = ""
     skip_checksum::Bool = false   # Whether to skip SHA-256 checksum checks for this dataset
     skip_download::Bool = false   # Skip download (e.g. to keep local files out of the download folder)
@@ -318,7 +318,7 @@ It is initialized via the `add` method (and internally, `register_dataset` and `
 - `aliases::Vector{String}`: Alternative names for the dataset.
 - `key::String`: Unique key for the dataset.
 - `local_path::String`: Path to a user-managed local file.
-- `store::String`: Store name — `""` or `"data"` (default), `"cache"`, `"repo"`, `"mount"`. Controls which storage root is used for the dataset. Omitted on write when default. When set, DataManifest bypasses its own cache (`datasets_folder`/`key`) and treats `local_path` as the dataset path. Relative paths are resolved against the directory of `Datasets.toml` (use this for git-portable, in-repo data files); absolute paths are used as-is (e.g. NAS mounts). The download step is skipped — if the file is missing, an error tells the user to obtain it manually from `uri`. Checksum verification still applies, making this a natural fit for sources DataManifest cannot fetch automatically (Cloudflare-protected URLs, datasets behind manual login, etc.).
+- `store::String`: a spec-v2 `$`-folder **selector** choosing which folder holds the dataset, optionally with a literal sub-path — `""` (use the project-wide `[_STORAGE].default`, itself defaulting to `$data`), `"$data"`, `"$cache"`, `"$repo"`, `"$cache/derived"`, or a user-defined `"$folder"` declared in `[_STORAGE]`. The dataset is materialized at `<resolved-folder>[/subpath]/<key>`. Omitted on write when empty. Bare spec-v1.1 names (`"cache"`) are auto-upgraded to `$`-form with a deprecation warning; the former `"mount"` store was removed. (To bypass the keyed layout entirely and point at an exact file, use `local_path` — a path expression that may itself interpolate `$`-folder variables, `$USER`/env, and `~`.)
 - `sha256::String`: SHA-256 checksum.
 - `skip_checksum::Bool`: Skip checksum verification for this dataset.
 - `skip_download::Bool`: Skip downloading this dataset. For declaring a user-managed local file, prefer `local_path` (newer, self-documenting); `skip_download` is retained for back-compatibility and for entries fetched by custom `shell`/`julia` code that doesn't need a download step.

@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.17.0] - 2026-06-03 — spec-v2: `$`-folder-variable storage model
+
+Implements the spec-v2 storage-model revision (datamanifest.toml `spec-v2` /
+`spec-v2.1`). The produce-or-load companion layer (`cache-produce` / `cache-gc`)
+is **not** part of this release — it remains a separate, follow-up concern.
+
+### Breaking — storage selectors are now `$`-folder references
+
+- **`store` and the new `[_STORAGE].default` are `$`-folder selectors.** A folder
+  is referenced as a `$`-variable: built-in `$data` / `$cache` / `$repo`, plus any
+  user-defined folder declared in `[_STORAGE]` (e.g. `scratch = "…"` → `$scratch`).
+  A selector may carry a literal sub-path: `store = "$cache/derived"` keys the
+  dataset under `<cache_root>/derived/<key>`. `store` defaults to the project-wide
+  `[_STORAGE].default`, which itself defaults to `$data`.
+- **Hard migration off bare names.** The spec-v1.1 bare form (`store = "cache"`) is
+  no longer valid. Bare built-in names (`data`/`cache`/`repo`) are **auto-upgraded**
+  to `$`-form on read with a one-time deprecation warning and rewritten in `$`-form
+  on the next write; any other bare value (including the removed `mount` store) is
+  rejected with a guiding error. `[_STORAGE]` keys themselves stay bare — they are
+  folder *definitions*, not references.
+- **`mount` removed.** spec-v2's locations-only model has no home for
+  never-materialized in-place access; the `mount` store is gone (deferred to a
+  future revision).
+
+### Storage model
+
+- **One resolution ladder for every folder variable** (built-in and user-defined):
+  `DATAMANIFEST_<NAME>_DIR` env → `[_STORAGE._PROFILE.<profile>].<name>` →
+  `[_STORAGE._HOST.<glob>].<name>` → `[_STORAGE].<name>` → built-in default
+  (`data`/`cache`/`repo` only; an undefined user folder is an error). Host- and
+  profile-specificity live entirely in resolving the variable.
+- **Two value kinds.** *Selectors* (`store`, `default`) are `$`-folder references;
+  *path expressions* (`[_STORAGE]` values, `local_path`) are full paths that
+  interpolate `$`-folder variables, `$USER`/env vars, and `~`. `local_path` is now
+  expanded as a path expression, so a host-specific exact path is expressed
+  portably as `local_path = "$scratch/exact/file.nc"`.
+- Built-in default roots are unchanged from spec-v1.1 (platformdirs
+  `user_data_dir`/`user_cache_dir` + `/Datasets`, and `<project_root>/datasets`),
+  so no dataset needs re-downloading. The read-only legacy probe of the pre-v1.1
+  `$XDG_CACHE_HOME/Datasets` folder is retained.
+
+### Fixes
+
+- **Round-trip stability for key-less datasets.** A produced/`local_path`-only
+  dataset no longer serializes a content-free `uri = "://"`, which previously
+  re-parsed to a `":"` key and could collide two such datasets on read.
+
+### Conformance
+
+- Conformance pin advanced to spec tag **`spec-v2.1`** (fixtures re-hashed); the
+  storage fixture assertions follow the spec-v2 storage schema (`$`-form selectors,
+  the `default` selector, and the `data`/`cache`/`repo` + user folder-variable
+  namespace). `cache-produce` / `cache-gc` fixtures are skipped (capability not
+  declared by this core tool).
+
 ## [0.16.0] - 2026-06-02 — spec-v1.1: storage, parameterized bindings, verify-once, canonical output, legacy fix
 
 ### New features

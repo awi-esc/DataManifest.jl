@@ -1,27 +1,46 @@
 """
     Storage
 
-Pure resolver from a store name (`data` | `cache` | `repo` | `mount`) to a root
-directory, matching the spec-v1.1 storage model.
+Pure resolver for the spec-v2 `\$`-folder-variable storage model.
+
+A **folder** is a named location referenced as a `\$`-variable. There is one
+namespace with three built-in members and any number of user-defined ones:
+
+- `\$data`  → `platformdirs.user_data_dir("datamanifest")` + `/Datasets`
+- `\$cache` → `platformdirs.user_cache_dir("datamanifest")` + `/Datasets`
+- `\$repo`  → `<project_root>/datasets`
+- user-defined: any other key under `[_STORAGE]` (e.g. `scratch = "…"` → `\$scratch`)
 
 Default root locations are **language-independent** — they match Python's
 `platformdirs` so a peer tool resolves the same dataset to the same on-disk path
-(NOT the Julia depot):
+(NOT the Julia depot). The core knows *locations only* — no lifetime policy.
 
-- `data`  → `platformdirs.user_data_dir("datamanifest")` + `/Datasets`
-- `cache` → `platformdirs.user_cache_dir("datamanifest")` + `/Datasets`
-- `repo`  → `<project_root>/datasets`
+Two kinds of value:
+
+- **Selectors** (`store`, `[_STORAGE].default`) — a `\$`-folder reference,
+  optionally with a literal sub-path: `\$cache/derived`. Resolved by
+  [`selector_root`]; the dataset lands at `<root>[/subpath]/<key>`.
+- **Path expressions** (`[_STORAGE]` values, `local_path`) — full paths that may
+  interpolate `\$`-folder variables, `\$USER`/env vars, and `~`. Resolved by
+  [`expand_path_expr`].
+
+Every folder variable — built-in and user-defined alike — resolves through one
+ladder (see [`folder_root`]). The module is intentionally pure: given explicit
+`env` / `host` / `profile` arguments it is deterministic and testable without
+touching the real environment.
 
 Linux is the primary verified target; macOS / Windows defaults follow the same
 `platformdirs` conventions (documented inline, less heavily exercised).
-
-The module is intentionally pure: given explicit `env` / `host` / `profile`
-arguments it is deterministic and testable without touching the real
-environment.
 """
 module Storage
 
-export store_root, legacy_data_root
+export folder_root, selector_root, expand_path_expr, legacy_data_root, BUILTIN_FOLDERS
+
+"""Built-in folder variables (the only ones with a built-in default location)."""
+const BUILTIN_FOLDERS = ("data", "cache", "repo")
+
+"""Reserved `[_STORAGE]` keys that are NOT folder variables."""
+const RESERVED_STORAGE_KEYS = ("default", "_HOST", "_PROFILE")
 
 # --- glob matching (`*`, `?`) for `_HOST` patterns ---------------------------
 
@@ -49,21 +68,6 @@ function _glob_match(pattern::AbstractString, s::AbstractString)::Bool
     end
     print(buf, "\$")
     return occursin(Regex(String(take!(buf))), s)
-end
-
-# --- path expansion ----------------------------------------------------------
-
-"""
-    _expand(path, env) -> String
-
-Expand `\$VAR` / `\${VAR}` (against `env`) and a leading `~` in `path`. An
-undefined variable is left verbatim.
-"""
-function _expand(path::AbstractString, env)::String
-    s = String(path)
-    s = replace(s, r"\$\{[A-Za-z_][A-Za-z0-9_]*\}" => m -> get(env, String(m[3:end-1]), m))
-    s = replace(s, r"\$[A-Za-z_][A-Za-z0-9_]*" => m -> get(env, String(m[2:end]), m))
-    return expanduser(s)
 end
 
 # --- platformdirs-equivalent default roots -----------------------------------
@@ -108,17 +112,20 @@ function _user_cache_dir(env)::String
 end
 
 """
-    _default_root(store, project_root, env) -> String
+    _builtin_default(name, project_root, env) -> Union{String,Nothing}
 
-The language-independent default root for `store` when nothing overrides it.
+The language-independent built-in default root for a built-in folder, or
+`nothing` for a user-defined folder (which has no built-in default).
 """
-function _default_root(store::AbstractString, project_root::AbstractString, env)::String
-    if store == "repo"
+function _builtin_default(name::AbstractString, project_root::AbstractString, env)
+    if name == "repo"
         return joinpath(String(project_root), "datasets")
-    elseif store == "cache"
+    elseif name == "cache"
         return joinpath(_user_cache_dir(env), "Datasets")
-    else  # "data", "mount" (no v1.1 default specified), and any unknown store
+    elseif name == "data"
         return joinpath(_user_data_dir(env), "Datasets")
+    else
+        return nothing
     end
 end
 
@@ -127,7 +134,7 @@ end
 
 The pre-v1.1 default datasets folder — `\$XDG_CACHE_HOME/Datasets` (default
 `~/.cache/Datasets`). A **read-only** back-compat probe location: spec-v1.1 moved
-the default `data` store under a `datamanifest/` namespace (see `_user_data_dir`),
+the default `data` folder under a `datamanifest/` namespace (see `_user_data_dir`),
 orphaning datasets downloaded by older versions here. Read resolution probes it
 last so old downloads still resolve; new writes never land here. Must match the
 Python tool's `storage.legacy_data_root()`.
@@ -137,77 +144,177 @@ function legacy_data_root(env=ENV)::String
     return joinpath(base, "Datasets")
 end
 
-# Finalize a configured/explicit value: expand vars/`~`, and resolve a relative
-# `repo` value against the project root.
-function _finalize(raw, store::AbstractString, project_root::AbstractString, env)::String
-    p = _expand(string(raw), env)
-    if store == "repo" && !isabspath(p)
-        p = joinpath(String(project_root), p)
+# --- folder-variable name discovery ------------------------------------------
+
+# The set of names that are folder *variables* (so `$NAME` in a path expression
+# expands to a folder root rather than an env var): built-ins plus every name
+# defined anywhere in `[_STORAGE]` (base keys and `_HOST` / `_PROFILE` overrides),
+# excluding the reserved keys.
+function _folder_var_names(storage_config::AbstractDict)::Set{String}
+    names = Set{String}(BUILTIN_FOLDERS)
+    for (k, _) in storage_config
+        ks = String(k)
+        ks in RESERVED_STORAGE_KEYS && continue
+        push!(names, ks)
     end
-    return p
+    for sub in ("_HOST", "_PROFILE")
+        t = get(storage_config, sub, nothing)
+        if t isa AbstractDict
+            for (_, entry) in t
+                if entry isa AbstractDict
+                    for (kk, _) in entry
+                        push!(names, String(kk))
+                    end
+                end
+            end
+        end
+    end
+    return names
 end
 
-# --- public resolver ---------------------------------------------------------
+# --- path-expression expansion -----------------------------------------------
 
 """
-    store_root(store; project_root="", storage_config=Dict(), env=ENV,
-               host=gethostname(), profile=get(ENV, "DATAMANIFEST_PROFILE", "")) -> String
+    expand_path_expr(expr; project_root="", storage_config=Dict(), env=ENV,
+                     host=gethostname(), profile=…) -> String
 
-Resolve `store` to a root directory. Per-store precedence (first that applies):
-
-1. the `DATAMANIFEST_<STORE>_DIR` environment variable;
-2. the `_PROFILE.<profile>` entry, when `profile != ""`;
-3. the first matching `_HOST.<glob>` entry (glob `*`/`?` against `host`);
-4. the base `[_STORAGE].<store>` entry;
-5. the language-independent default.
-
-`~` and `\$VAR` are expanded; a relative `repo` value is resolved against
-`project_root`. `storage_config` is the parsed `[_STORAGE]` table (with optional
-`_HOST` / `_PROFILE` sub-tables).
+Expand a **path expression**: `\$NAME` / `\${NAME}` and a leading `~`. `\$NAME`
+expands to the folder variable `NAME` (resolved through [`folder_root`]) if one is
+defined, otherwise to the environment variable `NAME`; an undefined name is left
+verbatim. `~` expands to the home directory.
 """
-function store_root(store::AbstractString;
-                    project_root::AbstractString="",
-                    storage_config::AbstractDict=Dict{String,Any}(),
-                    env=ENV,
-                    host::AbstractString=gethostname(),
-                    profile::AbstractString=get(ENV, "DATAMANIFEST_PROFILE", ""))::String
-    store = isempty(store) ? "data" : String(store)
+function expand_path_expr(expr::AbstractString;
+                          project_root::AbstractString="",
+                          storage_config::AbstractDict=Dict{String,Any}(),
+                          env=ENV,
+                          host::AbstractString=gethostname(),
+                          profile::AbstractString=get(ENV, "DATAMANIFEST_PROFILE", ""),
+                          _seen::Set{String}=Set{String}())::String
+    s = String(expr)
+    fvars = _folder_var_names(storage_config)
 
-    # (1) DATAMANIFEST_<STORE>_DIR
-    envkey = "DATAMANIFEST_$(uppercase(store))_DIR"
-    if haskey(env, envkey) && !isempty(env[envkey])
-        return _finalize(env[envkey], store, project_root, env)
+    resolve(name::AbstractString, whole::AbstractString) = begin
+        nm = String(name)
+        if nm in fvars
+            return folder_root(nm; project_root=project_root, storage_config=storage_config,
+                               env=env, host=host, profile=profile, _seen=_seen)
+        elseif haskey(env, nm)
+            return String(env[nm])
+        else
+            return String(whole)  # undefined: leave verbatim
+        end
     end
 
-    # (2) _PROFILE.<profile>
+    s = replace(s, r"\$\{[A-Za-z_][A-Za-z0-9_]*\}" => m -> resolve(m[3:end-1], m))
+    s = replace(s, r"\$[A-Za-z_][A-Za-z0-9_]*" => m -> resolve(m[2:end], m))
+    return expanduser(s)
+end
+
+# --- folder resolution (the unified ladder) ----------------------------------
+
+"""
+    folder_root(name; project_root="", storage_config=Dict(), env=ENV,
+                host=gethostname(), profile=…) -> String
+
+Resolve a single folder variable `name` (built-in or user-defined) to a root
+directory. One ladder for every variable; the first rung that applies wins:
+
+1. the `DATAMANIFEST_<NAME>_DIR` environment variable;
+2. the `[_STORAGE._PROFILE.<profile>].<name>` entry, when `profile != ""`;
+3. the first matching `[_STORAGE._HOST.<glob>].<name>` entry (glob `*`/`?` vs `host`);
+4. the base `[_STORAGE].<name>` definition;
+5. the built-in default (`data` / `cache` / `repo` only).
+
+A user-defined name unresolved on every rung is an error. The value at rungs 1–4
+is a **path expression** (it may interpolate other folder variables, `\$USER`/env,
+`~`); a relative `repo` value is resolved against `project_root`. A folder variable
+that references itself (directly or transitively) is an error.
+"""
+function folder_root(name::AbstractString;
+                     project_root::AbstractString="",
+                     storage_config::AbstractDict=Dict{String,Any}(),
+                     env=ENV,
+                     host::AbstractString=gethostname(),
+                     profile::AbstractString=get(ENV, "DATAMANIFEST_PROFILE", ""),
+                     _seen::Set{String}=Set{String}())::String
+    name = String(name)
+    if name in _seen
+        error("Storage folder variable \$$name references itself (cycle) in [_STORAGE].")
+    end
+    seen2 = union(_seen, Set([name]))
+
+    expand(raw) = expand_path_expr(string(raw); project_root=project_root,
+                                   storage_config=storage_config, env=env, host=host,
+                                   profile=profile, _seen=seen2)
+    finalize(p) = (name == "repo" && !isabspath(p)) ? joinpath(String(project_root), p) : p
+
+    # (1) DATAMANIFEST_<NAME>_DIR
+    envkey = "DATAMANIFEST_$(uppercase(name))_DIR"
+    if haskey(env, envkey) && !isempty(env[envkey])
+        return finalize(expand(env[envkey]))
+    end
+
+    # (2) _PROFILE.<profile>.<name>
     if !isempty(profile)
         prof = get(storage_config, "_PROFILE", nothing)
         if prof isa AbstractDict && haskey(prof, profile)
             entry = prof[profile]
-            if entry isa AbstractDict && haskey(entry, store)
-                return _finalize(entry[store], store, project_root, env)
+            if entry isa AbstractDict && haskey(entry, name)
+                return finalize(expand(entry[name]))
             end
         end
     end
 
-    # (3) first matching _HOST.<glob>
+    # (3) first matching _HOST.<glob>.<name>
     hosts = get(storage_config, "_HOST", nothing)
     if hosts isa AbstractDict
         for pat in sort(collect(keys(hosts)))  # deterministic iteration
             entry = hosts[pat]
-            if _glob_match(pat, host) && entry isa AbstractDict && haskey(entry, store)
-                return _finalize(entry[store], store, project_root, env)
+            if _glob_match(pat, host) && entry isa AbstractDict && haskey(entry, name)
+                return finalize(expand(entry[name]))
             end
         end
     end
 
-    # (4) base [_STORAGE].<store>
-    if haskey(storage_config, store) && !isempty(string(storage_config[store]))
-        return _finalize(storage_config[store], store, project_root, env)
+    # (4) base [_STORAGE].<name>
+    if !(name in RESERVED_STORAGE_KEYS) && haskey(storage_config, name) &&
+       !isempty(string(storage_config[name]))
+        return finalize(expand(storage_config[name]))
     end
 
-    # (5) language-independent default
-    return _default_root(store, project_root, env)
+    # (5) built-in default (data/cache/repo only)
+    d = _builtin_default(name, project_root, env)
+    d !== nothing && return d
+    error("Unknown storage folder variable \$$name: not built-in (data/cache/repo) " *
+          "and not defined in [_STORAGE].")
+end
+
+# --- selector resolution -----------------------------------------------------
+
+"""
+    selector_root(selector; project_root="", storage_config=Dict(), env=ENV,
+                  host=gethostname(), profile=…) -> String
+
+Resolve a `store` / `default` **selector** to a root directory. A selector is a
+`\$`-folder reference optionally followed by a literal sub-path:
+`\$<folder>[/<subpath>]` → `<resolved-folder>[/<subpath>]`. The dataset's bytes
+land at `<root>/<key>`. A non-`\$` (bare) selector is rejected — spec-v2 selectors
+MUST be `\$`-references (bare names are migrated by the caller before this point).
+"""
+function selector_root(selector::AbstractString; kwargs...)::String
+    s = String(selector)
+    if !startswith(s, "\$")
+        error("Invalid storage selector \"$s\": expected a \$-folder reference " *
+              "(e.g. \"\$data\" or \"\$cache/sub\").")
+    end
+    body = s[2:end]
+    parts = split(body, '/'; limit=2)
+    name = String(parts[1])
+    root = folder_root(name; kwargs...)
+    if length(parts) == 2 && !isempty(parts[2])
+        return joinpath(root, String(parts[2]))
+    end
+    return root
 end
 
 # --- safe-materialization path helpers ---------------------------------------

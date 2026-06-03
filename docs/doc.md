@@ -89,35 +89,44 @@ It is also possible to provide a preferred name on disk via `key=...` to add. Th
 
 ## Storage model
 
-A dataset can live in one of four named stores:
+A dataset is materialized under a **folder**, referenced as a `$`-variable. Three
+folders are built-in; any other `[_STORAGE]` key defines a user folder:
 
-| Store  | Meaning                                 | Default root (Linux)                          |
-|--------|-----------------------------------------|-----------------------------------------------|
-| `data` | persistent user data (default)          | `$XDG_DATA_HOME/datamanifest/Datasets`        |
-| `cache`| re-fetchable, may be purged             | `$XDG_CACHE_HOME/datamanifest/Datasets`       |
-| `repo` | committed inside the project repository | `<project_root>/datasets`                     |
-| `mount`| externally mounted volume               | parsed verbatim; not yet mounted by DataManifest |
+| Folder   | Meaning                                 | Default root (Linux)                          |
+|----------|-----------------------------------------|-----------------------------------------------|
+| `$data`  | persistent user data (default)          | `$XDG_DATA_HOME/datamanifest/Datasets`        |
+| `$cache` | OS-reclaimable cache *location*         | `$XDG_CACHE_HOME/datamanifest/Datasets`       |
+| `$repo`  | committed inside the project repository | `<project_root>/datasets`                     |
 
-Declare the store per dataset:
+(The `mount` store of spec-v1.1 was removed in spec-v2.) Declare a dataset's
+folder with a `$`-**selector**, optionally with a sub-path:
 
 ```toml
 [my_dataset]
-store = "cache"
+store = "$cache"                # or "$cache/derived" to key under <cache_root>/derived/<key>
 uri   = "https://example.com/big_file.nc"
 ```
 
-Override roots via environment variables or `[_STORAGE]`:
+`store` defaults to the project-wide `[_STORAGE].default` selector, which itself
+defaults to `$data`. Define folders / overrides in `[_STORAGE]` (keys are bare
+*definitions*; references use `$`):
 
 ```toml
 [_STORAGE]
-data  = "/data/shared"                          # base override for the data store
-_HOST.login* = { data = "/scratch/datasets" }   # host-glob override
-_PROFILE.hpc = { cache = "/tmp/datasets" }      # profile override (DATAMANIFEST_PROFILE=hpc)
+default = "$data"                               # project-wide default selector
+scratch = "$TMPDIR/datasets"                    # user folder -> $scratch (a path expression)
+_HOST."login*" = { scratch = "/scratch/$USER/datasets" }   # host-glob override
+_PROFILE.hpc   = { data = "/work/datasets" }    # profile override (DATAMANIFEST_PROFILE=hpc)
 ```
 
-Precedence per store: `DATAMANIFEST_<STORE>_DIR` env-var → `_PROFILE.<name>` → first matching `_HOST.<glob>` → `[_STORAGE]` base → default. `~` and `$VAR` expanded.
+Every folder variable resolves through one ladder: `DATAMANIFEST_<NAME>_DIR`
+env-var → `_PROFILE.<name>` → first matching `_HOST.<glob>` → `[_STORAGE]` base →
+built-in default. Path expressions (`[_STORAGE]` values and `local_path`)
+interpolate `$`-folder variables, `$USER`/env, and `~`.
 
-When loading, DataManifest searches `repo → data → cache` and returns the first store where the dataset exists and has a `.complete` marker.
+When loading, DataManifest resolves the dataset's selected folder, then also
+probes the built-in folders `repo → data → cache`, returning the first where the
+dataset exists and has a `.complete` marker.
 
 ## Maintaining a local `Datasets.toml`
 

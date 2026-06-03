@@ -768,8 +768,8 @@ try
     end
 end
 
-@testset "Conformance suite (spec-v1.1)" begin
-    # Source of truth: github.com/perrette/datamanifest.toml, tag spec-v1.1.
+@testset "Conformance suite (spec-v2.1)" begin
+    # Source of truth: github.com/perrette/datamanifest.toml, tag spec-v2.1.
     # The pin file records the spec tag + per-file sha256 of each fixture; hashes
     # are over file contents (not the tarball), keeping the pin robust to GitHub
     # re-generating the auto-archive. The tag + content pin is this tool's
@@ -935,31 +935,55 @@ end
                             end
                         end
 
-                        # storage: parsed [_STORAGE] config + per-dataset store
-                        # selection match the fixture's storage block.
+                        # storage (spec-v2): $-folder selectors + the [_STORAGE]
+                        # folder-variable namespace match the fixture's storage block.
                         storage_exp = get(expected, "storage", nothing)
                         if storage_exp !== nothing
-                            # Tool's implicit default store is "data".
-                            @test get(storage_exp, "default_store", "data") == "data"
+                            sc = db.storage_config
+                            DB = DataManifest.Databases
 
-                            for (ds_name, store_exp) in get(storage_exp, "datasets", Dict())
+                            # Project-wide default selector (defaults to $data).
+                            if haskey(storage_exp, "default")
+                                @test DB._default_selector(sc) == storage_exp["default"]
+                            end
+
+                            # Each dataset resolves to its $-form selector (its `store`,
+                            # or the project default when omitted).
+                            for (ds_name, sel_exp) in get(storage_exp, "datasets", Dict())
                                 @test haskey(db.datasets, ds_name)
                                 if haskey(db.datasets, ds_name)
                                     s = db.datasets[ds_name].store
-                                    @test (s == "" ? "data" : s) == store_exp
+                                    sel = s == "" ? DB._default_selector(sc) : s
+                                    @test startswith(sel, "\$")   # hard migration: $-form only
+                                    @test sel == sel_exp
                                 end
                             end
 
-                            roots = get(storage_exp, "roots", Dict())
-                            sc = db.storage_config
-                            base_keys = sort([k for k in keys(sc) if !startswith(k, "_")])
-                            @test base_keys == sort(String.(get(roots, "base", String[])))
+                            # local_path path expressions (raw, pre-expansion).
+                            for (ds_name, lp_exp) in get(storage_exp, "local_paths", Dict())
+                                @test haskey(db.datasets, ds_name)
+                                if haskey(db.datasets, ds_name)
+                                    @test db.datasets[ds_name].local_path == lp_exp
+                                end
+                            end
+
+                            # Folder-variable namespace: built-ins, user-defined,
+                            # and the _HOST / _PROFILE override keys.
+                            folders = get(storage_exp, "folders", Dict())
+                            if haskey(folders, "builtin")
+                                @test sort(collect(DataManifest.Storage.BUILTIN_FOLDERS)) ==
+                                      sort(String.(folders["builtin"]))
+                            end
+                            reserved = DataManifest.Storage.RESERVED_STORAGE_KEYS
+                            user_keys = sort([String(k) for k in keys(sc)
+                                              if !(String(k) in reserved)])
+                            @test user_keys == sort(String.(get(folders, "user", String[])))
                             host = get(sc, "_HOST", Dict())
                             @test sort(collect(keys(host))) ==
-                                  sort(String.(get(roots, "host_patterns", String[])))
+                                  sort(String.(get(folders, "host_patterns", String[])))
                             prof = get(sc, "_PROFILE", Dict())
                             @test sort(collect(keys(prof))) ==
-                                  sort(String.(get(roots, "profiles", String[])))
+                                  sort(String.(get(folders, "profiles", String[])))
                         end
 
                         # byte-identity (self-consistent): serialize → parse →

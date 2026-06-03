@@ -5,7 +5,8 @@ using TOML
 using URIs
 using ..Config: info, warn, sha256_path, get_extract_path, get_default_toml, DEFAULT_DATASETS_FOLDER_PATH,
     COMPRESSED_FORMATS, HIDE_STRUCT_FIELDS, project_root_from_paths
-using ..Storage: store_root, legacy_data_root, is_complete
+using ..Storage: selector_root, folder_root, expand_path_expr, legacy_data_root,
+    is_complete, BUILTIN_FOLDERS
 
 # ----- Types (DatasetEntry, Database) -----
 Base.@kwdef mutable struct DatasetEntry
@@ -137,8 +138,12 @@ function to_dict(entry::DatasetEntry)
         if (value === nothing || value == [] || value == Dict() || value === "" || value == false)
             continue
         end
-        if (field == :store)
-            if value == "" || value == "data"
+        if (field == :uri)
+            # A content-free `build_uri` artifact ("://" — no scheme/host/path)
+            # carries no information, and emitting it corrupts the re-parsed key on
+            # round-trip (it parses back to ":"), colliding key-less entries
+            # (e.g. a produced table or a `local_path`-only dataset). Drop it.
+            if value == "://"
                 continue
             end
         end
@@ -459,26 +464,30 @@ function get_dataset_key(entry::DatasetEntry)
     return build_dataset_key(entry)
 end
 
-# Resolve the root directory for an entry's store. An explicitly-provided
-# `datasets_folder` (non-empty) overrides the `data` store root for back-compat;
-# every other store — and the defaulted (`""`) `data` store — resolves via the
-# `Storage` module (platformdirs-equivalent defaults + `[_STORAGE]` precedence).
+# Resolve the root directory for an entry's store **selector** (spec-v2). A blank
+# `store` falls back to the project-wide `default` selector (itself defaulting to
+# `$data`). An explicitly-provided `datasets_folder` (non-empty) overrides the
+# `$data` root for back-compat; every other selector resolves via the `Storage`
+# module ($-folder ladder + sub-paths).
 function resolve_store_root(entry::DatasetEntry, datasets_folder::String=""; project_root::String="", storage_config::AbstractDict=Dict{String,Any}())
-    store = entry.store == "" ? "data" : entry.store
-    if datasets_folder != "" && store == "data"
+    selector = entry.store == "" ? _default_selector(storage_config) : entry.store
+    if datasets_folder != "" && selector == "\$data"
         return datasets_folder
     end
-    return store_root(store; project_root=project_root, storage_config=storage_config)
+    return selector_root(selector; project_root=project_root, storage_config=storage_config)
 end
 
 function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extract::Union{Bool,Nothing}=nothing, project_root::String="", storage_config::AbstractDict=Dict{String,Any}())
     if (entry.local_path != "")
-        if isabspath(entry.local_path)
-            return entry.local_path
+        # `local_path` is a path expression: interpolate $-folder variables,
+        # $USER/env, and ~ (spec-v2). A relative result resolves against the repo.
+        p = expand_path_expr(entry.local_path; project_root=project_root, storage_config=storage_config)
+        if isabspath(p)
+            return p
         elseif project_root != ""
-            return joinpath(project_root, entry.local_path)
+            return joinpath(project_root, p)
         else
-            return entry.local_path
+            return p
         end
     end
     if (entry.skip_download)
@@ -518,7 +527,7 @@ function resolve_existing_path(db::Database, entry::DatasetEntry; extract::Union
     key = ext ? get_extract_path(entry.key) : entry.key
     project_root = get_project_root(db)
     datasets_folder = get_datasets_folder(db)
-    for store in ("repo", "data", "cache")
+    for store in ("\$repo", "\$data", "\$cache")
         e = DatasetEntry(; key=entry.key, store=store)
         root = resolve_store_root(e, datasets_folder; project_root=project_root, storage_config=db.storage_config)
         candidate = joinpath(root, key)
@@ -571,11 +580,54 @@ function _warn_legacy_dir_once()
     _LEGACY_DIR_WARNED[] && return
     _LEGACY_DIR_WARNED[] = true
     legacy = legacy_data_root()
-    current = store_root("data")
+    current = selector_root("\$data")
     warn("Reading datasets from the legacy location $legacy (pre-v1.1 default; read-only). " *
          "New downloads go to the current data store at $current. To keep using the legacy " *
          "folder, set DATAMANIFEST_DATA_DIR=$legacy; otherwise migrate it manually " *
          "(e.g. with rsync) at your convenience.")
+end
+
+# One-time flag: fires the first time a bare (spec-v1.1) store selector is read
+# and auto-upgraded to spec-v2 `$`-form.
+const _BARE_STORE_WARNED = Ref{Bool}(false)
+
+function _warn_bare_store_once()
+    _BARE_STORE_WARNED[] && return
+    _BARE_STORE_WARNED[] = true
+    warn("Bare store selector (spec-v1.1 form, e.g. store = \"cache\") is deprecated; " *
+         "spec-v2 uses \$-folder references (store = \"\$cache\"). Auto-upgraded for this " *
+         "session and written in \$-form on the next write. Run DataManifest.migrate(path) " *
+         "to persist the change.")
+end
+
+# Normalize a `store` / `[_STORAGE].default` **selector** to spec-v2 `$`-form.
+# Already-`$` values pass through. A bare built-in name (`data`/`cache`/`repo`, the
+# spec-v1.1 form, possibly with a sub-path) is auto-upgraded with a one-time
+# warning. Any other bare value is rejected: spec-v2 is a hard migration off bare
+# selectors (and the `mount` store was removed), so user folders MUST be
+# `$`-referenced.
+function normalize_selector(value::AbstractString; field::AbstractString="store")::String
+    s = String(value)
+    isempty(s) && return s
+    startswith(s, "\$") && return s
+    base = String(split(s, '/'; limit=2)[1])
+    if base in BUILTIN_FOLDERS
+        _warn_bare_store_once()
+        return "\$" * s
+    end
+    hint = base == "mount" ? " (the `mount` store was removed in spec-v2)" :
+        " (define `$base` in [_STORAGE] and reference it as \"\$$base\")"
+    error("Invalid $field selector \"$s\": spec-v2 requires a \$-folder reference, " *
+          "e.g. \"\$data\"/\"\$cache\"/\"\$repo\"$hint.")
+end
+
+# The project-wide default selector: `[_STORAGE].default` (normalized to `$`-form),
+# falling back to `$data` when unset.
+function _default_selector(storage_config::AbstractDict)::String
+    d = get(storage_config, "default", "")
+    s = d === nothing ? "" : String(d)
+    isempty(s) && return "\$data"
+    return normalize_selector(s; field="default")
 end
 
 # True when a string looks like a `Module[.Sub]:function` ref: no whitespace,
@@ -737,6 +789,11 @@ function init_dataset_entry(;
         end
     end
     entry.extra = passthrough
+    # spec-v2: normalize the `store` selector to `$`-form (auto-upgrade bare
+    # spec-v1.1 built-in names; reject other bare values).
+    if entry.store != ""
+        entry.store = normalize_selector(entry.store; field="store")
+    end
     # Parse own `[<ds>._LANG.julia]` bindings (v1); keep foreign `_LANG.<other>`.
     _parse_dataset_lang!(entry)
 

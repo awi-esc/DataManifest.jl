@@ -108,35 +108,51 @@ Moves ref-shaped `julia=`/`loader=` fields and `[_LOADERS]` ref entries into `[<
 
 ## Storage model
 
-As of v0.16.0, DataManifest supports a portable **storage model** that keeps dataset paths consistent across languages:
+As of v0.17.0 (spec-v2), DataManifest uses a portable **`$`-folder-variable storage
+model** that keeps dataset paths consistent across languages:
 
 ```toml
 [_META]
 schema = 1
 
 [_STORAGE]
-data = "/data/shared"            # override the data-store root
+default = "$data"                # project-wide default selector (defaults to $data)
+scratch = "$TMPDIR/datasets"     # user-defined folder variable -> $scratch
+
+[_STORAGE._HOST."login*.hpc.edu"]
+scratch = "/scratch/$USER/datasets"   # same variable, host-specific resolution
 
 [my_dataset]
-store = "cache"                  # put this dataset in the cache store
+store = "$cache"                 # put this dataset in the cache folder
 uri   = "https://example.com/ds.nc"
+
+[big]
+store = "$cache/derived"         # sub-path: keyed under <cache_root>/derived/<key>
+uri   = "https://example.com/big.nc"
 ```
 
-Each dataset can declare `store = "data"` (default), `"cache"`, `"repo"` (inside the project), or `"mount"` (parsed verbatim, not yet mounted). Default roots follow Python's `platformdirs`:
+A **folder** is referenced as a `$`-variable. Built-in folders resolve to
+language-independent default roots (Python's `platformdirs`):
 
-| Store  | Linux default                              |
-|--------|--------------------------------------------|
-| `data` | `$XDG_DATA_HOME/datamanifest/Datasets`     |
-| `cache`| `$XDG_CACHE_HOME/datamanifest/Datasets`    |
-| `repo` | `<project_root>/datasets`                  |
+| Folder   | Linux default                              |
+|----------|--------------------------------------------|
+| `$data`  | `$XDG_DATA_HOME/datamanifest/Datasets`     |
+| `$cache` | `$XDG_CACHE_HOME/datamanifest/Datasets`    |
+| `$repo`  | `<project_root>/datasets`                  |
 
-> **Behavior change in v0.16.0**: the `data` store default moved from
-> `$XDG_CACHE_HOME/Datasets` to `$XDG_DATA_HOME/datamanifest/Datasets`.
-> Set `DATAMANIFEST_DATA_DIR` to your old path to keep resolving existing files.
+Any other `[_STORAGE]` key defines a **user folder** (`scratch = "…"` → `$scratch`).
+A dataset's `store` (and the `[_STORAGE].default`) is a `$`-folder **selector**,
+optionally with a sub-path (`$cache/derived`); `[_STORAGE]` values and `local_path`
+are **path expressions** that interpolate `$`-folder variables, `$USER`/env, and `~`.
 
-Per-store root precedence: `DATAMANIFEST_<STORE>_DIR` env-var →
-`_PROFILE.<name>` (when `DATAMANIFEST_PROFILE` set) → first matching
-`_HOST.<glob>` → `[_STORAGE]` base → default. `~` and `$VAR` expanded.
+> **Breaking change in v0.17.0**: bare store names (`store = "cache"`) are replaced
+> by `$`-references (`store = "$cache"`). Bare built-in names are auto-upgraded on
+> read (with a warning) and rewritten in `$`-form; the `mount` store was removed.
+> Default roots are unchanged from v0.16.0, so nothing needs re-downloading.
+
+Every folder variable resolves through one ladder:
+`DATAMANIFEST_<NAME>_DIR` env-var → `_PROFILE.<name>` (when `DATAMANIFEST_PROFILE`
+set) → first matching `_HOST.<glob>` → `[_STORAGE]` base → built-in default.
 
 ## Parameterized bindings
 
