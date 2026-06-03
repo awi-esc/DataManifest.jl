@@ -306,10 +306,11 @@ function _lang_shell_fetcher(entry::DatasetEntry)::String
     return f isa AbstractString ? String(f) : ""
 end
 
-# ----- Language-implicit (bare) fetcher (spec-v3.4) -----
+# ----- Language-implicit (bare) fetcher (spec-v3.4/3.6) -----
 # A dataset MAY carry a bare `fetcher` binding read as the running tool's own language
 # (equivalent to `[<ds>._LANG.julia].fetcher`). Explicit `_LANG.julia.fetcher` wins; a bare
-# fetcher that fails to resolve in Julia warns and falls through (tolerant).
+# fetcher is **present** for Julia ⇒ spec-v3.6 fail-loud: it resolves-or-errors and a runtime
+# error propagates (never a silent fall-through to the next rung).
 
 # The bare fetcher's `module:function` ref (string or `{ ref … }` table), or "" when absent.
 function _bare_fetcher_ref(entry::DatasetEntry)::String
@@ -323,24 +324,18 @@ function _bare_fetcher_ref(entry::DatasetEntry)::String
 end
 
 # Resolve + run a bare fetcher `ref` as the own-language fetcher (conventional keyword-arg
-# call, like the bare-string `_LANG.julia.fetcher`). Returns true when it ran; false when the
-# ref does not resolve in Julia (→ warn and fall through to the next rung).
+# call, like the bare-string `_LANG.julia.fetcher`). Present-for-Julia ⇒ a resolution or
+# runtime failure propagates (spec-v3.6 fail-loud).
 function _run_bare_fetcher(db::Database, dataset::DatasetEntry, ref::String,
                           download_path::String, project_root::String;
-                          required_paths_ordered::Vector{String}=String[])::Bool
-    local fn
-    try
-        fn = _resolve_ref(db, ref)
-    catch e
-        @warn "Bare `fetcher` did not resolve in Julia; falling through" ref = ref exception = e
-        return false
-    end
+                          required_paths_ordered::Vector{String}=String[])
+    fn = _resolve_ref(db, ref)
     call = () -> Base.invokelatest(fn;
         download_path=download_path, project_root=project_root, entry=dataset,
         uri=dataset.uri, key=dataset.key, version=dataset.version, doi=dataset.doi,
         format=dataset.format, branch=dataset.branch, requires_paths=required_paths_ordered)
     project_root != "" ? cd(call, project_root) : call()
-    return true
+    return nothing
 end
 
 # The dataset's shell fetcher command (spec-v3.5): the bare, language-agnostic `shell` field,
@@ -524,9 +519,10 @@ function _download_dataset(dataset::DatasetEntry, download_path::String; project
             return
         end
         bare_fetcher = _bare_fetcher_ref(dataset)
-        if bare_fetcher != "" &&
-           _run_bare_fetcher(db, dataset, bare_fetcher, download_path, project_root;
-                            required_paths_ordered=required_paths_ordered)
+        if bare_fetcher != ""
+            # present-for-Julia ⇒ commit to it (resolution/runtime errors propagate).
+            _run_bare_fetcher(db, dataset, bare_fetcher, download_path, project_root;
+                             required_paths_ordered=required_paths_ordered)
             return
         end
         # rung 2 — the dataset's `shell` command (bare field, else legacy `_LANG.shell`).
@@ -798,25 +794,20 @@ function _loader_from_binding(db::Database, entry::DatasetEntry, b)
     end
 end
 
-# v1 load ladder (spec-v3.4):
+# v1 load ladder (spec-v3.4/3.6):
 #   1. own `[<ds>._LANG.julia].loader`, else the bare (language-implicit) `loader`;
 #   2. `[_LANG.julia.loaders][format]`, else `[_LOADERS][format]` (language-implicit);
 #   3. built-in format default; else error.
-# At each own-language rung the explicit `_LANG.julia` binding wins over the bare one; a bare
-# binding that fails to resolve in Julia warns and falls through (tolerant, never a hard
-# error on that account). A v1 loader never spawns a subprocess / never `include_string`s.
+# At each own-language rung the explicit `_LANG.julia` binding wins over the bare one. A
+# binding that is **present** for Julia (bare or explicit) is treated alike: spec-v3.6 —
+# **fail loud**, it resolves-or-errors, and a runtime error propagates; the ladder falls
+# through only past **absent** bindings, never to paper over a broken present one. A v1
+# loader never spawns a subprocess / never `include_string`s.
 function _resolve_loader_v1(db::Database, entry::DatasetEntry)
-    # rung 1 — explicit own loader, else the bare language-implicit loader.
-    if entry.lang_julia_loader != ""
-        return _loader_from_binding(db, entry, entry.lang_julia_loader)
-    end
-    if entry.loader != ""
-        try
-            return _loader_from_binding(db, entry, entry.loader)
-        catch e
-            @warn "Bare `loader` did not resolve in Julia; falling through to format defaults" ref = entry.loader exception = e
-        end
-    end
+    # rung 1 — explicit own loader, else the bare language-implicit loader (both present-for-
+    # Julia ⇒ resolve-or-error, no silent fall-through).
+    entry.lang_julia_loader != "" && return _loader_from_binding(db, entry, entry.lang_julia_loader)
+    entry.loader != "" && return _loader_from_binding(db, entry, entry.loader)
     # For extracted archives, path is a directory; no single-file format to load.
     format = (entry.extract && entry.format in COMPRESSED_FORMATS) ? "" : entry.format
     fmt = lowercase(strip(format))
@@ -826,13 +817,7 @@ function _resolve_loader_v1(db::Database, entry::DatasetEntry)
             lowercase(strip(k)) == fmt && return _loader_from_binding(db, entry, b)
         end
         for (k, b) in pairs(db.loaders)
-            if lowercase(strip(k)) == fmt
-                try
-                    return _loader_from_binding(db, entry, b)
-                catch e
-                    @warn "Bare `[_LOADERS]` loader did not resolve in Julia; falling through" format = fmt exception = e
-                end
-            end
+            lowercase(strip(k)) == fmt && return _loader_from_binding(db, entry, b)
         end
     end
     # rung 3 — built-in format default.

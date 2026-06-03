@@ -1030,6 +1030,11 @@ try
         @test P._bare_fetcher_ref(DB.DatasetEntry(; extra=Dict{String,Any}("fetcher" => "M:f"))) == "M:f"
         @test P._bare_fetcher_ref(DB.DatasetEntry(; extra=Dict{String,Any}(
             "fetcher" => Dict{String,Any}("ref" => "M:f")))) == "M:f"
+
+        # spec-v3.6: a present bare loader that does not resolve is an ERROR — it MUST NOT
+        # fall through to the built-in csv loader (which would otherwise succeed here).
+        e_bad = DB.DatasetEntry(; format="csv", loader="NoSuchModule12345abc:nope")
+        @test_throws Exception P._resolve_loader_v1(DB.Database(persist=false), e_bad)
     end
 
     @testset "spec-v3.5 bare shell fetch (end-to-end)" begin

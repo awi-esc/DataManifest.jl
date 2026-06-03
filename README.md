@@ -102,7 +102,7 @@ A `"Module:function"` ref is resolved at runtime by `using Module` followed by `
 
 **Bindings are string or table** at every site (spec-v3.3) — a bare `module:function` string, or a `{ ref, args, kwargs }` table — including the project-wide `[_LANG.julia.loaders]` map, so a format default can be parameterized exactly like a per-dataset loader.
 
-**Language-implicit (bare) bindings** (spec-v3.4): for a single-language project you may skip the `_LANG.julia` wrapper and write a bare `fetcher`/`loader` directly on the dataset (and a top-level `[_LOADERS]` format map) — read as the running tool's **own-language** binding. An explicit `_LANG.julia` binding takes precedence; a bare binding that doesn't resolve in Julia warns and falls through. The **`shell`** field is the language-*agnostic* sibling (spec-v3.5) — the same command for every tool. Foreign `_LANG.<other>` subtrees, bare bindings, `[_LOADERS]`, and unknown `_*` tables all round-trip verbatim; only the Julia `_LANG` subtree is regenerated from the model.
+**Language-implicit (bare) bindings** (spec-v3.4): for a single-language project you may skip the `_LANG.julia` wrapper and write a bare `fetcher`/`loader` directly on the dataset (and a top-level `[_LOADERS]` format map) — read as the running tool's **own-language** binding. An explicit `_LANG.julia` binding takes precedence. A bare binding is *present* for Julia, so it is treated like an explicit one — **fail loud** (spec-v3.6): a resolution failure errors and a runtime error propagates, never a silent fall-through; the ladder only skips bindings *absent* for Julia (another language's `_LANG.<other>`). The **`shell`** field is the language-*agnostic* sibling (spec-v3.5) — the same command for every tool. Foreign `_LANG.<other>` subtrees, bare bindings, `[_LOADERS]`, and unknown `_*` tables all round-trip verbatim; only the Julia `_LANG` subtree is regenerated from the model.
 
 ### Parameterized bindings
 
@@ -235,7 +235,7 @@ end
 
 ## Conformance
 
-This release targets the **datamanifest.toml spec tag `spec-v3.5`** (source of truth: <https://github.com/perrette/datamanifest.toml>). A complete, annotated example manifest lives there: [`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml).
+This release targets the **datamanifest.toml spec tag `spec-v3.6`** (source of truth: <https://github.com/perrette/datamanifest.toml>). A complete, annotated example manifest lives there: [`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml).
 
 Implemented capabilities: **`lang-read`**, **`lang-write`**, **`shell-fetch`**, **`storage`**, **`binding-args`**, **`byte-identity`**, **`cache-produce`**, **`inspect`**, **`delegation`**. Only **`sync`** (cross-machine `push`/`pull`) is not yet implemented.
 

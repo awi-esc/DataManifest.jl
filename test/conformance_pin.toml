@@ -3,7 +3,7 @@
 # The tag + per-file content hashes below are this tool's machine-checkable
 # conformance claim. Hashes are computed from fixture file contents (not the
 # tarball bytes) so the pin stays correct if GitHub re-packs the auto-archive.
-spec_tag = "spec-v3.5"
+spec_tag = "spec-v3.6"
 
 [files]
 "tests/fixtures/README.md" = "0957890490e2850073bb37ab785666329bbfab7a09fa42ed561af69fea06d679"
