@@ -89,21 +89,24 @@ It is also possible to provide a preferred name on disk via `key=...` to add. Th
 
 ## Storage model
 
-A dataset is materialized under a **folder**, referenced as a `$`-variable. Three
-folders are built-in; any other `[_STORAGE]` key defines a user folder:
+A dataset is materialized under a **folder**, referenced as a `$`-variable that resolves to
+a **bare top-level root**. The consuming layer composes the rest of the path: a `datasets/`
+content prefix (fetch) and an optional `scope` partition. Three folders are built-in; any
+other `[_STORAGE]` key defines a user folder:
 
-| Folder   | Meaning                                 | Default root (Linux)                          |
-|----------|-----------------------------------------|-----------------------------------------------|
-| `$data`  | persistent user data (default)          | `$XDG_DATA_HOME/datamanifest/Datasets`        |
-| `$cache` | OS-reclaimable cache *location*         | `$XDG_CACHE_HOME/datamanifest/Datasets`       |
-| `$repo`  | committed inside the project repository | `<project_root>/datasets`                     |
+| Folder   | Meaning                                 | Bare root (Linux)                                    |
+|----------|-----------------------------------------|------------------------------------------------------|
+| `$data`  | persistent user data (default)          | `$DATAMANIFEST_DIR` or `$XDG_DATA_HOME/datamanifest`  |
+| `$cache` | OS-reclaimable cache *location*         | `$DATAMANIFEST_DIR` or `$XDG_CACHE_HOME/datamanifest` |
+| `$repo`  | committed inside the project repository | `<project_root>`                                     |
 
-(The `mount` store of spec-v1.1 was removed in spec-v2.) Declare a dataset's
-folder with a `$`-**selector**, optionally with a sub-path:
+A fetched dataset lands at `<root>/datasets/[<scope>/]<key>`. (The `mount` store of
+spec-v1.1 was removed in spec-v2.) Declare a dataset's folder with a `$`-**selector**,
+optionally with a sub-path:
 
 ```toml
 [my_dataset]
-store = "$cache"                # or "$cache/derived" to key under <cache_root>/derived/<key>
+store = "$cache"                # or "$cache/derived" to key under <cache>/derived/datasets/<key>
 uri   = "https://example.com/big_file.nc"
 ```
 
@@ -114,19 +117,45 @@ defaults to `$data`. Define folders / overrides in `[_STORAGE]` (keys are bare
 ```toml
 [_STORAGE]
 default = "$data"                               # project-wide default selector
-scratch = "$TMPDIR/datasets"                    # user folder -> $scratch (a path expression)
-_HOST."login*" = { scratch = "/scratch/$USER/datasets" }   # host-glob override
-_PROFILE.hpc   = { data = "/work/datasets" }    # profile override (DATAMANIFEST_PROFILE=hpc)
+scratch = "$TMPDIR"                             # user folder -> $scratch (a bare root)
+_HOST."login*" = { scratch = "/scratch/$USER" }  # host-glob override
+_PREFIX = { datasets = "datasets", cached = "cached" }   # rename the per-layer subfolders
+_SCOPE  = { datasets = "shared-pool" }          # share fetched downloads within a group
 ```
 
 Every folder variable resolves through one ladder: `DATAMANIFEST_<NAME>_DIR`
-env-var → `_PROFILE.<name>` → first matching `_HOST.<glob>` → `[_STORAGE]` base →
-built-in default. Path expressions (`[_STORAGE]` values and `local_path`)
-interpolate `$`-folder variables, `$USER`/env, and `~`.
+env-var → first matching `_HOST.<glob>` → `[_STORAGE]` base → built-in default.
+(`_PROFILE` is shelved in spec-v3 — reserved/preserved, not resolved.) Prefixes and scopes
+resolve through `DATAMANIFEST_PREFIX_<KIND>` / `DATAMANIFEST_SCOPE_<KIND>` →
+`[_STORAGE._PREFIX | _SCOPE].<kind>` → default. Path expressions (`[_STORAGE]` values and
+`local_path`) interpolate `$`-folder variables, `$USER`/env, and `~`.
 
 When loading, DataManifest resolves the dataset's selected folder, then also
-probes the built-in folders `repo → data → cache`, returning the first where the
-dataset exists and has a `.complete` marker.
+probes the built-in folders `repo → data → cache` (each under its `datasets/` prefix),
+returning the first where the dataset exists and has a `.complete` marker. Existing v0.17.0
+downloads under `…/datamanifest/Datasets` are probed read-only for back-compat.
+
+## Produce-or-load caching (`@cached`)
+
+`DataManifest.Cache` adds the produce-or-load layer (spec-v3 `cache-produce`): cache a
+function's result on disk, keyed by its parameters rather than a `uri`.
+
+```julia
+@cached cachetype="anomaly" ext="jls" key=(a -> (; a.grid)) function load_anomaly(;
+        grid::String="5x5", _verbose::Bool=false)
+    # … expensive work …
+end
+load_anomaly(; grid="5x5")               # computes once; subsequent calls load from disk
+load_anomaly(; grid="5x5", cached=false) # escape hatch: run the body, no disk I/O
+```
+
+The key is the SHA-256 of the **canonical JSON** of the hash-affecting keyword parameters
+(`_`-prefixed kwargs are runtime knobs, excluded). Produced datasets are **keyword-only**,
+and hash inputs are restricted to strings/integers/booleans/arrays/objects — floats and
+nulls raise. Each artifact is self-describing: `config.toml` (re-hashable key table) and
+`metadata.toml` (provenance) sit alongside it at
+`<$cache>/cached/<project>/<cachetype>/[<version>/]<hash>/`, default `store = "$cache"`.
+`jls` is built in; register other formats with `DataManifest.Cache.register_format!`.
 
 ## Maintaining a local `Datasets.toml`
 

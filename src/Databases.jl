@@ -5,8 +5,8 @@ using TOML
 using URIs
 using ..Config: info, warn, sha256_path, get_extract_path, get_default_toml, DEFAULT_DATASETS_FOLDER_PATH,
     COMPRESSED_FORMATS, HIDE_STRUCT_FIELDS, project_root_from_paths
-using ..Storage: selector_root, folder_root, expand_path_expr, legacy_data_root,
-    is_complete, BUILTIN_FOLDERS
+using ..Storage: store_dir, selector_root, expand_path_expr, legacy_data_root,
+    legacy_v2_roots, is_complete, BUILTIN_FOLDERS
 
 # ----- Types (DatasetEntry, Database) -----
 Base.@kwdef mutable struct DatasetEntry
@@ -464,17 +464,18 @@ function get_dataset_key(entry::DatasetEntry)
     return build_dataset_key(entry)
 end
 
-# Resolve the root directory for an entry's store **selector** (spec-v2). A blank
-# `store` falls back to the project-wide `default` selector (itself defaulting to
-# `$data`). An explicitly-provided `datasets_folder` (non-empty) overrides the
-# `$data` root for back-compat; every other selector resolves via the `Storage`
-# module ($-folder ladder + sub-paths).
+# Resolve the directory under which an entry's `<key>` lives (spec-v3). A blank `store`
+# falls back to the project-wide `default` selector (itself defaulting to `$data`). The
+# fetched path composes selector + the `datasets/` content prefix + (optional) datasets
+# scope: `<root>[/subpath]/datasets/[<scope>/]<key>`. An explicitly-provided
+# `datasets_folder` (non-empty) is used verbatim for the `$data` selector (back-compat —
+# an exact folder, no prefix/scope).
 function resolve_store_root(entry::DatasetEntry, datasets_folder::String=""; project_root::String="", storage_config::AbstractDict=Dict{String,Any}())
     selector = entry.store == "" ? _default_selector(storage_config) : entry.store
     if datasets_folder != "" && selector == "\$data"
         return datasets_folder
     end
-    return selector_root(selector; project_root=project_root, storage_config=storage_config)
+    return store_dir(selector, :datasets; project_root=project_root, storage_config=storage_config)
 end
 
 function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extract::Union{Bool,Nothing}=nothing, project_root::String="", storage_config::AbstractDict=Dict{String,Any}())
@@ -535,14 +536,19 @@ function resolve_existing_path(db::Database, entry::DatasetEntry; extract::Union
             return candidate
         end
     end
-    # Legacy read-only back-compat probe (pre-v1.1 default ~/.cache/Datasets),
-    # checked last so any new-store copy wins. Skipped when the user has made an
-    # explicit data-dir choice (DATAMANIFEST_DATA_DIR). New writes never go here.
-    if get(ENV, "DATAMANIFEST_DATA_DIR", "") == ""
-        legacy_candidate = joinpath(legacy_data_root(), key)
-        if ispath(legacy_candidate)
-            _warn_legacy_dir_once()
-            return legacy_candidate
+    # Legacy read-only back-compat probes, checked last so any new-store copy wins.
+    # Skipped when the user has made an explicit data-dir choice (DATAMANIFEST_DATA_DIR /
+    # DATAMANIFEST_DIR). New writes never go to these paths.
+    #   · the spec-v2 / v0.17.0 roots `<app-dir>/Datasets/<key>` (capital D; spec-v3
+    #     lowercased the prefix and moved to bare roots);
+    #   · the pre-v1.1 default `$XDG_CACHE_HOME/Datasets/<key>`.
+    if get(ENV, "DATAMANIFEST_DATA_DIR", "") == "" && get(ENV, "DATAMANIFEST_DIR", "") == ""
+        for root in vcat(legacy_v2_roots(), legacy_data_root())
+            legacy_candidate = joinpath(root, key)
+            if ispath(legacy_candidate)
+                _warn_legacy_dir_once()
+                return legacy_candidate
+            end
         end
     end
     return get_dataset_path(db, entry; extract=extract)
@@ -580,7 +586,7 @@ function _warn_legacy_dir_once()
     _LEGACY_DIR_WARNED[] && return
     _LEGACY_DIR_WARNED[] = true
     legacy = legacy_data_root()
-    current = selector_root("\$data")
+    current = store_dir("\$data", :datasets)
     warn("Reading datasets from the legacy location $legacy (pre-v1.1 default; read-only). " *
          "New downloads go to the current data store at $current. To keep using the legacy " *
          "folder, set DATAMANIFEST_DATA_DIR=$legacy; otherwise migrate it manually " *
