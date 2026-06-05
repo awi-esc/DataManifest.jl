@@ -495,6 +495,11 @@ function materialize(write_fn, target::AbstractString)
     return target
 end
 
+# Object-store URI schemes (spec-v4.3): "fetch the object, then verify sha256", mechanism
+# left to the tool. DataManifest.jl has no native backend, so a download of one errors with a
+# pointer to `lazy_access` / delegation (HTTP/HTTPS keep their own dedicated path, not here).
+const OBJECT_STORE_SCHEMES = ("s3", "gs", "gcs", "az", "abfs", "abfss", "adl", "gdrive")
+
 function _download_dataset(dataset::DatasetEntry, download_path::String; project_root::String="", overwrite::Bool=false,
                           required_paths_by_ref::Dict{String,String}=Dict{String,String}(),
                           required_paths_ordered::Vector{String}=String[],
@@ -606,6 +611,16 @@ function _download_dataset(dataset::DatasetEntry, download_path::String; project
             run(`rsync -arvzL  $(dataset.path) $(dirname(download_path))/`)
         end
 
+    elseif scheme in OBJECT_STORE_SCHEMES
+        # spec-v4.3: object-store schemes mean "fetch the object, then verify sha256", but the
+        # mechanism is implementation-defined. DataManifest.jl has no built-in object-store
+        # backend; rather than silently skip, error clearly and point to the supported paths.
+        error("Object-store URI \"$(dataset.uri)\" (scheme `$(scheme)://`) cannot be fetched " *
+              "natively by DataManifest.jl — there is no built-in object-store backend " *
+              "(spec-v4.3). Open it in place with `lazy_access = true` plus a loader that reads " *
+              "`$(scheme)://` (e.g. an AWSS3 / fsspec-style loader), or delegate the fetch to a " *
+              "peer `datamanifest` tool that implements the scheme.")
+
     else
         try
             Downloads.download(dataset.uri, download_path)
@@ -644,6 +659,13 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
         for dep_name in order[1:end-1]
             download_dataset(db, dep_name; extract=extract, overwrite=false, kwargs...)
         end
+    end
+
+    # Lazy / on-the-fly access (spec-v4.3): never download; the `uri` is opened in place by the
+    # loader. Nothing local to verify or record.
+    if (dataset.lazy_access)
+        info("Lazy access (not downloaded): $(dataset.uri)")
+        return get_dataset_path(db, dataset; extract=extract)
     end
 
     if (dataset.skip_download)
@@ -867,7 +889,29 @@ function load_dataset(db::Database, name::String; loader=nothing, kwargs...)
     return load_dataset(db, entry; loader=loader, kwargs...)
 end
 
+# Whether a dataset has a loader binding usable for in-place (lazy_access) opening — an
+# explicit `loader=`, a per-dataset `loader` / `_LANG.julia.loader`, or a manifest-configured
+# loader for its `format`. The built-in format default (which reads a *local* file) does NOT
+# count: it cannot open a remote `uri`.
+function _has_lazy_loader(db::Database, entry::DatasetEntry, loader)::Bool
+    (loader !== nothing && loader != "") && return true
+    (entry.loader != "" || entry.lang_julia_loader != "") && return true
+    fmt = lowercase(strip(entry.format))
+    isempty(fmt) && return false
+    any(k -> lowercase(String(k)) == fmt, keys(db.lang_julia_loaders)) && return true
+    any(k -> lowercase(String(k)) == fmt, keys(db.loaders)) && return true
+    return false
+end
+
 function load_dataset(db::Database, entry::DatasetEntry; loader=nothing, kwargs...)
+    # spec-v4.3: a bare `lazy_access` (no loader) is an error — there is no local file, so the
+    # built-in default loader cannot open the in-place `uri`.
+    if entry.lazy_access && !_has_lazy_loader(db, entry, loader)
+        error("Dataset \"$(entry.key)\" sets `lazy_access` (open the uri in place) but has no " *
+              "loader. lazy_access requires a loader that can open \"$(entry.uri)\": pass " *
+              "loader=…, set a per-dataset `loader` / `[<ds>._LANG.julia].loader`, or configure " *
+              "a `[_LANG.julia.loaders][\"$(entry.format)\"]`.")
+    end
     path = download_dataset(db, entry; kwargs...)
     if loader !== nothing && loader != ""
         if loader isa String

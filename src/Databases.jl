@@ -29,6 +29,11 @@ Base.@kwdef mutable struct DatasetEntry
     sha256::String = ""
     skip_checksum::Bool = false
     skip_download::Bool = false
+    # spec-v4.3 access mode: open the `uri` in place via a loader (typically a remote object
+    # store) instead of materializing a local copy — no download, no checksum, no state-file
+    # record. Requires a loader (a bare `lazy_access` with no loader is an error). Distinct
+    # from `skip_download` (a management mode); the two are independent and do not combine.
+    lazy_access::Bool = false
     extract::Bool = false
     format::String = ""
     shell::String = ""
@@ -480,8 +485,9 @@ end
 # an exact folder, no prefix/scope).
 function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extract::Union{Bool,Nothing}=nothing, project_root::String="", storage_config::AbstractDict=Dict{String,Any}())
     # spec-v4: one location per dataset — the `storage_path` field (default `$datasets_dir/$key`).
-    # `skip_download` (with no explicit path) returns the documented `uri` verbatim.
-    if (entry.skip_download && entry.storage_path == "")
+    # `lazy_access` opens the `uri` in place (spec-v4.3); `skip_download` (with no explicit path)
+    # returns the documented `uri` verbatim. Both yield the `uri` as the "path".
+    if (entry.lazy_access || (entry.skip_download && entry.storage_path == ""))
         return entry.uri
     end
     if (extract === nothing)
@@ -564,9 +570,10 @@ end
 
 function resolve_existing_path(db::Database, entry::DatasetEntry; extract::Union{Bool,Nothing}=nothing)
     p = get_dataset_path(db, entry; extract=extract)
-    # A user-managed exact path (storage_path without `$key`) or a skip_download URI is fixed.
+    # A user-managed exact path (storage_path without `$key`), a skip_download URI, or a
+    # lazy_access (in-place) URI is fixed — no read-first / pool probing.
     user_managed = entry.storage_path != "" && !occursin("\$key", entry.storage_path)
-    (entry.skip_download || user_managed) && return p
+    (entry.skip_download || entry.lazy_access || user_managed) && return p
     # Read-first: a recorded location whose bytes are actually present wins (a moved dataset).
     # The recorded storage_path is the location the dataset is normally read from — the
     # extracted dir for an extract-ed dataset, the file otherwise — so read-first applies at
@@ -596,7 +603,7 @@ downloads → `datasets_dir`) is unchanged. Skipped for `skip_download` / user-m
 """
 function resolve_from_pools(db::Database, entry::DatasetEntry; extract::Union{Bool,Nothing}=nothing)::String
     user_managed = entry.storage_path != "" && !occursin("\$key", entry.storage_path)
-    (entry.skip_download || user_managed) && return ""
+    (entry.skip_download || entry.lazy_access || user_managed) && return ""
     eff_extract = extract === nothing ? entry.extract : extract
     # The probed location matches what the dataset is read from / checksummed: the extracted
     # dir for an extract dataset, the file otherwise.
@@ -1026,9 +1033,9 @@ function register_dataset(db::Database, uris::Vector{String}; kwargs...)
 end
 
 function _remove_dataset_from_disk(db::Database, entry::DatasetEntry)
-    # Never delete a skip_download dataset or a user-managed exact `storage_path` (no `$key`).
+    # Never delete a skip_download / lazy_access dataset or a user-managed exact `storage_path`.
     user_managed = entry.storage_path != "" && !occursin("\$key", entry.storage_path)
-    if entry.skip_download || user_managed
+    if entry.skip_download || entry.lazy_access || user_managed
         return
     end
     download_path = get_dataset_path(db, entry; extract=false)
@@ -1162,9 +1169,14 @@ function search_dataset(db::Database, name::String; raise=true, kwargs...)
             return nothing
         end
     elseif (length(results) > 1)
+        # spec-v4.3: identifier resolution is exact-or-error. A name/alias/doi matching more
+        # than one dataset is a fail-loud error naming the candidates — never a silent
+        # first-match (a `doi` may be shared by several datasets, so acting on an arbitrary one
+        # is a correctness footgun).
         if raise
-            message = "Multiple datasets found for $name:\n- $(join([join(list_alternative_keys(x), " | ") for (name,x) in results], "\n- "))"
-            warn(message)
+            cands = join([first(r) for r in results], ", ")
+            error("Identifier `$name` matches multiple datasets: $cands. " *
+                  "Disambiguate by exact name.")
         end
     end
     return results[1]

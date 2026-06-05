@@ -187,6 +187,56 @@ try
                   storage_config=Dict{String,Any}("datacache_pools" => [pooldir])) == [pooldir]
     end
 
+    @testset "spec-v4.3 lazy_access + identifier resolution" begin
+        DB = DataManifest.Databases
+        d = mktempdir()
+        toml = joinpath(d, "datasets.toml")
+
+        # lazy_access: the path IS the uri; load opens it in place via a loader; no download,
+        # nothing materialized, no state record.
+        write(toml, """
+        [_META]
+        schema = 1
+        [remote]
+        uri = "s3://bucket/data.bin"
+        lazy_access = true
+        """)
+        dbl = read_dataset(toml, joinpath(d, "store"); persist=false)
+        e = dbl.datasets["remote"]
+        @test e.lazy_access
+        @test DB.get_dataset_path(dbl, e) == "s3://bucket/data.bin"
+        @test download_dataset(dbl, "remote") == "s3://bucket/data.bin"   # not downloaded
+        @test !isdir(joinpath(d, "store"))                                # nothing materialized
+        @test load_dataset(dbl, "remote"; loader = p -> "open:" * string(p)) ==
+              "open:s3://bucket/data.bin"
+        # A bare lazy_access (no loader) is a fail-loud error.
+        @test_throws ErrorException load_dataset(dbl, "remote")
+        # lazy_access round-trips on write.
+        out = joinpath(d, "out.toml"); write(dbl, out)
+        @test occursin("lazy_access = true", read(out, String))
+        @test read_dataset(out, d; persist=false).datasets["remote"].lazy_access
+
+        # Object-store download (non-lazy) errors clearly — no native backend, never a silent skip.
+        write(toml, "[_META]\nschema = 1\n[obj]\nuri = \"gs://b/x.nc\"\n")
+        dbo = read_dataset(toml, joinpath(d, "store2"); persist=false)
+        @test_throws ErrorException download_dataset(dbo, "obj")
+
+        # Exact-or-error identifier resolution: an alias shared by two datasets is fail-loud.
+        write(toml, """
+        [_META]
+        schema = 1
+        [a]
+        uri = "https://x/a.csv"
+        aliases = ["shared"]
+        [b]
+        uri = "https://x/b.csv"
+        aliases = ["shared"]
+        """)
+        dba = read_dataset(toml, joinpath(d, "store3"); persist=false)
+        @test DB.search_dataset(dba, "a")[1] == "a"                    # exact name resolves
+        @test_throws ErrorException DB.search_dataset(dba, "shared")   # ambiguous alias errors
+    end
+
     @testset "spec-v4 two-folder storage" begin
         S = DataManifest.Storage
         env = Dict("XDG_DATA_HOME" => "/d", "XDG_CACHE_HOME" => "/c")
@@ -1200,7 +1250,7 @@ try
     end
 end
 
-@testset "Conformance suite (spec-v4.1)" begin
+@testset "Conformance suite (spec-v4.3)" begin
     # Source of truth: github.com/perrette/datamanifest.toml (tag pinned below).
     # The pin file records the spec tag + per-file sha256 of each fixture; hashes
     # are over file contents (not the tarball), keeping the pin robust to GitHub

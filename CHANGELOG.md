@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.26.0] - 2026-06-06 — spec-v4.3: lazy access, object-store schemes, exact-or-error ids
+
+Tracks datamanifest.toml **`spec-v4.3`** (and folds in `spec-v4.2`, which standardized the
+read pools already shipped in 0.25.0). Adds an in-place **access mode**, normative
+object-store URI schemes, and stricter identifier resolution.
+
+### Added
+
+- **`lazy_access` (per-dataset bool).** An **access mode**: open the `uri` *in place* via a
+  loader instead of materializing a local copy — **no download, no checksum, no state-file
+  record**, and maintenance never touches it. Requires a loader (a bare `lazy_access` with no
+  loader is a **fail-loud error**); the access mechanism (streaming / mount / object-store
+  filesystem) is the loader's concern. `get_dataset_path` / `download_dataset` return the `uri`;
+  `load_dataset` hands it to the loader. Distinct from `skip_download` (a *management* mode);
+  the two are independent.
+- **Object-store URI schemes (normative set):** `s3://`, `gs://`, `gcs://`, `az://`, `abfs://`,
+  `abfss://`, `adl://`, `gdrive://`. DataManifest.jl has **no built-in object-store backend**, so
+  a *download* of one now errors clearly (pointing to `lazy_access` + a scheme-aware loader, or
+  delegation to a peer tool) rather than failing obscurely or silently skipping. Such URIs are
+  best used with `lazy_access` and a loader that reads the scheme. (HTTP/HTTPS keep their own
+  dedicated download path.)
+
+### Changed
+
+- **Identifier resolution is exact-or-error.** Resolving a dataset by name / alias / `doi` that
+  matches **more than one** dataset is now a fail-loud error naming the candidates, instead of a
+  silent first-match (a shared `doi` across split archives made first-match a correctness
+  footgun).
+- Conformance pinned to spec tag **`spec-v4.3`** (fixtures byte-identical to `spec-v4.1`; only
+  the JSON schemas changed for the new fields).
+
 ## [0.25.0] - 2026-06-05 — read pools (`datasets_pools` / `datacache_pools`)
 
 Adds **read pools** — extra **read-only** locations probed for an already-present object before
