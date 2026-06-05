@@ -136,28 +136,131 @@ try
         @test read_dataset(canon_toml, datasets_dir; persist=false) == db
     end
 
-    @testset "legacy read-only probe" begin
-        legacy = mktempdir()
-        mkpath(joinpath(legacy, "Datasets", "host"))
-        write(joinpath(legacy, "Datasets", "host", "f.txt"), "x")
-        newdata = mktempdir()
-        # Dataset present only in legacy ~/.cache/Datasets resolves there.
-        withenv("XDG_CACHE_HOME" => legacy, "XDG_DATA_HOME" => newdata,
-                "DATAMANIFEST_DATA_DIR" => nothing) do
-            db_l = Database(datasets_folder="", persist=false)
-            register_dataset(db_l, "https://example.com/host/f.txt"; name="d",
-                key="host/f.txt", skip_checksum=true, persist=false)
-            p = DataManifest.Databases.resolve_existing_path(db_l, db_l.datasets["d"])
-            @test p == joinpath(legacy, "Datasets", "host", "f.txt")
+    @testset "read pools (datasets_pools)" begin
+        DB = DataManifest.Databases
+        pooldir = mktempdir()
+        mkpath(joinpath(pooldir, "host")); write(joinpath(pooldir, "host", "f.txt"), "pooled")
+
+        # An explicit pool: a dataset already present at <pool>/<key> is reused in place.
+        dbp = Database(datasets_folder=mktempdir(), persist=false)
+        dbp.storage_config = Dict{String,Any}("datasets_pools" => [pooldir])
+        register_dataset(dbp, "https://example.com/host/f.txt"; name="d",
+            key="host/f.txt", skip_checksum=true, persist=false)
+        @test DB.resolve_from_pools(dbp, dbp.datasets["d"]) == joinpath(pooldir, "host", "f.txt")
+
+        # An explicit EMPTY list disables pools.
+        dbp.storage_config = Dict{String,Any}("datasets_pools" => String[])
+        @test DB.resolve_from_pools(dbp, dbp.datasets["d"]) == ""
+
+        # sha256 verification: a pooled copy whose digest mismatches is skipped, not adopted.
+        dbp.storage_config = Dict{String,Any}("datasets_pools" => [pooldir])
+        dbp.datasets["d"].sha256 = "0"^64
+        dbp.datasets["d"].skip_checksum = false
+        @test DB.resolve_from_pools(dbp, dbp.datasets["d"]) == ""
+
+        # Built-in default pool: `~/.cache/Datasets` is probed when `datasets_pools` is unset.
+        home = mktempdir(); mkpath(joinpath(home, ".cache", "Datasets", "host"))
+        write(joinpath(home, ".cache", "Datasets", "host", "g.txt"), "y")
+        withenv("HOME" => home) do
+            dbp2 = Database(datasets_folder=mktempdir(), persist=false)
+            register_dataset(dbp2, "https://example.com/host/g.txt"; name="g",
+                key="host/g.txt", skip_checksum=true, persist=false)
+            @test DB.resolve_from_pools(dbp2, dbp2.datasets["g"]) ==
+                  joinpath(home, ".cache", "Datasets", "host", "g.txt")
         end
-        # explicit DATAMANIFEST_DATA_DIR disables the legacy probe.
-        withenv("XDG_CACHE_HOME" => legacy, "XDG_DATA_HOME" => newdata,
-                "DATAMANIFEST_DATA_DIR" => newdata) do
-            db_e = Database(datasets_folder="", persist=false)
-            register_dataset(db_e, "https://example.com/host/f.txt"; name="d2",
-                key="host/f.txt", skip_checksum=true, persist=false)
-            p = DataManifest.Databases.resolve_existing_path(db_e, db_e.datasets["d2"])
-            @test p != joinpath(legacy, "Datasets", "host", "f.txt")
+
+        # An extract=true dataset is reused from a pool holding the EXTRACTED dir
+        # (<pool>/<extract_path>), not just the archive (Python-parity fix).
+        epool = mktempdir()
+        ek = DataManifest.Config.get_extract_path("host.com/data/archive.zip")
+        mkpath(joinpath(epool, ek)); write(joinpath(epool, ek, "inner.txt"), "x")
+        dbe = Database(datasets_folder=mktempdir(), persist=false)
+        dbe.storage_config = Dict{String,Any}("datasets_pools" => [epool])
+        register_dataset(dbe, "https://host.com/data/archive.zip"; name="arc",
+            key="host.com/data/archive.zip", extract=true, skip_checksum=true, persist=false)
+        @test dbe.datasets["arc"].extract
+        @test DB.resolve_from_pools(dbe, dbe.datasets["arc"]) == joinpath(epool, ek)
+
+        # datacache_pools is opt-in: undefined ⇒ none; an explicit list resolves.
+        @test isempty(DataManifest.Storage.datacache_pools())
+        @test DataManifest.Storage.datacache_pools(;
+                  storage_config=Dict{String,Any}("datacache_pools" => [pooldir])) == [pooldir]
+    end
+
+    @testset "spec-v4 two-folder storage" begin
+        S = DataManifest.Storage
+        env = Dict("XDG_DATA_HOME" => "/d", "XDG_CACHE_HOME" => "/c")
+
+        # The two folders default to repo-relative `datasets/` and `cached/`.
+        @test S.datasets_dir(; project_root="/r", env=env) == "/r/datasets"
+        @test S.datacache_dir(; project_root="/r", env=env) == "/r/cached"
+        # Env-var overrides (DATAMANIFEST_<FIELD>) win.
+        envd = merge(env, Dict("DATAMANIFEST_DATASETS_DIR" => "/abs/data",
+                               "DATAMANIFEST_DATACACHE_DIR" => "/abs/cache"))
+        @test S.datasets_dir(; project_root="/r", env=envd) == "/abs/data"
+        @test S.datacache_dir(; project_root="/r", env=envd) == "/abs/cache"
+        # `[_STORAGE]` overrides: a path expression (here a $-symbol) is expanded.
+        sc = Dict{String,Any}("datasets_dir" => "\$user_data_dir/proj",
+                              "datacache_dir" => "\$user_cache_dir/proj")
+        @test S.datasets_dir(; project_root="/r", storage_config=sc, env=env) == "/d/proj"
+        @test S.datacache_dir(; project_root="/r", storage_config=sc, env=env) == "/c/proj"
+
+        # $user_data_dir / $user_cache_dir are BARE platformdirs (no app segment).
+        @test S.user_data_dir(env) == "/d"
+        @test S.user_cache_dir(env) == "/c"
+        @test S.expand_path_expr("\$user_data_dir/x"; env=env) == "/d/x"
+
+        # dataset_storage_path: default keyed location is `$datasets_dir/$key`.
+        @test S.dataset_storage_path("", "host/f.nc"; project_root="/r", env=env) ==
+              "/r/datasets/host/f.nc"
+        # A `$scratch/$key` override is tool-managed keyed (uses a user symbol).
+        scu = Dict{String,Any}("scratch" => "/scratch/me")
+        @test S.dataset_storage_path("\$scratch/\$key", "a/b.nc";
+                                     project_root="/r", storage_config=scu, env=env) ==
+              "/scratch/me/a/b.nc"
+        # An exact path (no `$key`) is user-managed and used verbatim.
+        @test S.dataset_storage_path("\$scratch/exact/file.nc", "ignored";
+                                     project_root="/r", storage_config=scu, env=env) ==
+              "/scratch/me/exact/file.nc"
+        # A relative exact path resolves against the project root.
+        @test S.dataset_storage_path("data/in_repo.nc", "ignored"; project_root="/r", env=env) ==
+              "/r/data/in_repo.nc"
+
+        # user_symbols: bare [_STORAGE] keys excluding the reserved fields.
+        @test S.user_symbols(Dict{String,Any}("scratch" => "/s", "datasets_dir" => "x",
+                                              "datacache_dir" => "y",
+                                              "_HOST" => Dict{String,Any}())) == ["scratch"]
+
+        # Per-dataset storage_path round-trips: keyed, exact, and omitted (stays "").
+        mktempdir() do dd
+            toml = joinpath(dd, "datasets.toml")
+            write(toml, """
+            [_META]
+            schema = 1
+            [a]
+            uri = "https://x/a.nc"
+            format = "nc"
+            storage_path = "\$scratch/\$key"
+            [b]
+            uri = "https://x/b.nc"
+            format = "nc"
+            storage_path = "/data/exact/b.nc"
+            [c]
+            uri = "https://x/c.nc"
+            format = "nc"
+            """)
+            db_v4 = read_dataset(toml, dd; persist=false)
+            @test db_v4.datasets["a"].storage_path == "\$scratch/\$key"
+            @test db_v4.datasets["b"].storage_path == "/data/exact/b.nc"
+            @test db_v4.datasets["c"].storage_path == ""   # omitted -> keyed default
+            out_v4 = joinpath(dd, "out.toml"); write(db_v4, out_v4)
+            txt_v4 = read(out_v4, String)
+            @test occursin("storage_path = \"\$scratch/\$key\"", txt_v4)
+            @test occursin("storage_path = \"/data/exact/b.nc\"", txt_v4)
+            db_v4b = read_dataset(out_v4, dd; persist=false)
+            @test db_v4b.datasets["a"].storage_path == "\$scratch/\$key"
+            @test db_v4b.datasets["b"].storage_path == "/data/exact/b.nc"
+            @test db_v4b.datasets["c"].storage_path == ""
         end
     end
 
@@ -246,24 +349,25 @@ try
     end
 
 
-    @testset "local_path (override the cache location)" begin
+    @testset "storage_path (override the cache location)" begin
         test_file_abs = abspath(joinpath(@__DIR__, "test-data", "data_file.txt"))
 
-        # Absolute local_path is returned as-is, bypassing datasets_folder/key.
+        # An exact (user-managed) storage_path with no $key is returned as-is,
+        # bypassing datasets_folder/key.
         db_abs = Database(datasets_folder=datasets_dir; persist=false)
         register_dataset(db_abs, ""; name="abs_local",
             uri="https://protected.example.com/data.txt",
-            local_path=test_file_abs, skip_checksum=true)
+            storage_path=test_file_abs, skip_checksum=true)
         @test get_dataset_path(db_abs, "abs_local") == test_file_abs
-        # File already exists at local_path → cache hit, no download attempted.
+        # File already exists at storage_path → cache hit, no download attempted.
         @test download_dataset(db_abs, "abs_local") == test_file_abs
 
-        # _remove_dataset_from_disk does not touch a local_path file.
+        # _remove_dataset_from_disk does not touch a user-managed storage_path file.
         @test isfile(test_file_abs)
         DataManifest.Databases._remove_dataset_from_disk(db_abs, db_abs.datasets["abs_local"])
         @test isfile(test_file_abs)
 
-        # Relative local_path resolves against the Datasets.toml directory.
+        # A relative exact storage_path resolves against the Datasets.toml directory.
         lp_dir = mktempdir(prefix="DataManifest_lp_"; cleanup=true)
         toml_path = joinpath(lp_dir, "Datasets.toml")
         mkpath(joinpath(lp_dir, "data"))
@@ -272,15 +376,15 @@ try
         write(toml_path, """
         [in_repo]
         uri = "https://protected.example.com/in_repo.txt"
-        local_path = "data/in_repo.txt"
+        storage_path = "data/in_repo.txt"
         skip_checksum = true
         """)
         db_rel = read_dataset(toml_path, datasets_dir; persist=true)
         @test get_dataset_path(db_rel, "in_repo") == rel_file
         @test download_dataset(db_rel, "in_repo") == rel_file
 
-        # Cache miss + downloadable URI: download lands at local_path
-        # (local_path is purely a location override; download mechanism unchanged).
+        # Cache miss + downloadable URI: download lands at storage_path
+        # (storage_path is purely a location override; download mechanism unchanged).
         # NOTE: filename matches the source because the file:// scheme uses rsync,
         # which preserves the source basename.
         fetch_dir = mktempdir(prefix="DataManifest_lp_fetch_"; cleanup=true)
@@ -288,7 +392,7 @@ try
         write(fetch_toml, """
         [fetch_local]
         uri = "file://$test_file_abs"
-        local_path = "fetched/data_file.txt"
+        storage_path = "fetched/data_file.txt"
         skip_checksum = true
         """)
         db_fetch = read_dataset(fetch_toml, datasets_dir; persist=true)
@@ -301,7 +405,7 @@ try
         write(toml_path, """
         [missing_skip]
         uri = "https://protected.example.com/missing.txt"
-        local_path = "data/missing.txt"
+        storage_path = "data/missing.txt"
         skip_download = true
         """)
         db_missing = read_dataset(toml_path, datasets_dir; persist=true)
@@ -320,17 +424,17 @@ try
         write(bad_checksum_toml, """
         [bad_sum]
         uri = "https://protected.example.com/in_repo.txt"
-        local_path = "data/in_repo.txt"
+        storage_path = "data/in_repo.txt"
         sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
         """)
         db_bad = read_dataset(bad_checksum_toml, datasets_dir; persist=true)
         @test_throws ErrorException download_dataset(db_bad, "bad_sum")
 
-        # TOML round-trip: local_path field survives write/read.
+        # TOML round-trip: storage_path field survives write/read.
         rt_toml = joinpath(lp_dir, "RoundTrip.toml")
         write(db_rel, rt_toml)
         db_rt = read_dataset(rt_toml, datasets_dir; persist=false)
-        @test db_rt.datasets["in_repo"].local_path == "data/in_repo.txt"
+        @test db_rt.datasets["in_repo"].storage_path == "data/in_repo.txt"
     end
 
     @testset "Command-based entry (templating)" begin
@@ -827,7 +931,7 @@ try
         # `cached_toml` / DATAMANIFEST_USAGE_LOG are pinned to a tempdir so register-on-
         # produce (Phase 2) never touches the repo or the real depot usage log.
         dir = mktempdir()
-        idx_path = joinpath(dir, "cached.toml")
+        idx_path = joinpath(dir, ".datamanifest-state.toml")
         usage_path = joinpath(dir, "usage.toml")
         calls = Ref(0)
         @cached cachetype="demo" key=(a -> (; a.grid, a.n)) function demo(;
@@ -850,20 +954,23 @@ try
             @test C.read_config(d).cachetype == "demo"
             @test C.cache_key("demo", hh) == "demo/$hh"
 
-            # Phase 2: register-on-produce wrote the cached.toml entry (portable key +
-            # ref + format), and stamped the depot usage log.
+            # Phase 2: register-on-produce wrote the state-file recipe (schema 5: datacache
+            # keyed by (cachetype, version), each instance hash -> its artifact dir), and
+            # stamped the depot usage log.
             @test isfile(idx_path)
             idx = read_index(idx_path)
-            @test haskey(idx.entries, "demo")
-            @test idx.entries["demo"]["cachetype"] == "demo"
-            @test idx.entries["demo"]["hash"] == hh
-            @test idx.entries["demo"]["format"] == "jls"
-            @test endswith(idx.entries["demo"]["ref"], ":demo")
+            recs = filter(r -> r["cachetype"] == "demo", recipe_records(idx))
+            @test length(recs) == 1
+            rec = recs[1]
+            @test rec["format"] == "jls"
+            @test endswith(rec["ref"], ":demo")
+            @test haskey(rec["instances"], hh)
+            @test rec["instances"][hh] == d   # the per-instance storage_path is the artifact dir
             @test index_keys(idx) == Set(["demo/$hh"])
             @test abspath(idx_path) in C.known_paths(ENV)
-            # metadata.toml [origin].cached_toml back-pointer names the index.
+            # metadata.toml [origin].state_file back-pointer names the state file.
             md = TOML.parsefile(joinpath(d, "metadata.toml"))
-            @test get(get(md, "origin", Dict()), "cached_toml", "") == abspath(idx_path)
+            @test get(get(md, "origin", Dict()), "state_file", "") == abspath(idx_path)
 
             # cached=false bypasses disk entirely (no recompute-skip, no registration).
             demo(; grid="z", n=9, cache_dir=dir, cached_toml=idx_path, cached=false)
@@ -882,30 +989,63 @@ try
         @test occursin("keyword-only", kwonly_err)
     end
 
-    @testset "Cache index + usage + inspect (spec-v3 inspect)" begin
+    @testset "Cache index + usage + inspect (spec-v4.1 state file)" begin
         C = DataManifest.Cache
 
-        # --- CachedIndex round-trip + portable keys -------------------------------
+        # --- state-file round-trip (schema 5: datacache + datasets namespaces) ----
         dir = mktempdir()
-        idx_path = joinpath(dir, "cached.toml")
+        idx_path = joinpath(dir, C.STATE_FILE_NAME)
         idx = read_index_or_empty(idx_path)
-        @test isempty(idx.entries)
-        register!(idx, "load_20c"; cachetype="esm_20c", hash="a"^64,
+        @test isempty(idx.recipes) && isempty(idx.datasets)
+        register!(idx; cachetype="esm_20c", hash="a"^64,
+                  storage_path="cached/esm_20c/v3/$("a"^64)",
                   ref="P:load_20c", format="nc", version="v3")
-        register!(idx, "load_lgm"; cachetype="esm_lgm", hash="b"^64, ref="P:load_lgm")
+        register!(idx; cachetype="esm_lgm", hash="b"^64, storage_path="cached/esm_lgm/$("b"^64)",
+                  ref="P:load_lgm")
+        register_dataset!(idx; key="ex.com/foo.nc", storage_path="datasets/ex.com/foo.nc",
+                          sha256="abc123")
         write_index(idx)
         @test isfile(idx_path)
         back = read_index(idx_path)
-        @test Set(keys(back.entries)) == Set(["load_20c", "load_lgm"])
-        @test back.entries["load_20c"]["version"] == "v3"
+        @test Set(keys(back.recipes)) == Set([("esm_20c", "v3"), ("esm_lgm", "")])
+        # instances map hash -> the artifact dir (storage_path), NOT params (params live in config.toml).
+        @test back.recipes[("esm_20c", "v3")]["instances"]["a"^64] == "cached/esm_20c/v3/$("a"^64)"
         @test index_keys(back) == Set(["esm_20c/$("a"^64)", "esm_lgm/$("b"^64)"])
-        # _META schema is written and stripped from entries on read.
-        @test TOML.parsefile(idx_path)["_META"]["schema"] == 1
-        @test !haskey(back.entries, "_META")
-        # Re-register overwrites a single entry without dropping the rest.
-        register!(back, "load_20c"; cachetype="esm_20c", hash="c"^64)
-        @test back.entries["load_20c"]["hash"] == "c"^64
-        @test haskey(back.entries, "load_lgm")
+        @test reachable_keys(back) ==
+              Set([("esm_20c", "v3", "a"^64), ("esm_lgm", "", "b"^64)])
+        @test ref_of(back; cachetype="esm_20c", version="v3") == "P:load_20c"
+        @test has_instance(back; cachetype="esm_20c", version="v3", hash="a"^64)
+        @test instance_path_of(back; cachetype="esm_20c", version="v3", hash="a"^64) ==
+              "cached/esm_20c/v3/$("a"^64)"
+        # datasets namespace round-trips location + actual sha256.
+        @test dataset_path_of(back, "ex.com/foo.nc") == "datasets/ex.com/foo.nc"
+        @test dataset_sha256_of(back, "ex.com/foo.nc") == "abc123"
+        # _META schema 5 is written.
+        @test TOML.parsefile(idx_path)["_META"]["schema"] == 5
+        # Registering a new hash ACCUMULATES under the recipe (does not overwrite it).
+        register!(back; cachetype="esm_20c", hash="c"^64, version="v3")
+        @test Set(keys(back.recipes[("esm_20c", "v3")]["instances"])) == Set(["a"^64, "c"^64])
+        @test haskey(back.recipes, ("esm_lgm", ""))
+
+        # A legacy `cached.toml` (schema 2, nested, params-in-body) is read & migrated forward.
+        legdir = mktempdir()
+        write(joinpath(legdir, "cached.toml"), """
+        [_META]
+        schema = 2
+        [[produced]]
+        cachetype = "esm"
+        ref = "m:f"
+        format = "nc"
+          [[produced.instances]]
+          hash = "$("d"^64)"
+          [produced.instances.params]
+          grid = "5x5"
+        """)
+        @test endswith(C.locate_state(legdir), "cached.toml")   # legacy name found
+        lg = read_index(legdir)
+        @test reachable_keys(lg) == Set([("esm", "", "d"^64)])
+        @test endswith(write_index(lg, legdir), C.STATE_FILE_NAME)  # migrated on write
+        @test isfile(joinpath(legdir, C.STATE_FILE_NAME))
 
         # --- usage log + last-access ----------------------------------------------
         usage_path = joinpath(dir, "usage.toml")
@@ -934,8 +1074,8 @@ try
             _thing(; k="one", cache_dir=cache_dir, cached_toml=joinpath(dir, "c2.toml"))
             _thing(; k="two", cache_dir=cache_dir, cached_toml=joinpath(dir, "c2.toml"))
         end
-        # cache_dir bypasses the prefix/scope, so enumerate with prefix="".
-        objs = enumerate_artifacts(cache_dir; prefix="")
+        # enumerate the produced artifacts directly under cache_dir.
+        objs = enumerate_artifacts(cache_dir)
         @test length(objs) == 2
         @test all(o -> o.kind == "cached", objs)
         @test all(o -> startswith(o.key, "thing/"), objs)
@@ -951,10 +1091,10 @@ try
         delete_object(victim)
         @test !isdir(victim.location)
         @test !isfile(victim.location * ".complete")
-        @test length(enumerate_artifacts(cache_dir; prefix="")) == 1
+        @test length(enumerate_artifacts(cache_dir)) == 1
 
         # move preserves the <cachetype>/<hash> key path under the destination root.
-        survivor = enumerate_artifacts(cache_dir; prefix="")[1]
+        survivor = enumerate_artifacts(cache_dir)[1]
         dest = joinpath(dir, "archive")
         newloc = move_object(survivor, dest)
         @test isdir(newloc)
@@ -1060,7 +1200,7 @@ try
     end
 end
 
-@testset "Conformance suite (spec-v3.x)" begin
+@testset "Conformance suite (spec-v4.1)" begin
     # Source of truth: github.com/perrette/datamanifest.toml (tag pinned below).
     # The pin file records the spec tag + per-file sha256 of each fixture; hashes
     # are over file contents (not the tarball), keeping the pin robust to GitHub
@@ -1158,24 +1298,43 @@ end
                             @test DataManifest.Cache.cache_key(String(meta["cachetype"]), ph) == cs["key"]
                             @test key_table == Dict{String,Any}(String(k) => v for (k, v) in cs["key_table"])
                         elseif haskey(expected, "cached_index")
-                            # inspect: a cached.toml produced-dataset index. Read it and
-                            # check each entry's portable fields + the rooted key set
-                            # match the fixture (it is NOT a datasets.toml).
+                            # inspect: a cached.toml produced-dataset index (schema 2 nested).
+                            # Read it and check each recipe's identity + fields + per-variation
+                            # instances match the fixture (it is NOT a datasets.toml). The index
+                            # is self-verifying: each instance hash == the param-hash of its params.
                             ci = expected["cached_index"]
+                            raw = TOML.parsefile(toml_path)
+                            @test raw["_META"]["schema"] == get(ci, "schema", 2)
                             idx = DataManifest.Cache.read_index(toml_path)
-                            @test TOML.parsefile(toml_path)["_META"]["schema"] == 1
-                            exp_entries = ci["entries"]
-                            @test Set(keys(idx.entries)) == Set(keys(exp_entries))
-                            exp_keys = Set{String}()
-                            for (name, ee) in exp_entries
-                                @test haskey(idx.entries, name)
-                                entry = idx.entries[name]
-                                for (k, v) in ee
-                                    @test get(entry, k, nothing) == v
+                            # forbidden_keys: a negative assertion against _META and every recipe.
+                            forbidden = Set(String.(get(ci, "forbidden_keys", String[])))
+                            if !isempty(forbidden)
+                                @test isempty(intersect(forbidden, Set(string.(keys(raw["_META"])))))
+                                for rrec in get(raw, "produced", Any[])
+                                    @test isempty(intersect(forbidden, Set(string.(keys(rrec)))))
                                 end
-                                push!(exp_keys, "$(ee["cachetype"])/$(ee["hash"])")
+                            end
+                            exp_keys = Set{String}()
+                            exp_reachable = Set{NTuple{3,String}}()
+                            for er in ci["recipes"]
+                                ct = String(er["cachetype"])
+                                ver = String(get(er, "version", ""))
+                                key = (ct, ver)
+                                @test haskey(idx.recipes, key)
+                                rec = idx.recipes[key]
+                                @test rec["ref"] == get(er, "ref", "")
+                                @test rec["format"] == get(er, "format", "")
+                                for inst in er["instances"]
+                                    h = String(inst["hash"])
+                                    @test haskey(rec["instances"], h)
+                                    params = get(inst, "params", Dict{String,Any}())
+                                    @test DataManifest.Cache.param_hash(params) == h
+                                    push!(exp_keys, "$(ct)/$(h)")
+                                    push!(exp_reachable, (ct, ver, h))
+                                end
                             end
                             @test DataManifest.Cache.index_keys(idx) == exp_keys
+                            @test DataManifest.Cache.reachable_keys(idx) == exp_reachable
                         else
                         db = read_dataset(toml_path, tmp_dir; persist=false)
 
@@ -1267,55 +1426,40 @@ end
                             end
                         end
 
-                        # storage (spec-v2): $-folder selectors + the [_STORAGE]
-                        # folder-variable namespace match the fixture's storage block.
+                        # storage (spec-v4): the two folder fields, the user-symbol
+                        # namespace, the _HOST patterns, and per-dataset storage_path
+                        # expressions match the fixture's storage block. Raw [_STORAGE]
+                        # values are path expressions; compared verbatim (not resolved).
                         storage_exp = get(expected, "storage", nothing)
                         if storage_exp !== nothing
                             sc = db.storage_config
-                            DB = DataManifest.Databases
 
-                            # Project-wide default selector (defaults to $data).
-                            if haskey(storage_exp, "default")
-                                @test DB._default_selector(sc) == storage_exp["default"]
+                            # The two folder fields: raw [_STORAGE] values.
+                            if haskey(storage_exp, "datasets_dir")
+                                @test String(get(sc, "datasets_dir", "")) ==
+                                      storage_exp["datasets_dir"]
+                            end
+                            if haskey(storage_exp, "datacache_dir")
+                                @test String(get(sc, "datacache_dir", "")) ==
+                                      storage_exp["datacache_dir"]
                             end
 
-                            # Each dataset resolves to its $-form selector (its `store`,
-                            # or the project default when omitted).
-                            for (ds_name, sel_exp) in get(storage_exp, "datasets", Dict())
-                                @test haskey(db.datasets, ds_name)
-                                if haskey(db.datasets, ds_name)
-                                    s = db.datasets[ds_name].store
-                                    sel = s == "" ? DB._default_selector(sc) : s
-                                    @test startswith(sel, "\$")   # hard migration: $-form only
-                                    @test sel == sel_exp
-                                end
-                            end
+                            # User-defined symbols (bare [_STORAGE] keys, reserved excluded).
+                            @test DataManifest.Storage.user_symbols(sc) ==
+                                  sort(String.(get(storage_exp, "symbols", String[])))
 
-                            # local_path path expressions (raw, pre-expansion).
-                            for (ds_name, lp_exp) in get(storage_exp, "local_paths", Dict())
-                                @test haskey(db.datasets, ds_name)
-                                if haskey(db.datasets, ds_name)
-                                    @test db.datasets[ds_name].local_path == lp_exp
-                                end
-                            end
-
-                            # Folder-variable namespace: built-ins, user-defined,
-                            # and the _HOST / _PROFILE override keys.
-                            folders = get(storage_exp, "folders", Dict())
-                            if haskey(folders, "builtin")
-                                @test sort(collect(DataManifest.Storage.BUILTIN_FOLDERS)) ==
-                                      sort(String.(folders["builtin"]))
-                            end
-                            reserved = DataManifest.Storage.RESERVED_STORAGE_KEYS
-                            user_keys = sort([String(k) for k in keys(sc)
-                                              if !(String(k) in reserved)])
-                            @test user_keys == sort(String.(get(folders, "user", String[])))
+                            # _HOST glob patterns.
                             host = get(sc, "_HOST", Dict())
                             @test sort(collect(keys(host))) ==
-                                  sort(String.(get(folders, "host_patterns", String[])))
-                            prof = get(sc, "_PROFILE", Dict())
-                            @test sort(collect(keys(prof))) ==
-                                  sort(String.(get(folders, "profiles", String[])))
+                                  sort(String.(get(storage_exp, "host_patterns", String[])))
+
+                            # Per-dataset storage_path expressions (raw, pre-expansion).
+                            for (ds_name, sp_exp) in get(storage_exp, "storage_paths", Dict())
+                                @test haskey(db.datasets, ds_name)
+                                if haskey(db.datasets, ds_name)
+                                    @test db.datasets[ds_name].storage_path == sp_exp
+                                end
+                            end
                         end
 
                         # byte-identity (self-consistent): serialize → parse →

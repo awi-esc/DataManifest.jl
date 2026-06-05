@@ -3,12 +3,12 @@
 # The tag + per-file content hashes below are this tool's machine-checkable
 # conformance claim. Hashes are computed from fixture file contents (not the
 # tarball bytes) so the pin stays correct if GitHub re-packs the auto-archive.
-spec_tag = "spec-v3.6"
+spec_tag = "spec-v4.1"
 
 [files]
-"tests/fixtures/README.md" = "0957890490e2850073bb37ab785666329bbfab7a09fa42ed561af69fea06d679"
-"tests/fixtures/cached_index.expected.json" = "2f8ab1ffe68f0e15d5f444568c283cf58eb0456d51f2974155a2dda4ae3548ac"
-"tests/fixtures/cached_index.toml" = "4fb123b0da25e60e6bad9e47ef079639e3899cac006f17d98002f4ba8b7d4da8"
+"tests/fixtures/README.md" = "c656ade1ef66563d195bbb44a0a5e57a1717dd688a4b424e5dca3e2a467815f7"
+"tests/fixtures/cached_index.expected.json" = "93167b5cd82ad295bc7039bfee8b9f512641cab4b144da726115ef1dd6182d3c"
+"tests/fixtures/cached_index.toml" = "6a1728ee164ab7fae843c953b6978c1fc4e30ee162c989d3cbd79762e4248f60"
 "tests/fixtures/config_sidecar.expected.json" = "3f3f34e31df88a44f7bd8b598fba93432b286109c7a1bea31953850aca7cbb0b"
 "tests/fixtures/config_sidecar.toml" = "46df73bb0bf0449018107729b9ea2587bc8d1931be1250f076b490eedc5bed98"
 "tests/fixtures/config_sidecar_float.expected.json" = "c47d76f5f3d66379ac5d1ef8718de008f7aff52e56fff6336174035521dd923a"
@@ -23,7 +23,7 @@ spec_tag = "spec-v3.6"
 "tests/fixtures/single_julia.toml" = "7fae76fba97b995ca4f8bba204323f0aa5d9bc08e410b54ccbece4b55c39370f"
 "tests/fixtures/single_python.expected.json" = "6a41975b5ce5fd9a0f102dfbed55ece48b3779bee4a6922e21edb18f2da58085"
 "tests/fixtures/single_python.toml" = "9bcab1006d357e3a3875c9c07f2d453785528ea14c7f87fd73675a899fa397a3"
-"tests/fixtures/storage.expected.json" = "13eef4e52184694d496c09897f8831a3fe6ecb6f86e8a91c25ec5ed3d68c3ba3"
-"tests/fixtures/storage.toml" = "5a7d7ad0da0df8a6f8e0aec38b9c161484ddd2f3cb8831eec3bfdf235a44adcb"
+"tests/fixtures/storage.expected.json" = "3b298bbd90a35a267a58f3366fc4c60b45bbafc764efe3efcefd8caa6a4e5e5a"
+"tests/fixtures/storage.toml" = "b8ca6bba2ced1ca07696ecacf575c1268d586be2c020d445b7a020cb3e979e99"
 "tests/fixtures/unknown_structural.expected.json" = "914001f4d8b6c13911a7f9cbb38ede564a985deb4cca0b1efa55e6996fe08522"
 "tests/fixtures/unknown_structural.toml" = "b794906d29a2d7af6ed1f4edd37d23527bf0890fc693c7811080700f779f3b64"

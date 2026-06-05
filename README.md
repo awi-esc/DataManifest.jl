@@ -49,7 +49,7 @@ extract = true
 ```
 and download and extract the corresponding dataset, which can be accessed via
 ```julia
-get_dataset_path("jesstierney/lgmDA")  # resolves under the $data folder, e.g. ~/.local/share/datamanifest/datasets/...
+get_dataset_path("jesstierney/lgmDA")  # resolves under datasets_dir, by default ./datasets/<key>
 ```
 
 If you're not working in an activated environment, or want to be more explicit for your readers, you can specify the paths and simply prefix every command with the loaded database:
@@ -136,59 +136,79 @@ Legacy manifests (no `_META` header, inline `julia=`/`loader=` fields, `[_LOADER
 
 ## Storage model
 
-DataManifest uses a portable **`$`-folder-variable storage model**: a folder names a **bare
-root**, and the layer composes the rest of the path (`datasets/` for fetched data, `cached/`
-for produced artifacts) plus an optional **scope**:
+DataManifest storage reduces to **two folder fields**, both **local by default**, with nothing
+derived — the folder you set IS the location:
 
 ```toml
 [_META]
 schema = 1
 
 [_STORAGE]
-default = "$data"                # project-wide default selector (defaults to $data)
-scratch = "$TMPDIR"              # user-defined folder variable (a bare root) -> $scratch
+datasets_dir  = "datasets"       # fetched datasets  -> <datasets_dir>/<key>     (default ./datasets/)
+datacache_dir = "cached"         # produced cache    -> <datacache_dir>/<cachetype>/[<version>/]<hash>/  (default ./cached/)
+scratch       = "$TMPDIR"        # user-defined symbol -> $scratch
 
 [_STORAGE._HOST."login*.hpc.edu"]
-scratch = "/scratch/$USER"       # same variable, host-specific resolution
-
-[_STORAGE._SCOPE]
-# datasets = "shared-pool"        # share fetched downloads within a group (default: shared)
+scratch = "/scratch/$USER"       # same symbol, host-specific resolution
 
 [my_dataset]
-store = "$cache"                 # put this dataset under the cache folder's datasets/ tree
-uri   = "https://example.com/ds.nc"
+uri = "https://example.com/ds.nc"
+# default storage_path is "$datasets_dir/$key"
 
-[big]
-store = "$cache/derived"         # sub-path: keyed under <cache>/derived/datasets/<key>
-uri   = "https://example.com/big.nc"
+[in_repo]
+uri          = "https://example.com/manual.nc"
+storage_path = "data/manual.nc"  # exact path, no $key -> user-managed, never touched by maintenance
 ```
 
-A **folder** is referenced as a `$`-variable resolving to a **bare top-level root**; the
-consuming layer adds `datasets/[<scope>/]` (fetch) or `cached/[<scope>/]` (produce) on top:
+A **relative** folder is relative to the **project root** (`$repo`); an absolute path, a `~`
+path, or a `$symbol`-rooted path is used as written. There is **no scope, no prefix, no
+appname, no derived name, and no `store` selector** — to centralize or share data, point a
+folder at a shared location (e.g. `datasets_dir = "$user_data_dir/<name>"`) in one explicit
+edit; there is no automatic scoping.
 
-| Folder   | Bare root (Linux)                                   | Fetched dataset path           |
-|----------|-----------------------------------------------------|--------------------------------|
-| `$data`  | `$DATAMANIFEST_DIR` or `$XDG_DATA_HOME/datamanifest` | `<root>/datasets/<key>`        |
-| `$cache` | `$DATAMANIFEST_DIR` or `$XDG_CACHE_HOME/datamanifest`| `<root>/datasets/<key>`        |
-| `$repo`  | `<project_root>`                                    | `<root>/datasets/<key>`        |
+**`$`-symbols** interpolate in any path. The predefined ones are **bare** (no `datamanifest`
+app segment): `$user_data_dir` (= `platformdirs.user_data_dir()`, e.g. `~/.local/share`),
+`$user_cache_dir` (`~/.cache`), and `$repo` (the project root); plus `$USER`/env vars and `~`.
+Any other bare `[_STORAGE]` key is a **user-defined symbol** (`scratch = "…"` → `$scratch`),
+and can be made host-specific via `[_STORAGE._HOST."<glob>"]`. Every symbol and field resolves
+through one ladder:
 
-Any other `[_STORAGE]` key defines a **user folder** (`scratch = "…"` → `$scratch`).
-A dataset's `store` (and `[_STORAGE].default`) is a `$`-folder **selector**, optionally with
-a sub-path (`$cache/derived`); `[_STORAGE]` values and `local_path` are **path expressions**
-interpolating `$`-folder variables, `$USER`/env, and `~`. The `datasets` scope is empty by
-default (downloads are shared across projects); produced artifacts default to a
-project-isolated `cached` scope.
+> `DATAMANIFEST_<NAME>` env-var → `[_STORAGE._HOST.<glob>].<name>` →
+> base `[_STORAGE].<name>` → the predefined default.
 
-> **Behavior change from earlier releases.** Folders are now bare roots and the layer applies
-> a lowercase `datasets/` prefix, so the fetched path moved `…/datamanifest/Datasets/<key>`
-> → `…/datamanifest/datasets/<key>`. Existing downloads still resolve (read-only probe); set
-> `DATAMANIFEST_DIR` to put everything under one tree. `_PROFILE` is accepted and
-> round-tripped but not applied during resolution — use the auto-matched `_HOST`.
+**Per-dataset `storage_path`.** A dataset's `storage_path` is a path expression (default
+`$datasets_dir/$key`) that **replaces both the old `store` selector and `local_path`**:
 
-Every folder variable resolves through one ladder:
-`DATAMANIFEST_<NAME>_DIR` env-var → first matching `_HOST.<glob>` → `[_STORAGE]` base →
-built-in default. Prefixes/scopes resolve through `DATAMANIFEST_PREFIX_<KIND>` /
-`DATAMANIFEST_SCOPE_<KIND>` → `[_STORAGE._PREFIX | _SCOPE].<kind>` → default.
+- containing `$key` ⇒ a **tool-managed** keyed location;
+- an exact path **without** `$key` ⇒ **user-managed**, used verbatim, and never touched by
+  store maintenance.
+
+There are exactly **two env overrides**, `DATAMANIFEST_DATASETS_DIR` and
+`DATAMANIFEST_DATACACHE_DIR` (user symbols override as `DATAMANIFEST_<NAME>`).
+
+> **Sharing fetched data across projects.** Set `datasets_dir = "$user_data_dir/<name>"` (one
+> explicit edit). `_PROFILE` is accepted and round-tripped but not applied during resolution —
+> use the auto-matched `_HOST`.
+
+**Read pools** (`datasets_pools` / `datacache_pools`) — *reuse, don't re-fetch.* A read pool is
+an extra **read-only** location probed for an already-present object before downloading (or
+recomputing), so a dataset another project already fetched — or a `@cached` result it already
+produced — is reused **in place** rather than re-obtained. A fetch probes the pools after the
+recorded/derived location and before downloading; on a hit it verifies the declared `sha256`
+(a mismatch is skipped), records the location in the state file, and returns it — the pool is
+never written to, and new downloads still land in `datasets_dir` (the gold standard).
+
+```toml
+[_STORAGE]
+datasets_pools  = ["$user_data_dir/shared/datasets", "~/.cache/Datasets"]  # list of read-only dirs
+# datacache_pools = ["$user_data_dir/shared/cached"]                       # same, for @cached artifacts
+```
+
+`datasets_pools` is host-composable (`_HOST`) and env-overridable (`DATAMANIFEST_DATASETS_POOLS`,
+`pathsep`-separated); **undefined** falls back to the well-known defaults
+(`$user_data_dir/datamanifest/datasets`, `~/.cache/Datasets`), and an explicit **empty** list
+disables it. `datacache_pools` is **opt-in** (undefined ⇒ none). *(Python-parity feature, ahead
+of the spec.)*
 
 ## Produce-or-load caching (`@cached`)
 
@@ -198,7 +218,7 @@ of a project function on disk, keyed by its parameters:
 ```julia
 using DataManifest
 
-@cached cachetype="esm_anomaly" ext="jls" key=(a -> (; a.grid, a.skip_models)) function load_anomaly(;
+@cached key=(a -> (; a.grid, a.skip_models)) function load_anomaly(;
         grid::String = "5x5",
         skip_models::Vector{String} = ["CESM.*", "FGOALS.*"],
         _verbose::Bool = false)          # `_`-prefixed = runtime knob, excluded from the hash
@@ -214,23 +234,69 @@ The cache key is the SHA-256 of the **canonical JSON** of the hash-affecting key
 parameters (cross-tool reproducible). Produced datasets are **keyword-only**; hash inputs are
 strings/integers/booleans/**finite floats**/arrays/objects of those — finite floats use the
 normative Python `json.dumps` form (`1.0`→`1.0`), while `NaN`/`±Inf` and nulls raise. Each artifact is self-describing — `config.toml` (the re-hashable key table) and
-`metadata.toml` (provenance) sit alongside it at
-`<$cache>/cached/<project>/<cachetype>/[<version>/]<hash>/`. `jls` (stdlib `Serialization`)
-is the built-in format; register others (`nc`, `jld2`, …) with
-`DataManifest.Cache.register_format!`.
+`metadata.toml` (provenance) sit alongside it under **`datacache_dir`** at
+`<datacache_dir>/<cachetype>/[<version>/]<hash>/` (default `./cached/`). `jls` (stdlib
+`Serialization`) is the built-in zero-dependency format; register others (`nc`, `jld2`, …)
+with `DataManifest.Cache.register_format!`. (The spec RECOMMENDS `jld2` as the Julia
+per-language default; shipping `jls` as the built-in self-saver is a documented,
+spec-permitted deviation.)
 
-### The `cached.toml` index and store maintenance (`inspect`)
+**`cachetype` is optional**: when omitted it defaults to the producing function's canonical
+*importable* name — `Module.func` — so it coincides with the recipe `ref`. Pass an explicit
+`cachetype=` to override it, and `version=` to deliberately bust the cache. A function with
+**no stable importable identity** (script / REPL / `eval` / notebook) must be given an
+explicit `cachetype`. (The macro lost its old `store=`/`scope=` options; `cache_dir=` — a
+verbatim experiment folder that bypasses `datacache_dir` entirely — and `version=` remain.)
 
-On a produce, the artifact is registered in the project's **`cached.toml`** — the
-produced-dataset registry (the `Manifest.toml` analogue, sibling to `datasets.toml`) that
-lists each produced dataset by its portable `cachetype` + `hash` key, never an absolute path.
-Read or build one with `CachedIndex` / `read_index` / `register!` / `write_index`.
+### The state file (`.datamanifest-state.toml`) and store maintenance (`inspect`)
+
+`datasets.toml` is the committed **spec** — *what* to track and *how* to obtain it. *Where*
+each object actually landed on this machine is recorded separately in a sibling, **git-ignored**
+**`.datamanifest-state.toml`** — the *state file* (regenerable local state, schema 5). One
+inventory covers **both** fetched datasets and produced artifacts, under two namespaces. Read
+or build one with `CachedIndex` / `read_index` / `register!` / `register_dataset!` /
+`write_index`.
+
+```toml
+[_META]
+schema = 5
+
+# produced artifacts: cachetype[@version] → instances{hash → artifact dir}
+[datacache."lgmpre.data.load_20c@v3"]
+ref    = "lgmpre.data:load_20c"   # the producing module:function (refreshed across a refactor)
+format = "nc"
+  [datacache."lgmpre.data.load_20c@v3".instances]
+  "83425a30…" = "cached/lgmpre.data.load_20c/v3/83425a30…"   # the full artifact directory
+
+# fetched datasets: storage key → resolved location (+ actual checksum)
+[datasets."example.com/foo.nc"]
+storage_path = "datasets/example.com/foo.nc"
+sha256       = "abc123…"
+```
+
+The `datacache` namespace keys each recipe by `(cachetype, version)` (`@` is the reserved
+version separator) and maps each variation's parameter `hash` to the **artifact directory** it
+was written to — the **params themselves live in each artifact's `config.toml`**, not here.
+The `datasets` namespace records each fetched dataset's resolved `storage_path` and **actual**
+`sha256`. Registering **accumulates**. The legacy `cached.toml` filename and schema 1–4 forms
+are still read and migrated forward on the next write.
+
+**Read-first resolution:** resolving where a fetched dataset lives consults the recorded
+`storage_path` first — if those bytes are present, a *moved* dataset is found where it really
+lives, ahead of the derived `$datasets_dir/$key` rule (a re-download still writes to the
+derived directive location). A successful fetch records the resolved location + actual sha256;
+a **cache hit self-heals** the inventory (registers a missing variation, refreshes a drifted
+recipe `ref`), best-effort and off the hot path — so a deleted state file repopulates as
+objects are accessed. The on-disk `config.toml` stays the cache-validity authority;
+`metadata.toml` provenance stays write-if-absent (its `[origin].state_file` back-pointer names
+the inventory).
 
 `inspect_store(db)` enumerates produced artifacts **and** present fetched datasets as one
-list of `CacheObject`s (`kind`, `key`/`hash`, `scope`, `format`, `size`, `created`,
-`last_access`, `referenced`), resolving `referenced` from `cached.toml`. Filter the list and
-act with `delete_object` / `move_object` — there is **no automatic garbage collector**;
-deletion is always an explicit selection, and only produced (`cached`) artifacts are eligible.
+list of `CacheObject`s (`kind`, `key`/`hash`, `format`, `size`, `created`,
+`last_access`, `referenced`), resolving `referenced` from the state file on the
+`(cachetype, version, hash)` key. Filter the list and act with `delete_object` /
+`move_object` — there is **no automatic garbage collector**; deletion is always an explicit
+selection, and only produced (`cached`) artifacts are eligible.
 A produced artifact's **last-access** time (`last_access`) is read purely from the filesystem
 at inspect time — never written on read — so it is coarse and may track mtime on
 `noatime`/`relatime` mounts; `created` is the always-available age signal.
@@ -244,7 +310,7 @@ end
 
 ## Conformance
 
-This release targets the **datamanifest.toml spec tag `spec-v3.6`** (source of truth: <https://github.com/perrette/datamanifest.toml>). A complete, annotated example manifest lives there: [`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml).
+This release targets the **datamanifest.toml spec tag `spec-v4.1`** (source of truth: <https://github.com/perrette/datamanifest.toml>). A complete, annotated example manifest lives there: [`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml).
 
 Implemented capabilities: **`lang-read`**, **`lang-write`**, **`shell-fetch`**, **`storage`**, **`binding-args`**, **`byte-identity`**, **`cache-produce`**, **`inspect`**, **`delegation`**. Only **`sync`** (cross-machine `push`/`pull`) is not yet implemented.
 
@@ -256,7 +322,7 @@ Nothing at this point. After some time of usage and feedbacks, the roadmap will 
 
 ## Related projects
 
-DataManifest.jl started as a deliberately minimal, KISS alternative — one `Datasets.toml` declaring URLs and checksums, plus download. It is no longer quite that tiny: it has grown a focused, opt-in feature set — a user-defined loader layer, a portable `$`-folder storage model (host overrides, scopes), produce-or-load caching (`@cached`) with a `cached.toml` index and store maintenance, and parameterized bindings — while keeping configuration **declarative**: custom logic lives in *references to external Julia code* (`Module:function`) rather than code embedded in the config file. A casual user still writes three lines to register and fetch a dataset; the rest is there when a project needs it.
+DataManifest.jl started as a deliberately minimal, KISS alternative — one `Datasets.toml` declaring URLs and checksums, plus download. It is no longer quite that tiny: it has grown a focused, opt-in feature set — a user-defined loader layer, a portable two-folder `$`-symbol storage model (local by default, with host overrides), produce-or-load caching (`@cached`) with a git-ignored state-file inventory and store maintenance, and parameterized bindings — while keeping configuration **declarative**: custom logic lives in *references to external Julia code* (`Module:function`) rather than code embedded in the config file. A casual user still writes three lines to register and fetch a dataset; the rest is there when a project needs it.
 
 What sets it apart, though, is not its feature set but the **cross-language manifest**: DataManifest.jl is one member of a multi-language *DataManifest family* built on a shared TOML schema, so the same `Datasets.toml` is read by sibling tools in other languages via the `_LANG` namespace — a Julia and a Python project can share one data declaration without stepping on each other. None of the Julia-only tools below target this.
 

@@ -4,7 +4,7 @@ module PipeLines
 import Downloads
 using ..Config: info, COMPRESSED_FORMATS
 using ..Databases: DatasetEntry, Database, get_datasets, get_dataset_path, resolve_existing_path,
-    search_dataset, verify_checksum,
+    resolve_from_pools, search_dataset, verify_checksum, record_dataset_state,
     extract_file, get_project_root, get_default_database, parse_uri_metadata, _parse_binding
 using ..Storage: tmp_path, lock_path, marker_path, is_complete
 using ..DefaultLoaders: default_loader as builtin_default_loader
@@ -666,7 +666,16 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
         if isfile(existing) || isdir(existing)
             info("Dataset already exists at: $existing")
             verify_checksum(db, dataset; extract=extract, skip_if_complete=true)
+            record_dataset_state(db, dataset, existing)
             return existing
+        end
+        # Read pools (Python-parity): reuse a checksum-verified copy from a known global
+        # location (another project's download) rather than re-fetching — recorded, not copied.
+        pooled = resolve_from_pools(db, dataset; extract=extract)
+        if !isempty(pooled)
+            info("Dataset reused from read pool: $pooled")
+            record_dataset_state(db, dataset, pooled)
+            return pooled
         end
     end
 
@@ -685,6 +694,7 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
             if isfile(existing) || isdir(existing)
                 info("Dataset fetched via peer CLI: $existing")
                 verify_checksum(db, dataset; extract=extract, skip_if_complete=true)
+                record_dataset_state(db, dataset, existing)
                 return existing
             end
         end
@@ -731,6 +741,9 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
     end
 
     verify_checksum(db, dataset; extract=extract, skip_if_complete=!did_fetch)
+
+    # spec-v4.1: record the resolved location (+ actual sha256) in the state file inventory.
+    record_dataset_state(db, dataset, local_path)
 
     return local_path
 end

@@ -1,5 +1,288 @@
 # Changelog
 
+## [0.25.0] - 2026-06-05 — read pools (`datasets_pools` / `datacache_pools`)
+
+Adds **read pools** — extra **read-only** locations probed for an already-present object before
+downloading (or recomputing), so a dataset another project already fetched, or a `@cached`
+result it already produced, is reused **in place** instead of re-obtained. A Python-parity
+feature, **ahead of the spec** (which has no pool concept yet); the storage model is otherwise
+unchanged.
+
+### Added
+
+- **`[_STORAGE].datasets_pools`** — a list of read-only path expressions probed for
+  `<pool>/<key>` before a download. Host-composable via `_HOST`, env-overridable via
+  `DATAMANIFEST_DATASETS_POOLS` (`pathsep`-separated). **Undefined** falls back to the
+  well-known defaults (`$user_data_dir/datamanifest/datasets`, `~/.cache/Datasets`); an explicit
+  **empty** list disables it. `Storage.datasets_pools(...)`.
+- **`[_STORAGE].datacache_pools`** — the same for produced `@cached` artifacts, probed at
+  `<pool>/<cachetype>[/<version>]/<hash>`. **Opt-in**: undefined ⇒ no pools (produced artifacts
+  carry no content checksum, only their identity + `config.toml` validation).
+  `Storage.datacache_pools(...)`.
+- `Databases.resolve_from_pools(db, entry)` — the verified fetched-dataset pool probe: a
+  declared `sha256` is checked against the pooled copy and a present-but-mismatched copy is
+  **warned** about (the manifest checksum may be stale) rather than silently skipped, and the
+  next pool is tried; the pool is never written to. `download_dataset` probes it after the
+  recorded/derived location and before downloading, then **records** the adopted location in
+  the state file. New downloads still go to `datasets_dir` (the gold standard). For an
+  `extract`-ed dataset the **extracted** location `<pool>/<extract_path>` is probed (that is
+  what it is read from, and what its `sha256` hashes), and read-first resolution applies at the
+  dataset's natural extract level — so a zip/tar already extracted in a pool is reused too.
+
+### Changed
+
+- `@cached` resolution now searches **recorded artifact dir → derived dir → datacache pools**
+  for a hit (read-first + opt-in pools), self-healing the state-file record with the location
+  the artifact was found at. A miss still produces at the derived `datacache_dir` location.
+- `resolve_existing_path` is now recorded → derived only; the old inline `~/.cache/Datasets`
+  back-compat probe is subsumed by the built-in `datasets_pools` defaults (probed by
+  `download_dataset`). The `datasets_pools` / `datacache_pools` list keys are reserved
+  `[_STORAGE]` keys (excluded from user `$`-symbols).
+
+## [0.24.0] - 2026-06-05 — spec-v4.1: the state file (`.datamanifest-state.toml`)
+
+Tracks datamanifest.toml **`spec-v4.1`**, which unifies the produced-only `cached.toml` index
+into a single, **git-ignored** **`.datamanifest-state.toml`** (the *state file*, `_META.schema
+= 5`) that inventories **both** fetched datasets and produced artifacts. The split is now
+explicit: `datasets.toml` is the committed **spec** (what to track + how to obtain it); the
+state file is **regenerable local state** (where each object actually landed on this machine).
+Storage layout is unchanged from 0.23.0.
+
+### Changed — the state file (`DataManifest.CachedIndex`)
+
+- **`cached.toml` → `.datamanifest-state.toml`** (git-ignored; added to `.gitignore`). Schema
+  **5** has two namespaces: `[datacache."<cachetype>[@<version>]"]` (produced) and
+  `[datasets."<key>"]` (fetched). `@` is the reserved version separator (a cachetype never
+  contains `@`).
+- **Produced instances map `hash → artifact directory`**, not params. The parameter key table
+  is **no longer stored in the index** — it lives in each artifact's `config.toml` sidecar.
+  Recipe-level `ref`/`format` are still refreshed on each register.
+- **Fetched datasets are now inventoried.** The `datasets` namespace records each dataset's
+  resolved `storage_path` and **actual** `sha256` (omitted under `skip_checksum`).
+- **Legacy still read & migrated forward.** The `cached.toml` filename and schema 1–4 forms
+  (flat, `[[produced]]` nested, params-body) are read and rewritten to the canonical
+  `.datamanifest-state.toml` on the next write.
+- New API: `register_dataset!` / `has_dataset` / `dataset_path_of` / `dataset_sha256_of` /
+  `set_dataset_path!` / `remove_dataset!` / `dataset_records`, plus `instance_path_of` /
+  `remove_instance!` and `locate_state`; `register!` takes a per-instance `storage_path`
+  (was `params`). Writes are atomic (temp file + rename). `reachable_keys` is unchanged
+  (`(cachetype, version, hash)`).
+
+### Changed — fetch layer
+
+- **Read-first resolution.** `resolve_existing_path` consults the state file's recorded
+  `storage_path` **before** the derived `$datasets_dir/$key` rule — if those bytes are present,
+  a *moved* dataset is found where it really lives. A (re)download still writes to the derived
+  directive location (the gold standard); self-heal is additive and never deletes.
+- **Recording on fetch.** A successful download records the resolved location + actual sha256
+  into the state file (additive, concurrency-safe atomic write, best-effort). No-op for a
+  manifest-less (in-memory, `persist=false`) database — the state file is defined relative to a
+  manifest.
+- The produced `metadata.toml` back-pointer `[origin].cached_toml` is renamed to
+  **`[origin].state_file`**.
+
+### Conformance
+
+- Conformance re-pinned to spec tag **`spec-v4.1`**. The fixtures are byte-identical to
+  `spec-v4` (the `inspect` fixture still exercises the legacy nested `cached.toml` read), so the
+  suite continues to verify backward-compatible reading of the prior index shape.
+
+## [0.23.0] - 2026-06-05 — spec-v4: two-folder storage model (BREAKING)
+
+Tracks the **retagged datamanifest.toml `spec-v4`**, a **radical simplification** of the
+storage model that **supersedes the scope-first model of 0.22.0** (which never shipped to
+users beyond this branch). Storage reduces to **two folder fields**, local by default, with
+nothing derived — the folder you set IS the location. The whole
+scope/prefix/appname/derived-name/`store`-selector machinery introduced in 0.22.0 is removed.
+The manifest *shape* stays additive, so `_META.schema` stays **1**; the break is again in
+*where bytes land on disk*.
+
+### Breaking — two-folder storage model
+
+- **Two folder fields, local by default.** `[_STORAGE]` now has just `datasets_dir` (fetched
+  datasets → `<datasets_dir>/<key>`, default `./datasets/`) and `datacache_dir` (produced
+  cache → `<datacache_dir>/<cachetype>/[<version>/]<hash>/`, default `./cached/`). A relative
+  folder is relative to the project root (`$repo`); an absolute, `~`, or `$symbol`-rooted path
+  is used as written.
+- **Scope/prefix/appname/selectors removed.** Gone: the `<root>/<scope>/<prefix>/<key>` layout,
+  `[_STORAGE].scope` / `[_STORAGE._SCOPE]`, the per-dataset `scope` field, per-kind prefixes,
+  the platformdirs-appname namespacing, the project-name default and "no guessing the scope"
+  error, and the `store` selector. There is **no automatic scoping** — to centralize or share
+  data you point a folder at a shared location in one explicit edit.
+- **Bare predefined symbols.** `$user_data_dir` (= `platformdirs.user_data_dir()`, e.g.
+  `~/.local/share`, with **no** `datamanifest` app segment), `$user_cache_dir` (`~/.cache`),
+  and `$repo` (project root) interpolate in any path, alongside `$USER`/env and `~`. Any other
+  bare `[_STORAGE]` key is a user-defined symbol, host-specific via `[_STORAGE._HOST."<glob>"]`.
+  Resolution ladder (symbols and fields alike): `DATAMANIFEST_<NAME>` env →
+  `[_STORAGE._HOST.<glob>].<name>` → base `[_STORAGE].<name>` → predefined default.
+- **Per-dataset `storage_path` replaces `store` + `local_path`.** It is a path expression
+  (default `$datasets_dir/$key`): containing `$key` ⇒ a tool-managed keyed location; an exact
+  path without `$key` ⇒ user-managed, used verbatim and never touched by store maintenance.
+- **Exactly two env overrides:** `DATAMANIFEST_DATASETS_DIR` and `DATAMANIFEST_DATACACHE_DIR`
+  (user symbols override as `DATAMANIFEST_<NAME>`). The old `DATAMANIFEST_DIR` /
+  `DATAMANIFEST_DATA_DIR` / `DATAMANIFEST_CACHE_DIR` / `DATAMANIFEST_SCOPE*` /
+  `DATAMANIFEST_PREFIX_*` vars are gone.
+
+### Changed — `cached.toml` / `@cached`
+
+- **Recipes keyed by `(cachetype, version)`** (the `scope` and per-recipe `store` keys are
+  dropped); reachability is `(cachetype, version, hash)`. `cached.toml` stays nested schema 2
+  (`_META.schema = 2`); legacy flat schema 1 is still read and rewritten as schema 2.
+- **Produced artifacts live under `datacache_dir`** at
+  `<datacache_dir>/<cachetype>/[<version>/]<hash>/` (default `./cached/`).
+- **`@cached` lost its `store=` and `scope=` options.** `cache_dir=` (a verbatim experiment
+  folder that bypasses `datacache_dir`) and `version=` remain; `cachetype` still defaults to
+  the importable name `Module.func`.
+
+### Migration
+
+- **Data moves to the local defaults.** With no `[_STORAGE]`, fetched datasets now land in
+  `./datasets/<key>` and produced artifacts in `./cached/<cachetype>/…` under the project root.
+  To keep data in a shared OS location, set `datasets_dir = "$user_data_dir/<name>"` (and
+  `datacache_dir` likewise) — one explicit edit; there is no automatic scoping anymore.
+- **Field renames.** A per-dataset `store` or `local_path` → `storage_path`; per-dataset and
+  `[_STORAGE]` `scope` keys are dropped (no replacement — sharing is now an explicit folder
+  target).
+
+### Conformance
+
+- Conformance re-pinned to the **retagged `spec-v4`**; the storage fixture asserts the
+  two-folder model and `$`-symbol resolution. Implemented capabilities are unchanged
+  (`lang-read`, `lang-write`, `shell-fetch`, `storage`, `binding-args`, `byte-identity`,
+  `cache-produce`, `inspect`, `delegation`); only **`sync`** remains unimplemented.
+
+## [0.22.0] - 2026-06-04 — spec-v4: scope-first storage layout (BREAKING)
+
+Tracks datamanifest.toml **spec-v4**, a **breaking storage-layout revision** centered on
+scope: everything is **project-scoped by default**, the project owns the namespace (the
+library does not), and the scope is no longer guessed. The manifest *shape* is unchanged
+(additive keys + a new path layout), so `_META.schema` stays **1**; the break is in *where
+bytes land on disk*, versioned on the spec-tag axis. Existing stores need migration or a clean
+re-fetch.
+
+### Breaking — scope-first layout + project-scoped-by-default
+
+- **Scope-first path layout.** Composition changes from `<root>/<prefix>/[<scope>/]<key>` to
+  **`<root>/[<scope>/]<prefix>/<key>`** (scope outermost, then the per-kind prefix). A
+  project's fetched data (`…/<scope>/datasets/…`) and produced artifacts (`…/<scope>/cached/…`)
+  now live together under one `…/<scope>/` subtree.
+- **Fetched datasets are project-scoped by default.** This **flips the spec-v3 datasets
+  default** (was empty/shared) to match produced artifacts: the default scope is now the
+  project name for both kinds. See the migration note below.
+- **The project owns the namespace.** The built-in `$data`/`$cache` OS defaults now use the
+  project scope as the **platformdirs appname** (`~/.local/share/<scope>/datasets/…`,
+  `~/.cache/<scope>/cached/…`) — the literal `datamanifest` no longer appears as a directory,
+  surviving only as the appname for the empty/global scope. For `$DATAMANIFEST_DIR`, `$repo`,
+  and user-defined folders the root is bare and the scope is the **leading path segment**.
+
+### Changed — three-level scope ladder, no guessing
+
+- **Three-level scope ladder, one knob.** First-explicitly-set wins (an explicit `""` is a
+  real value — the global/unscoped store — not "unset"): per-item (a dataset's `scope` field
+  / a produced `scope=`) → `DATAMANIFEST_SCOPE_<KIND>` → `[_STORAGE._SCOPE].<kind>` →
+  `DATAMANIFEST_SCOPE` → **`[_STORAGE].scope`** (new, project-wide) → the project name. The
+  resolved scope drives both the on-disk path and the recorded `cached.toml` entry.
+- **New per-dataset `scope` field** (datasets.toml) and **new project-wide `[_STORAGE].scope`**
+  key (reserved). `scope = "cmip"` shares a heavy archive under a named pool; `scope = ""` is
+  the unscoped/global store; omitted falls through to the layer default. There is no more
+  `_META.project` — the project name only ever feeds the scope default.
+- **No guessing the scope.** The built-in default is the project NAME — the Julia
+  `Project.toml` `name` (not the uuid), found by walking up. If no project file declares a
+  name, the tool **errors** and requires an explicit scope (`[_STORAGE].scope`,
+  `DATAMANIFEST_SCOPE`, or a per-item `scope`) rather than synthesizing one (no path hash, no
+  directory name) — mirroring the produced-dataset `cachetype` no-stable-identity rule. (An
+  explicit `cache_dir=` in `@cached` still bypasses folder/prefix/scope entirely and needs no
+  resolvable scope.)
+- **Reserved prefix names** `datasets`/`cached` may not be used as a scope, so global
+  empty-scope data at `<root>/datasets/…` never collides with a project subtree.
+
+### Migration
+
+- **Fetched data moved.** Downloads that previously landed at the shared, empty-scope location
+  (`<root>/datasets/<key>`) now land under the project scope at
+  `<root>/<scope>/datasets/<key>` (and `$data`/`$cache` now use the scope as the platformdirs
+  appname, e.g. `~/.local/share/<project>/datasets/…`). Existing downloads still resolve via a
+  read-only probe; to consolidate, re-fetch or `rsync`/move the old tree under the new
+  `<scope>/` subtree (set `DATAMANIFEST_DIR` to keep everything under one root).
+- **To keep sharing downloads across projects**, set `[_STORAGE._SCOPE].datasets = "<pool>"`
+  (or `""` for the global store), or set `scope = ""` on the individual heavy datasets.
+- **A project must now have a resolvable scope.** Working outside a project that declares a
+  `Project.toml` `name` requires an explicit scope (`[_STORAGE].scope`, `DATAMANIFEST_SCOPE`,
+  or a per-item `scope`); the tool errors rather than guessing.
+
+### Conformance
+
+- Conformance re-pinned to spec tag **`spec-v4`**; the storage fixture asserts all three scope
+  levels and the scope-first layout. Implemented capabilities are unchanged (`lang-read`,
+  `lang-write`, `shell-fetch`, `storage`, `binding-args`, `byte-identity`, `cache-produce`,
+  `inspect`, `delegation`); only **`sync`** remains unimplemented.
+
+## [0.21.0] - 2026-06-04 — spec-v3.7: reconciled produced-dataset / cache model
+
+Tracks datamanifest.toml **spec-v3.7**, which reconciles the produced-dataset / cache model
+with the implementation. The manifest `_META.schema` stays **1**; `cached.toml`'s own
+`_META.schema` goes **1 → 2** (schema 1 is still read, always rewritten as 2). The cached
+`project` keyword is renamed **`scope`**, `@cached` gains a `scope=` knob and an optional
+`cachetype`, and the index now self-heals on cache hits.
+
+### Changed — schema-2 nested `cached.toml` (`DataManifest.CachedIndex`)
+
+- **`cached.toml` is now nested schema 2** (`_META.schema = 2`): a `[[produced]]` array of
+  recipe tables keyed by `(scope, cachetype, version)`, each carrying recipe metadata
+  (`ref`/`format`/`store`/`scope`) and one `[[produced.instances]]` per produced variation
+  (its parameter `hash` + the `[produced.instances.params]` key table). Registering
+  **accumulates** instances, so every parameterization of a recipe stays reachable instead of
+  orphaning. The legacy flat **schema 1** is still **read** (each entry → a one-instance
+  recipe) and rewritten as schema 2. The forbidden key `project` never appears in generated
+  output.
+- **`project` → `scope`.** The cached ownership knob is renamed everywhere: `scope` is a
+  recipe-level field (parallel to a dataset's `store`); the `project` keyword is gone from
+  `_META` and from all generated output.
+
+### Changed — `@cached` cachetype + `scope=`
+
+- **`cachetype` is now optional.** When omitted it defaults to the producing function's
+  canonical *importable* name (`Module.func`), so it coincides with the recipe `ref`. A
+  function with no stable importable identity (script / REPL / `eval` / notebook) still
+  requires an explicit `cachetype`.
+- **New `scope=` knob.** `scope` is ownership, resolved from the caller's project —
+  isolation by default, sharing by opt-in — and never affects hit validity. Resolution
+  ladder: explicit `scope=` (highest) → `DATAMANIFEST_SCOPE_CACHED` →
+  `[_STORAGE._SCOPE].cached` → project id; `scope=""` selects one global, unscoped store. The
+  scope is resolved once and drives both the on-disk path and the recorded entry.
+- **Self-healing index on a cache hit.** A hit now re-registers a missing variation (so a
+  deleted `cached.toml` repopulates as datasets are accessed) and refreshes a drifted recipe
+  `ref`, best-effort and off the steady-state hot path. The on-disk `config.toml` stays the
+  cache-validity authority; `metadata.toml` provenance stays **write-if-absent** (hits never
+  re-stamp it) — only the index re-registers.
+- **`[_STORAGE]` honored in the no-Database produce path.** A produced artifact reads the
+  nearest manifest's `[_STORAGE]` (a plain TOML read, no fetch layer) even with no `Database`
+  in scope, so produced and fetched data share one storage configuration; env overrides win,
+  an explicit config wins over the manifest.
+- The per-language RECOMMENDED default format is `jld2`; DataManifest.jl keeps shipping `jls`
+  (stdlib `Serialization`) as the zero-dependency built-in self-saver, with `jld2`/`nc`/…
+  available via `register_format!` — a documented, spec-permitted deviation (the default
+  format is RECOMMENDED, not normative).
+
+### Changed — scope-aware `inspect`
+
+- **Reachability is now the full `(scope, cachetype, version, hash)` tuple** (new
+  `scoped_keys`); `inspect_store` resolves `referenced` against the schema-2 index
+  accordingly.
+
+### Note — same-process conflict guard omitted in Julia
+
+- The `(cachetype, version)` same-process conflict guard the spec **SHOULD**s is
+  intentionally omitted here: precompilation makes a top-level recipe registry unreliable, and
+  the spec explicitly permits narrowing/omitting it for such languages.
+
+### Conformance
+
+- Conformance re-pinned to spec tag **`spec-v3.7`**; the `cached_index` fixture follows the
+  nested schema-2 form. Implemented capabilities are unchanged (`lang-read`, `lang-write`,
+  `shell-fetch`, `storage`, `binding-args`, `byte-identity`, `cache-produce`, `inspect`,
+  `delegation`); only **`sync`** remains unimplemented.
+
 ## [0.20.0] - 2026-06-03 — spec-v3.6: cross-language fetch + language-implicit & bare-shell bindings
 
 Tracks datamanifest.toml **spec-v3.6**. Adds the cross-language fetch rung (capability

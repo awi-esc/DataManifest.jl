@@ -1,58 +1,54 @@
 """
     Storage
 
-Pure resolver for the spec-v3 storage model: **bare folder roots** + **layer-applied
-content prefixes** (`datasets/` for fetch, `cached/` for produce) + an optional **scope**
-partition segment.
+Pure resolver for the spec-v4 storage model — **two folders, local by default**. Storage is
+just *where fetched datasets go* and *where the produced cache goes*; both are set in
+`[_STORAGE]` and default to repo-relative `datasets/` and `cached/`:
 
-A **folder** is a named top-level *location* referenced as a `\$`-variable. One namespace,
-three built-in members plus any number of user-defined ones:
+    [_STORAGE]
+    datasets_dir  = "datasets"     # fetched: <datasets_dir>/<key>
+    datacache_dir = "cached"       # produced: <datacache_dir>/<cachetype>/[<version>/]<hash>/
 
-- `\$data`  → `\$DATAMANIFEST_DIR` if set, else `platformdirs.user_data_dir("datamanifest")`
-- `\$cache` → `\$DATAMANIFEST_DIR` if set, else `platformdirs.user_cache_dir("datamanifest")`
-- `\$repo`  → `<project_root>`
-- user-defined: any other bare key under `[_STORAGE]` (`scratch = "…"` → `\$scratch`)
+There is **no scope, no prefix, no derived/app name** — the folder you set *is* the location.
+A relative value is relative to the project root (`\$repo`); absolute / `~` / `\$symbol`-rooted
+paths are used as written.
 
-A folder resolves to a **bare root** (no trailing `Datasets`/`datasets`). The consuming
-layer composes the rest of the path:
+A path may interpolate `\$`-**symbols**. Predefined (bare platformdirs — no app name appended):
 
-    fetched:  <root>[/subpath]/<datasets-prefix>/[<datasets-scope>/]<key>
-    produced: <root>[/subpath]/<cached-prefix>/[<cached-scope>/]<cachetype>/[<version>/]<hash>
+- `\$user_data_dir`  → `platformdirs.user_data_dir()` (persistent)
+- `\$user_cache_dir` → `platformdirs.user_cache_dir()` (reclaimable)
+- `\$repo`           → the project root (manifest directory; base for relative paths)
 
-So the same folder holds fetched data and produced artifacts as sibling subtrees. Default
-roots are language-independent (Python's `platformdirs` is the normative reference); the
-core knows *locations only* — no lifetime policy.
+Any other bare `[_STORAGE]` key is a **user-defined symbol**, optionally host-specific via
+`[_STORAGE._HOST."<glob>"]`. Resolution ladder (first match wins): `DATAMANIFEST_<NAME>` env →
+`[_STORAGE._HOST.<glob>].<name>` → base `[_STORAGE].<name>` → (predefined) platformdirs /
+project-root default. The two fields are overridable by exactly two env vars,
+`DATAMANIFEST_DATASETS_DIR` / `DATAMANIFEST_DATACACHE_DIR`.
 
-Two kinds of value:
-
-- **Selectors** (`store`, `[_STORAGE].default`) — a `\$`-folder reference, optionally with a
-  sub-path (`\$cache/sub`). Resolved by [`selector_root`] to `<root>[/subpath]`; the layer
-  then appends prefix/scope/key (see [`store_dir`]).
-- **Path expressions** (`[_STORAGE]` values, `local_path`) — full paths interpolating
-  `\$`-folder variables, `\$USER`/env, and `~`. Resolved by [`expand_path_expr`].
-
-Every folder variable resolves through one ladder (see [`folder_root`]):
-`DATAMANIFEST_<NAME>_DIR` env → `[_STORAGE._HOST.<glob>].<name>` → `[_STORAGE].<name>` →
-built-in default. (`_PROFILE` is shelved in spec-v3 — reserved/preserved, not resolved.)
-
-The module is intentionally pure: given explicit `env` / `host` arguments it is
-deterministic and testable without touching the real environment. Linux is the primary
-verified target; macOS / Windows defaults follow the same `platformdirs` conventions.
+The module is intentionally pure: given explicit `env` / `host` arguments it is deterministic
+and testable. Linux is the primary verified target; macOS / Windows follow the same
+`platformdirs` conventions.
 """
 module Storage
 
 using TOML
 using SHA
 
-export folder_root, selector_root, store_dir, expand_path_expr,
-    content_prefix, content_scope, project_id,
-    legacy_data_root, legacy_v2_roots, BUILTIN_FOLDERS, user_state_dir
+export expand_path_expr, resolve_symbol, datasets_dir, datacache_dir, dataset_storage_path,
+    datasets_pools, datacache_pools, user_state_dir, user_symbols, PREDEFINED_SYMBOLS,
+    RESERVED_STORAGE_KEYS, POOL_DEFAULTS, legacy_data_root
 
-"""Built-in folder variables (the only ones with a built-in default location)."""
-const BUILTIN_FOLDERS = ("data", "cache", "repo")
+"""Predefined `\$`-symbols (platform/project-resolved; never user-redefinable shadows)."""
+const PREDEFINED_SYMBOLS = ("user_data_dir", "user_cache_dir", "repo")
 
-"""Reserved `[_STORAGE]` keys that are NOT folder variables (spec-v3)."""
-const RESERVED_STORAGE_KEYS = ("default", "_HOST", "_PREFIX", "_SCOPE", "_PROFILE")
+"""Reserved `[_STORAGE]` keys that are NOT user-defined symbols (the folder fields, the read-pool
+list fields, and `_HOST`)."""
+const RESERVED_STORAGE_KEYS = ("datasets_dir", "datacache_dir",
+                               "datasets_pools", "datacache_pools", "_HOST")
+
+"""Built-in default field values (relative ⇒ repo-relative)."""
+const _DEFAULT_DATASETS_DIR = "datasets"
+const _DEFAULT_DATACACHE_DIR = "cached"
 
 # --- glob matching (`*`, `?`) for `_HOST` patterns ---------------------------
 
@@ -61,8 +57,7 @@ const _GLOB_SPECIAL = Set(['.', '\\', '+', '-', '^', '$', '|', '(', ')', '[', ']
 """
     _glob_match(pattern, s) -> Bool
 
-Match `s` against a shell-style glob `pattern` where `*` matches any run of
-characters and `?` matches a single character. The whole string must match.
+Match `s` against a shell-style glob `pattern` (`*` any run, `?` single char); whole-string.
 """
 function _glob_match(pattern::AbstractString, s::AbstractString)::Bool
     buf = IOBuffer()
@@ -82,54 +77,46 @@ function _glob_match(pattern::AbstractString, s::AbstractString)::Bool
     return occursin(Regex(String(take!(buf))), s)
 end
 
-# --- platformdirs-equivalent default roots (bare app dirs, spec-v3) ----------
+# --- platformdirs-equivalent BARE dirs (no app name, spec-v4) ----------------
 
 """
-    _user_data_dir(env) -> String
+    user_data_dir(env=ENV) -> String
 
-`platformdirs.user_data_dir("datamanifest")` — the **bare** app data dir (no trailing
-`datasets`). Linux: `\$XDG_DATA_HOME` (default `~/.local/share`) + `/datamanifest`. macOS:
-`~/Library/Application Support/datamanifest`. Windows: `%LOCALAPPDATA%` +
-`/datamanifest/datamanifest`.
+`platformdirs.user_data_dir()` — the **bare** user data dir (no `datamanifest`/app segment).
+Linux: `\$XDG_DATA_HOME` (default `~/.local/share`). macOS: `~/Library/Application Support`.
+Windows: `%LOCALAPPDATA%`.
 """
-function _user_data_dir(env)::String
+function user_data_dir(env=ENV)::String
     if Sys.iswindows()
-        base = get(env, "LOCALAPPDATA", joinpath(homedir(), "AppData", "Local"))
-        return joinpath(base, "datamanifest", "datamanifest")
+        return get(env, "LOCALAPPDATA", joinpath(homedir(), "AppData", "Local"))
     elseif Sys.isapple()
-        return joinpath(homedir(), "Library", "Application Support", "datamanifest")
+        return joinpath(homedir(), "Library", "Application Support")
     else
-        base = get(env, "XDG_DATA_HOME", joinpath(homedir(), ".local", "share"))
-        return joinpath(base, "datamanifest")
+        return get(env, "XDG_DATA_HOME", joinpath(homedir(), ".local", "share"))
     end
 end
 
 """
-    _user_cache_dir(env) -> String
+    user_cache_dir(env=ENV) -> String
 
-`platformdirs.user_cache_dir("datamanifest")` — the **bare** app cache dir. Linux:
-`\$XDG_CACHE_HOME` (default `~/.cache`) + `/datamanifest`. macOS:
-`~/Library/Caches/datamanifest`. Windows: `%LOCALAPPDATA%` + `/datamanifest/datamanifest/Cache`.
+`platformdirs.user_cache_dir()` — the **bare** user cache dir. Linux: `\$XDG_CACHE_HOME`
+(default `~/.cache`). macOS: `~/Library/Caches`. Windows: `%LOCALAPPDATA%`.
 """
-function _user_cache_dir(env)::String
+function user_cache_dir(env=ENV)::String
     if Sys.iswindows()
-        base = get(env, "LOCALAPPDATA", joinpath(homedir(), "AppData", "Local"))
-        return joinpath(base, "datamanifest", "datamanifest", "Cache")
+        return get(env, "LOCALAPPDATA", joinpath(homedir(), "AppData", "Local"))
     elseif Sys.isapple()
-        return joinpath(homedir(), "Library", "Caches", "datamanifest")
+        return joinpath(homedir(), "Library", "Caches")
     else
-        base = get(env, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
-        return joinpath(base, "datamanifest")
+        return get(env, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
     end
 end
 
 """
     user_state_dir(env=ENV) -> String
 
-`platformdirs.user_state_dir("datamanifest")` — the per-user, machine-local **state** dir
-(where the cache layer's `usage.toml` lives). Linux: `\$XDG_STATE_HOME` (default
-`~/.local/state`) + `/datamanifest`. macOS: `~/Library/Application Support/datamanifest`
-(state coincides with data). Windows: `%LOCALAPPDATA%` + `/datamanifest/datamanifest`.
+`platformdirs.user_state_dir("datamanifest")` — the per-user machine-local **state** dir
+(where the cache layer's `usage.toml` lives). Tool bookkeeping, not addressed data.
 """
 function user_state_dir(env=ENV)::String
     if Sys.iswindows()
@@ -144,57 +131,26 @@ function user_state_dir(env=ENV)::String
 end
 
 """
-    _builtin_default(name, project_root, env) -> Union{String,Nothing}
-
-The language-independent built-in **bare root** for a built-in folder, or `nothing` for a
-user-defined folder. `DATAMANIFEST_DIR`, when set, is the application base for `\$data` and
-`\$cache`; `\$repo` is always project-relative.
-"""
-function _builtin_default(name::AbstractString, project_root::AbstractString, env)
-    if name == "repo"
-        return String(project_root)
-    elseif name == "data" || name == "cache"
-        dir = get(env, "DATAMANIFEST_DIR", "")
-        !isempty(dir) && return String(dir)
-        return name == "cache" ? _user_cache_dir(env) : _user_data_dir(env)
-    else
-        return nothing
-    end
-end
-
-"""
     legacy_data_root(env=ENV) -> String
 
-The pre-v1.1 default datasets folder — `\$XDG_CACHE_HOME/Datasets` (default
-`~/.cache/Datasets`). A **read-only** back-compat probe location, checked last so old
-downloads still resolve; new writes never land here.
+The pre-v1.1 default datasets folder — `\$XDG_CACHE_HOME/Datasets` (default `~/.cache/Datasets`).
+A **read-only** back-compat probe location, checked last so old downloads still resolve.
 """
 function legacy_data_root(env=ENV)::String
     base = get(env, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
     return joinpath(base, "Datasets")
 end
 
+# --- symbol discovery & resolution -------------------------------------------
+
 """
-    legacy_v2_roots(env=ENV) -> Vector{String}
+    user_symbols(storage_config) -> Vector{String}
 
-The spec-v2 (v0.17.0) dataset roots — the bare app dirs plus a capital-`Datasets` segment
-(`<user_data_dir>/Datasets`, `<user_cache_dir>/Datasets`). spec-v3 lowercased the prefix to
-`datasets/` and moved folders to bare roots, orphaning anything v0.17.0 wrote. These are
-**read-only** transitional probe roots (a dataset's `<root>/<key>` is checked under each);
-new writes never land here.
+The user-defined symbol names in `[_STORAGE]` (every bare key that is not a reserved field /
+`_HOST`), including those that appear only under `_HOST` patterns. Sorted.
 """
-function legacy_v2_roots(env=ENV)::Vector{String}
-    return [joinpath(_user_data_dir(env), "Datasets"),
-            joinpath(_user_cache_dir(env), "Datasets")]
-end
-
-# --- folder-variable name discovery ------------------------------------------
-
-# Names that are folder *variables* (so `$NAME` in a path expression expands to a folder
-# root rather than an env var): built-ins plus every base/_HOST-defined name, excluding the
-# reserved keys. `_PREFIX` / `_SCOPE` inner keys (`datasets`/`cached`) are NOT folder vars.
-function _folder_var_names(storage_config::AbstractDict)::Set{String}
-    names = Set{String}(BUILTIN_FOLDERS)
+function user_symbols(storage_config::AbstractDict)::Vector{String}
+    names = Set{String}()
     for (k, _) in storage_config
         ks = String(k)
         ks in RESERVED_STORAGE_KEYS && continue
@@ -203,44 +159,92 @@ function _folder_var_names(storage_config::AbstractDict)::Set{String}
     hosts = get(storage_config, "_HOST", nothing)
     if hosts isa AbstractDict
         for (_, entry) in hosts
-            if entry isa AbstractDict
-                for (kk, _) in entry
-                    push!(names, String(kk))
-                end
+            entry isa AbstractDict || continue
+            for (kk, _) in entry
+                String(kk) in RESERVED_STORAGE_KEYS && continue
+                push!(names, String(kk))
             end
         end
     end
-    return names
+    return sort!(collect(names))
+end
+
+# The raw value for a symbol/field `name` from the resolution ladder rungs 1-3 (env, _HOST,
+# base), or `nothing` when none applies. The value is a path expression (not yet expanded).
+function _ladder_value(name::AbstractString, storage_config::AbstractDict, env, host)
+    envkey = "DATAMANIFEST_$(uppercase(name))"
+    haskey(env, envkey) && !isempty(env[envkey]) && return String(env[envkey])
+    hosts = get(storage_config, "_HOST", nothing)
+    if hosts isa AbstractDict
+        for pat in sort(collect(keys(hosts)))  # deterministic
+            entry = hosts[pat]
+            if _glob_match(pat, host) && entry isa AbstractDict && haskey(entry, name)
+                return String(entry[name])
+            end
+        end
+    end
+    (haskey(storage_config, name) && !isempty(string(storage_config[name]))) &&
+        return String(storage_config[name])
+    return nothing
+end
+
+"""
+    resolve_symbol(name; project_root="", storage_config=Dict(), env=ENV, host=gethostname()) -> String
+
+Resolve a `\$`-symbol `name` to a path. Ladder: `DATAMANIFEST_<NAME>` env →
+`[_STORAGE._HOST.<glob>].<name>` → base `[_STORAGE].<name>` → predefined default
+(`user_data_dir` / `user_cache_dir` / `repo`). A rung-1/2/3 value is itself a path expression
+(may reference other symbols). An undefined non-predefined symbol is an error.
+"""
+function resolve_symbol(name::AbstractString; project_root::AbstractString="",
+                        storage_config::AbstractDict=Dict{String,Any}(), env=ENV,
+                        host::AbstractString=gethostname(),
+                        _seen::Set{String}=Set{String}())::String
+    name = String(name)
+    name in _seen && error("Storage symbol \$$name references itself (cycle) in [_STORAGE].")
+    seen2 = union(_seen, Set([name]))
+    raw = _ladder_value(name, storage_config, env, host)
+    if raw !== nothing
+        p = expand_path_expr(raw; project_root=project_root, storage_config=storage_config,
+                             env=env, host=host, _seen=seen2)
+        # `repo` resolves a relative override against the project root.
+        return (name == "repo" && !isabspath(p) && !isempty(project_root)) ?
+            joinpath(String(project_root), p) : p
+    end
+    name == "user_data_dir" && return user_data_dir(env)
+    name == "user_cache_dir" && return user_cache_dir(env)
+    name == "repo" && return isempty(project_root) ? pwd() : String(project_root)
+    error("Unknown storage symbol \$$name: not predefined " *
+          "(user_data_dir/user_cache_dir/repo) and not defined in [_STORAGE].")
 end
 
 # --- path-expression expansion -----------------------------------------------
 
 """
-    expand_path_expr(expr; project_root="", storage_config=Dict(), env=ENV,
-                     host=gethostname()) -> String
+    expand_path_expr(expr; project_root="", storage_config=Dict(), env=ENV, host=gethostname()) -> String
 
-Expand a **path expression**: `\$NAME` / `\${NAME}` and a leading `~`. `\$NAME` expands to
-the folder variable `NAME` (via [`folder_root`]) if defined, otherwise the environment
-variable `NAME`; an undefined name is left verbatim. `~` expands to the home directory.
+Expand a path expression: `\$NAME` / `\${NAME}` → the symbol `NAME` (predefined or
+`[_STORAGE]`-defined) if known, else the environment variable `NAME`, else verbatim; a leading
+`~` → home.
 """
 function expand_path_expr(expr::AbstractString;
                           project_root::AbstractString="",
                           storage_config::AbstractDict=Dict{String,Any}(),
-                          env=ENV,
-                          host::AbstractString=gethostname(),
+                          env=ENV, host::AbstractString=gethostname(),
                           _seen::Set{String}=Set{String}())::String
     s = String(expr)
-    fvars = _folder_var_names(storage_config)
+    known = Set{String}(PREDEFINED_SYMBOLS)
+    union!(known, user_symbols(storage_config))
 
     resolve(name::AbstractString, whole::AbstractString) = begin
         nm = String(name)
-        if nm in fvars
-            return folder_root(nm; project_root=project_root, storage_config=storage_config,
-                               env=env, host=host, _seen=_seen)
+        if nm in known
+            return resolve_symbol(nm; project_root=project_root, storage_config=storage_config,
+                                  env=env, host=host, _seen=_seen)
         elseif haskey(env, nm)
             return String(env[nm])
         else
-            return String(whole)  # undefined: leave verbatim
+            return String(whole)
         end
     end
 
@@ -249,191 +253,155 @@ function expand_path_expr(expr::AbstractString;
     return expanduser(s)
 end
 
-# --- folder resolution (the unified ladder, spec-v3) -------------------------
+# --- the two folder fields ---------------------------------------------------
+
+# Resolve a storage field (`datasets_dir` / `datacache_dir`) to an absolute path. Ladder:
+# DATAMANIFEST_<FIELD> env → _HOST → base [_STORAGE] → built-in default; then expand symbols
+# and resolve a relative result against the project root.
+function _field_dir(field::AbstractString, default::AbstractString;
+                    project_root::AbstractString, storage_config::AbstractDict, env, host)::String
+    raw = _ladder_value(field, storage_config, env, host)
+    raw === nothing && (raw = default)
+    p = expand_path_expr(raw; project_root=project_root, storage_config=storage_config,
+                         env=env, host=host)
+    return isabspath(p) ? p :
+        (isempty(project_root) ? p : joinpath(String(project_root), p))
+end
 
 """
-    folder_root(name; project_root="", storage_config=Dict(), env=ENV,
-                host=gethostname()) -> String
+    datasets_dir(; project_root="", storage_config=Dict(), env=ENV, host=gethostname()) -> String
 
-Resolve a single folder variable `name` (built-in or user-defined) to a **bare root**. One
-ladder for every variable; the first rung that applies wins:
-
-1. the `DATAMANIFEST_<NAME>_DIR` environment variable;
-2. the first matching `[_STORAGE._HOST.<glob>].<name>` entry (glob `*`/`?` vs `host`);
-3. the base `[_STORAGE].<name>` definition;
-4. the built-in default (`\$data`/`\$cache` → `\$DATAMANIFEST_DIR` or platformdirs;
-   `\$repo` → `<project_root>`).
-
-(spec-v3 dropped the `_PROFILE` rung — `_PROFILE` is reserved/preserved, not resolved.) A
-user-defined name unresolved on every rung is an error. The value at rungs 1–3 is a **path
-expression**; a relative `repo` value is resolved against `project_root`. A folder variable
-that references itself is an error.
+The resolved fetched-datasets folder (default `"datasets"` ⇒ `<project_root>/datasets`).
+Overridable by `DATAMANIFEST_DATASETS_DIR`, a `_HOST` entry, or `[_STORAGE].datasets_dir`.
 """
-function folder_root(name::AbstractString;
-                     project_root::AbstractString="",
-                     storage_config::AbstractDict=Dict{String,Any}(),
-                     env=ENV,
-                     host::AbstractString=gethostname(),
-                     _seen::Set{String}=Set{String}())::String
-    name = String(name)
-    if name in _seen
-        error("Storage folder variable \$$name references itself (cycle) in [_STORAGE].")
+datasets_dir(; project_root::AbstractString="", storage_config::AbstractDict=Dict{String,Any}(),
+             env=ENV, host::AbstractString=gethostname())::String =
+    _field_dir("datasets_dir", _DEFAULT_DATASETS_DIR;
+               project_root=project_root, storage_config=storage_config, env=env, host=host)
+
+"""
+    datacache_dir(; project_root="", storage_config=Dict(), env=ENV, host=gethostname()) -> String
+
+The resolved produced-cache folder (default `"cached"` ⇒ `<project_root>/cached`). Overridable
+by `DATAMANIFEST_DATACACHE_DIR`, a `_HOST` entry, or `[_STORAGE].datacache_dir`.
+"""
+datacache_dir(; project_root::AbstractString="", storage_config::AbstractDict=Dict{String,Any}(),
+              env=ENV, host::AbstractString=gethostname())::String =
+    _field_dir("datacache_dir", _DEFAULT_DATACACHE_DIR;
+               project_root=project_root, storage_config=storage_config, env=env, host=host)
+
+# ── Read pools (Python-parity; ahead of the spec) ─────────────────────────────
+#
+# A **read pool** is an extra read-only location probed for an already-present object before
+# fetching/recomputing, so a dataset/artifact another project already has on this machine is
+# reused in place (never written to; new writes still follow the directive). Configured via
+# `[_STORAGE].datasets_pools` / `[_STORAGE].datacache_pools` — a LIST of path expressions,
+# host-composable via `_HOST`, or the env var `DATAMANIFEST_DATASETS_POOLS` /
+# `DATAMANIFEST_DATACACHE_POOLS` (`pathsep`-separated). Datasets default to well-known
+# locations when undefined; datacache is opt-in (undefined ⇒ none). An explicit empty list
+# disables them.
+
+"""Built-in fetched-dataset read pools, probed when `[_STORAGE].datasets_pools` is undefined."""
+const POOL_DEFAULTS = ("\$user_data_dir/datamanifest/datasets", "~/.cache/Datasets")
+
+_pathsep() = Sys.iswindows() ? ';' : ':'
+
+# The raw `*_pools` value (a Vector of path expressions, or `nothing` when undefined) via the
+# env → `_HOST` glob → base `[_STORAGE]` ladder.
+function _pools_raw(field::AbstractString, storage_config::AbstractDict, env, host)
+    envkey = "DATAMANIFEST_$(uppercase(field))"
+    if haskey(env, envkey)
+        return String[p for p in split(String(env[envkey]), _pathsep()) if !isempty(p)]
     end
-    seen2 = union(_seen, Set([name]))
-
-    expand(raw) = expand_path_expr(string(raw); project_root=project_root,
-                                   storage_config=storage_config, env=env, host=host,
-                                   _seen=seen2)
-    finalize(p) = (name == "repo" && !isabspath(p) && !isempty(project_root)) ?
-        joinpath(String(project_root), p) : p
-
-    # (1) DATAMANIFEST_<NAME>_DIR
-    envkey = "DATAMANIFEST_$(uppercase(name))_DIR"
-    if haskey(env, envkey) && !isempty(env[envkey])
-        return finalize(expand(env[envkey]))
-    end
-
-    # (2) first matching _HOST.<glob>.<name>
     hosts = get(storage_config, "_HOST", nothing)
     if hosts isa AbstractDict
-        for pat in sort(collect(keys(hosts)))  # deterministic iteration
+        for pat in sort(collect(keys(hosts)))
             entry = hosts[pat]
-            if _glob_match(pat, host) && entry isa AbstractDict && haskey(entry, name)
-                return finalize(expand(entry[name]))
+            if _glob_match(pat, host) && entry isa AbstractDict && haskey(entry, field)
+                v = entry[field]
+                return v isa AbstractVector ? String[String(x) for x in v] : String[String(v)]
             end
         end
     end
-
-    # (3) base [_STORAGE].<name>
-    if !(name in RESERVED_STORAGE_KEYS) && haskey(storage_config, name) &&
-       !isempty(string(storage_config[name]))
-        return finalize(expand(storage_config[name]))
+    if haskey(storage_config, field)
+        v = storage_config[field]
+        return v isa AbstractVector ? String[String(x) for x in v] : String[String(v)]
     end
-
-    # (4) built-in default
-    d = _builtin_default(name, project_root, env)
-    d !== nothing && return d
-    error("Unknown storage folder variable \$$name: not built-in (data/cache/repo) " *
-          "and not defined in [_STORAGE].")
+    return nothing
 end
 
-# --- selector resolution -----------------------------------------------------
-
-"""
-    selector_root(selector; project_root="", storage_config=Dict(), env=ENV,
-                  host=gethostname()) -> String
-
-Resolve a `store` / `default` **selector** to `<root>[/subpath]`. A selector is a
-`\$`-folder reference optionally followed by a literal sub-path (`\$cache/sub`). The
-consuming layer appends the content prefix, scope, and key on top (see [`store_dir`]). A
-non-`\$` (bare) selector is rejected.
-"""
-function selector_root(selector::AbstractString; kwargs...)::String
-    s = String(selector)
-    if !startswith(s, "\$")
-        error("Invalid storage selector \"$s\": expected a \$-folder reference " *
-              "(e.g. \"\$data\" or \"\$cache/sub\").")
-    end
-    body = s[2:end]
-    parts = split(body, '/'; limit=2)
-    name = String(parts[1])
-    root = folder_root(name; kwargs...)
-    if length(parts) == 2 && !isempty(parts[2])
-        return joinpath(root, String(parts[2]))
-    end
-    return root
-end
-
-# --- content prefixes and scopes (spec-v3) -----------------------------------
-
-"""
-    content_prefix(kind; storage_config=Dict(), env=ENV) -> String
-
-The per-layer subfolder under a folder root: resolves `DATAMANIFEST_PREFIX_<KIND>` →
-`[_STORAGE._PREFIX].<kind>` → built-in default (`"datasets"` for `:datasets`, `"cached"`
-for `:cached`). `kind` is `:datasets` or `:cached`.
-"""
-function content_prefix(kind; storage_config::AbstractDict=Dict{String,Any}(), env=ENV)::String
-    k = String(kind)
-    envkey = "DATAMANIFEST_PREFIX_$(uppercase(k))"
-    haskey(env, envkey) && return String(env[envkey])
-    p = get(storage_config, "_PREFIX", nothing)
-    if p isa AbstractDict && haskey(p, k)
-        return String(p[k])
-    end
-    return k == "cached" ? "cached" : "datasets"
-end
-
-"""
-    content_scope(kind; storage_config=Dict(), env=ENV, project_root="",
-                  declared_project="") -> String
-
-The optional partition segment controlling sharing: resolves `DATAMANIFEST_SCOPE_<KIND>` →
-`[_STORAGE._SCOPE].<kind>` → built-in default (**empty** for `:datasets` — shared across
-projects; the **project id** for `:cached` — project-isolated). An empty string means no
-scope segment.
-"""
-function content_scope(kind; storage_config::AbstractDict=Dict{String,Any}(), env=ENV,
-                       project_root::AbstractString="", declared_project::AbstractString="")::String
-    k = String(kind)
-    envkey = "DATAMANIFEST_SCOPE_$(uppercase(k))"
-    haskey(env, envkey) && return String(env[envkey])
-    s = get(storage_config, "_SCOPE", nothing)
-    if s isa AbstractDict && haskey(s, k)
-        return String(s[k])
-    end
-    return k == "cached" ? project_id(project_root; declared=declared_project) : ""
-end
-
-# Reduce an arbitrary id to a single path-safe segment.
-_sanitize_segment(s::AbstractString) = replace(String(s), r"[^A-Za-z0-9._-]" => "-")
-
-"""
-    project_id(project_root=""; declared="") -> String
-
-The project id used as the default `cached` scope. First non-empty wins: an explicitly
-`declared` id → the package identity at `project_root` (Julia `uuid` else `name` in
-`Project.toml`) → a hash of the project root's absolute path (machine-local). Rendered to a
-single path-safe segment.
-"""
-function project_id(project_root::AbstractString=""; declared::AbstractString="")::String
-    !isempty(declared) && return _sanitize_segment(declared)
-    pr = isempty(project_root) ? pwd() : String(project_root)
-    ptoml = joinpath(pr, "Project.toml")
-    if isfile(ptoml)
-        try
-            t = TOML.parsefile(ptoml)
-            id = get(t, "uuid", get(t, "name", ""))
-            !isempty(string(id)) && return _sanitize_segment(string(id))
+function _resolve_pools(field::AbstractString, defaults; project_root, storage_config, env, host)
+    raw = _pools_raw(field, storage_config, env, host)
+    exprs = raw === nothing ? collect(String, defaults) : raw
+    out = String[]
+    for expr in exprs
+        p = try
+            expand_path_expr(expr; project_root=project_root, storage_config=storage_config,
+                             env=env, host=host)
         catch
+            continue   # a malformed pool entry is skipped
         end
+        ap = abspath(p)
+        ap in out || push!(out, ap)
     end
-    return "p-" * bytes2hex(sha256(abspath(pr)))[1:16]
+    return out
 end
 
 """
-    store_dir(selector, kind; project_root="", storage_config=Dict(), env=ENV,
-              host=gethostname(), declared_project="") -> String
+    datasets_pools(; project_root="", storage_config=Dict(), env=ENV, host=gethostname()) -> Vector{String}
 
-Compose the directory **under which a key/cachetype lives** for a given selector and layer
-`kind` (`:datasets` or `:cached`): `selector_root` + content prefix + (non-empty) scope. The
-caller appends the `<key>` (fetch) or `<cachetype>/[<version>/]<hash>` (produce) below it.
+Resolved absolute **fetched-dataset read pools** — extra read-only locations probed for an
+already-present `<pool>/<key>` before downloading. `[_STORAGE].datasets_pools` (host-composable
+via `_HOST`, or `DATAMANIFEST_DATASETS_POOLS`) gives them; when **undefined** the built-in
+[`POOL_DEFAULTS`] apply; an explicit empty list disables them. Each entry is a path expression.
 """
-function store_dir(selector::AbstractString, kind;
-                   project_root::AbstractString="",
-                   storage_config::AbstractDict=Dict{String,Any}(),
-                   env=ENV,
-                   host::AbstractString=gethostname(),
-                   declared_project::AbstractString="")::String
-    root = selector_root(selector; project_root=project_root, storage_config=storage_config,
+datasets_pools(; project_root::AbstractString="", storage_config::AbstractDict=Dict{String,Any}(),
+               env=ENV, host::AbstractString=gethostname())::Vector{String} =
+    _resolve_pools("datasets_pools", POOL_DEFAULTS; project_root=project_root,
+                   storage_config=storage_config, env=env, host=host)
+
+"""
+    datacache_pools(; project_root="", storage_config=Dict(), env=ENV, host=gethostname()) -> Vector{String}
+
+Resolved absolute **produced-artifact read pools** — extra read-only locations probed for an
+already-produced `<pool>/<cachetype>[/<version>]/<hash>` before recomputing.
+`[_STORAGE].datacache_pools` (host-composable via `_HOST`, or `DATAMANIFEST_DATACACHE_POOLS`);
+**opt-in** — undefined means *no* pools (produced artifacts carry no content checksum, only
+their identity + `config.toml` validation). An empty list is likewise none.
+"""
+datacache_pools(; project_root::AbstractString="", storage_config::AbstractDict=Dict{String,Any}(),
+                env=ENV, host::AbstractString=gethostname())::Vector{String} =
+    _resolve_pools("datacache_pools", String[]; project_root=project_root,
+                   storage_config=storage_config, env=env, host=host)
+
+"""
+    dataset_storage_path(storage_path, key; project_root="", storage_config=Dict(),
+                         env=ENV, host=gethostname(), datasets_folder="") -> String
+
+Resolve a dataset's on-disk path (spec-v4). `storage_path` is the per-dataset field (a path
+expression); when empty it defaults to `\$datasets_dir/\$key`. `\$datasets_dir` resolves to the
+fetched-datasets folder (or `datasets_folder` when that explicit override is given), `\$key` to
+the dataset key; other `\$`-symbols, env vars, and `~` expand too. A relative result resolves
+against the project root.
+
+Containing `\$key` ⇒ a tool-managed keyed location; an exact path without `\$key` ⇒ a
+user-managed location used verbatim (maintenance never touches it).
+"""
+function dataset_storage_path(storage_path::AbstractString, key::AbstractString;
+                              project_root::AbstractString="",
+                              storage_config::AbstractDict=Dict{String,Any}(),
+                              env=ENV, host::AbstractString=gethostname(),
+                              datasets_folder::AbstractString="")::String
+    expr = isempty(storage_path) ? "\$datasets_dir/\$key" : String(storage_path)
+    ddir = isempty(datasets_folder) ?
+        datasets_dir(; project_root=project_root, storage_config=storage_config,
+                     env=env, host=host) : String(datasets_folder)
+    expr = replace(expr, "\${datasets_dir}" => ddir, "\$datasets_dir" => ddir)
+    expr = replace(expr, "\${key}" => String(key), "\$key" => String(key))
+    p = expand_path_expr(expr; project_root=project_root, storage_config=storage_config,
                          env=env, host=host)
-    prefix = content_prefix(kind; storage_config=storage_config, env=env)
-    scope = content_scope(kind; storage_config=storage_config, env=env,
-                          project_root=project_root, declared_project=declared_project)
-    p = root
-    !isempty(prefix) && (p = joinpath(p, prefix))
-    !isempty(scope) && (p = joinpath(p, scope))
-    return p
+    return isabspath(p) ? p :
+        (isempty(project_root) ? p : joinpath(String(project_root), p))
 end
 
 # --- safe-materialization path helpers ---------------------------------------

@@ -42,13 +42,18 @@ using .PipeLines: download_dataset, download_datasets, load_dataset, get_project
 const add_dataset = add
 
 export Databases, PipeLines, Loaders, Storage, Cache
-# Produce-or-load (`@cached`) companion layer — spec-v3 `cache-produce`.
+# Produce-or-load (`@cached`) companion layer — spec-v4.1 `cache-produce`.
 using .Cache: @cached, param_hash, cache_key,
-    CachedIndex, read_index, read_index_or_empty, register!, index_keys, write_index,
+    CachedIndex, read_index, read_index_or_empty, register!, index_keys, reachable_keys,
+    has_instance, ref_of, instance_path_of, remove_instance!, recipe_records,
+    register_dataset!, has_dataset, dataset_path_of, dataset_sha256_of, set_dataset_path!,
+    remove_dataset!, dataset_records, write_index, locate_state, STATE_FILE_NAME,
     CacheObject, enumerate_artifacts, delete_object, move_object,
     last_access, iso_from_mtime
 export @cached, param_hash, cache_key
-export CachedIndex, read_index, read_index_or_empty, register!, index_keys, write_index
+export CachedIndex, read_index, read_index_or_empty, register!, index_keys, reachable_keys
+export has_instance, ref_of, instance_path_of, recipe_records, write_index, locate_state
+export register_dataset!, has_dataset, dataset_path_of, dataset_sha256_of, dataset_records
 export CacheObject, enumerate_artifacts, delete_object, move_object
 export last_access, iso_from_mtime
 export inspect_store
@@ -56,15 +61,16 @@ export inspect_store
 """
     inspect_store(db::Database; cache_root="", cached_toml="") -> Vector{Cache.CacheObject}
 
-The `inspect` composition root (spec-v3 store maintenance): enumerate produced artifacts
+The `inspect` composition root (spec-v4.1 store maintenance): enumerate produced artifacts
 (the cache layer) and present fetched datasets (the fetch layer) as one list of
 maintenance objects, resolving `referenced` — the one place that bridges both layers.
 
-A produced artifact is `referenced` iff its portable `<cachetype>/<hash>` key is rooted by
-the project's sibling `cached.toml`; a present fetched dataset is referenced by its manifest
-entry. `cache_root` / `cached_toml` override the resolved `\$cache` root and the index path
-(both default from `db`). Pass the result through your own filter (`kind`, `scope`,
-`referenced == false`, `last_access` age, …) and act with [`delete_object`] / [`move_object`].
+A produced artifact is `referenced` iff its `(cachetype, version, hash)` identity is rooted by
+the project's sibling state file (`.datamanifest-state.toml`, or a legacy `cached.toml`); a
+present fetched dataset is referenced by its manifest entry. `cache_root` / `cached_toml`
+override the resolved `datacache_dir` and the state-file path (both default from `db`). Pass
+the result through your own filter (`kind`, `referenced == false`, `last_access` age, …) and
+act with [`delete_object`] / [`move_object`].
 """
 function inspect_store(db::Databases.Database; cache_root::AbstractString="",
                        cached_toml::AbstractString="")::Vector{Cache.CacheObject}
@@ -72,22 +78,22 @@ function inspect_store(db::Databases.Database; cache_root::AbstractString="",
     sc = db.storage_config
     objects = Cache.CacheObject[]
 
-    # Produced artifacts under the resolved $cache root, tagged referenced via cached.toml.
+    # Produced artifacts under the manifest's `datacache_dir` (spec-v4), tagged referenced via
+    # the state file on the `(cachetype, version, hash)` reachability key.
     croot = isempty(cache_root) ?
-        Storage.selector_root("\$cache"; project_root=project_root, storage_config=sc) :
+        Storage.datacache_dir(; project_root=project_root, storage_config=sc) :
         String(cache_root)
-    prefix = Storage.content_prefix(:cached; storage_config=sc)
     base = db.datasets_toml != "" ? dirname(db.datasets_toml) : pwd()
-    idx_path = isempty(cached_toml) ? joinpath(base, Cache.CACHED_INDEX_NAME) : String(cached_toml)
-    referenced_keys = Set{String}()
+    idx_path = isempty(cached_toml) ? Cache.locate_state(base) : String(cached_toml)
+    referenced_keys = Set{NTuple{3,String}}()
     if isfile(idx_path)
         try
-            referenced_keys = Cache.index_keys(Cache.read_index(idx_path))
+            referenced_keys = Cache.reachable_keys(Cache.read_index(idx_path))
         catch
         end
     end
-    for obj in Cache.enumerate_artifacts(croot; prefix=prefix)
-        obj.referenced = obj.key in referenced_keys
+    for obj in Cache.enumerate_artifacts(croot)
+        obj.referenced = (obj.cachetype, obj.version, obj.hash) in referenced_keys
         push!(objects, obj)
     end
 

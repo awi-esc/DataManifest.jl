@@ -5,8 +5,8 @@ using TOML
 using URIs
 using ..Config: info, warn, sha256_path, get_extract_path, get_default_toml, DEFAULT_DATASETS_FOLDER_PATH,
     COMPRESSED_FORMATS, HIDE_STRUCT_FIELDS, project_root_from_paths
-using ..Storage: store_dir, selector_root, expand_path_expr, legacy_data_root,
-    legacy_v2_roots, is_complete, BUILTIN_FOLDERS
+using ..Storage: expand_path_expr, dataset_storage_path, datasets_dir, datacache_dir,
+    datasets_pools, legacy_data_root, is_complete
 
 # ----- Types (DatasetEntry, Database) -----
 Base.@kwdef mutable struct DatasetEntry
@@ -21,7 +21,11 @@ Base.@kwdef mutable struct DatasetEntry
     aliases::Vector{String} = Vector{String}()
     description::String = ""
     key::String = ""
-    local_path::String = ""
+    # Per-dataset path (spec-v4): a path expression for where this dataset lives, defaulting
+    # to `$datasets_dir/$key`. Containing `$key` ⇒ a tool-managed keyed location; an exact
+    # path without `$key` ⇒ a user-managed location used verbatim (maintenance never touches
+    # it). Subsumes the former `store` selector and `local_path`. Empty ⇒ the keyed default.
+    storage_path::String = ""
     sha256::String = ""
     skip_checksum::Bool = false
     skip_download::Bool = false
@@ -35,7 +39,6 @@ Base.@kwdef mutable struct DatasetEntry
     # Own v1 Julia bindings parsed from `[<ds>._LANG.julia]`: `module:function`
     # refs. Empty ⇒ none declared. The write side (later item) regenerates the
     # `[<ds>._LANG.julia]` block from these; they are not emitted as flat keys.
-    store::String = ""
     lang_julia_fetcher::String = ""
     lang_julia_loader::String = ""
     # Parameterized-binding payloads for the own Julia fetcher/loader: ordered
@@ -475,41 +478,18 @@ end
 # scope: `<root>[/subpath]/datasets/[<scope>/]<key>`. An explicitly-provided
 # `datasets_folder` (non-empty) is used verbatim for the `$data` selector (back-compat —
 # an exact folder, no prefix/scope).
-function resolve_store_root(entry::DatasetEntry, datasets_folder::String=""; project_root::String="", storage_config::AbstractDict=Dict{String,Any}())
-    selector = entry.store == "" ? _default_selector(storage_config) : entry.store
-    if datasets_folder != "" && selector == "\$data"
-        return datasets_folder
-    end
-    return store_dir(selector, :datasets; project_root=project_root, storage_config=storage_config)
-end
-
 function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extract::Union{Bool,Nothing}=nothing, project_root::String="", storage_config::AbstractDict=Dict{String,Any}())
-    if (entry.local_path != "")
-        # `local_path` is a path expression: interpolate $-folder variables,
-        # $USER/env, and ~ (spec-v2). A relative result resolves against the repo.
-        p = expand_path_expr(entry.local_path; project_root=project_root, storage_config=storage_config)
-        if isabspath(p)
-            return p
-        elseif project_root != ""
-            return joinpath(project_root, p)
-        else
-            return p
-        end
-    end
-    if (entry.skip_download)
+    # spec-v4: one location per dataset — the `storage_path` field (default `$datasets_dir/$key`).
+    # `skip_download` (with no explicit path) returns the documented `uri` verbatim.
+    if (entry.skip_download && entry.storage_path == "")
         return entry.uri
     end
     if (extract === nothing)
         extract = entry.extract
     end
-    key = entry.key
-    if extract
-        key = get_extract_path(key)
-    end
-    return joinpath(
-        resolve_store_root(entry, datasets_folder; project_root=project_root, storage_config=storage_config),
-        key,
-    )
+    key = extract ? get_extract_path(entry.key) : entry.key
+    return dataset_storage_path(entry.storage_path, key; project_root=project_root,
+        storage_config=storage_config, datasets_folder=datasets_folder)
 end
 
 function get_dataset_path(db::Database, entry::DatasetEntry; kwargs...)
@@ -521,42 +501,126 @@ function get_dataset_path(db::Database, name::String; extract=nothing, kwargs...
     return get_dataset_path(dataset, get_datasets_folder(db); extract=extract, project_root=get_project_root(db), storage_config=db.storage_config)
 end
 
-# Read-side resolution: search the `repo`, `data`, `cache` store roots in that
-# order and return the first `<root>/<key>` that already exists on disk. When the
-# dataset is not yet materialized in any store, fall back to the write path (the
-# entry's selected store). `.complete`-marker awareness is layered on later.
+# Read-side resolution (spec-v4): a dataset has a single location — its `storage_path`
+# (default `$datasets_dir/$key`). Return it; on a miss, fall back to the legacy read-only
+# `~/.cache/Datasets/<key>` probe so old downloads still resolve, else the write path.
+#
+# Read-first resolution (spec-v4.1): the state file's recorded `storage_path` is consulted
+# **before** the derived path, so a moved/relocated dataset is found where it really lives.
+# The recorded path only helps *find* an existing object; a (re)download still writes to the
+# derived directive location (the gold standard).
+
+# The state-file reader lives in the sibling `Cache` module (loaded after this one); reached
+# at runtime via the parent package. Returns `entry`'s recorded resolved location (absolute,
+# relative records anchored to the project root), or "" when unrecorded / unavailable.
+function _state_recorded_dataset_path(db::Database, entry::DatasetEntry)::String
+    isempty(db.datasets_toml) && return ""
+    base = dirname(db.datasets_toml)
+    C = try; getfield(parentmodule(@__MODULE__), :Cache); catch; return ""; end
+    sp = try
+        sf = C.locate_state(base)
+        isfile(sf) ? C.dataset_path_of(C.read_index(sf), entry.key) : ""
+    catch
+        ""
+    end
+    isempty(sp) && return ""
+    isabspath(sp) && return sp
+    root = get_project_root(db)
+    return abspath(joinpath(isempty(root) ? base : root, sp))
+end
+
+# Render `path` for the state file: relative to the project root when it lives under it
+# (portable across clones), absolute otherwise — mirroring the produced-artifact convention.
+function _portable_storage_path(path::AbstractString, project_root::AbstractString)::String
+    if !isempty(project_root)
+        ap, rt = abspath(path), abspath(project_root)
+        (ap == rt || startswith(ap, rt * "/")) && return relpath(ap, rt)
+    end
+    return String(path)
+end
+
+"""
+    record_dataset_state(db, entry, path)
+
+Record a fetched dataset's resolved `path` (+ its actual `sha256` unless checksums are
+skipped) into the project's state file — the inventory of where every object lives. Additive
+and concurrency-safe (re-read + merge + atomic write). Best-effort: a read-only / unwritable
+state file never breaks a download. No-op for a manifest-less (transient) database.
+"""
+function record_dataset_state(db::Database, entry::DatasetEntry, path::AbstractString)
+    (isempty(path) || isempty(entry.key) || isempty(db.datasets_toml)) && return nothing
+    base = dirname(db.datasets_toml)
+    C = try; getfield(parentmodule(@__MODULE__), :Cache); catch; return nothing; end
+    try
+        idx = C.read_index_or_empty(base)
+        sp = _portable_storage_path(path, get_project_root(db))
+        sha = (db.skip_checksum || entry.skip_checksum) ? "" : entry.sha256
+        C.register_dataset!(idx; key=entry.key, storage_path=sp, sha256=sha)
+        C.write_index(idx)
+    catch
+    end
+    return nothing
+end
+
 function resolve_existing_path(db::Database, entry::DatasetEntry; extract::Union{Bool,Nothing}=nothing)
-    if entry.local_path != "" || entry.skip_download
-        return get_dataset_path(db, entry; extract=extract)
+    p = get_dataset_path(db, entry; extract=extract)
+    # A user-managed exact path (storage_path without `$key`) or a skip_download URI is fixed.
+    user_managed = entry.storage_path != "" && !occursin("\$key", entry.storage_path)
+    (entry.skip_download || user_managed) && return p
+    # Read-first: a recorded location whose bytes are actually present wins (a moved dataset).
+    # The recorded storage_path is the location the dataset is normally read from — the
+    # extracted dir for an extract-ed dataset, the file otherwise — so read-first applies at
+    # that NATURAL level (a caller asking for the other level gets the derived path).
+    eff_extract = extract === nothing ? entry.extract : extract
+    if eff_extract == entry.extract
+        rec = _state_recorded_dataset_path(db, entry)
+        (!isempty(rec) && rec != abspath(p) && ispath(rec)) && return rec
     end
-    ext = extract === nothing ? entry.extract : extract
-    key = ext ? get_extract_path(entry.key) : entry.key
-    project_root = get_project_root(db)
-    datasets_folder = get_datasets_folder(db)
-    for store in ("\$repo", "\$data", "\$cache")
-        e = DatasetEntry(; key=entry.key, store=store)
-        root = resolve_store_root(e, datasets_folder; project_root=project_root, storage_config=db.storage_config)
-        candidate = joinpath(root, key)
-        if ispath(candidate)
-            return candidate
-        end
-    end
-    # Legacy read-only back-compat probes, checked last so any new-store copy wins.
-    # Skipped when the user has made an explicit data-dir choice (DATAMANIFEST_DATA_DIR /
-    # DATAMANIFEST_DIR). New writes never go to these paths.
-    #   · the spec-v2 / v0.17.0 roots `<app-dir>/Datasets/<key>` (capital D; spec-v3
-    #     lowercased the prefix and moved to bare roots);
-    #   · the pre-v1.1 default `$XDG_CACHE_HOME/Datasets/<key>`.
-    if get(ENV, "DATAMANIFEST_DATA_DIR", "") == "" && get(ENV, "DATAMANIFEST_DIR", "") == ""
-        for root in vcat(legacy_v2_roots(), legacy_data_root())
-            legacy_candidate = joinpath(root, key)
-            if ispath(legacy_candidate)
-                _warn_legacy_dir_once()
-                return legacy_candidate
+    return p
+end
+
+"""
+    resolve_from_pools(db, entry; extract=nothing) -> String
+
+A **read pool** (Python-parity, ahead of the spec) that already holds this dataset's bytes,
+or `""`. `[_STORAGE].datasets_pools` (host-composable, defaulting to well-known machine-wide
+locations — `\$user_data_dir/datamanifest/datasets`, `~/.cache/Datasets`) are extra read-only
+directories probed for the location the dataset is read from — so a dataset another project
+already fetched is reused in place instead of re-downloaded. For an `extract`-ed dataset the
+**extracted** location `<pool>/<extract_path>` is probed (that is what it is read from, and
+what its `sha256` hashes — this tool checksums the extracted dir, not the archive). A declared
+`sha256` is **verified** against the pooled copy; a present-but-mismatched copy is **warned**
+about (the manifest checksum may be stale) and not adopted, and the next pool is tried. The
+pool is never written to; the caller records the adopted location, and the gold standard (new
+downloads → `datasets_dir`) is unchanged. Skipped for `skip_download` / user-managed datasets.
+"""
+function resolve_from_pools(db::Database, entry::DatasetEntry; extract::Union{Bool,Nothing}=nothing)::String
+    user_managed = entry.storage_path != "" && !occursin("\$key", entry.storage_path)
+    (entry.skip_download || user_managed) && return ""
+    eff_extract = extract === nothing ? entry.extract : extract
+    # The probed location matches what the dataset is read from / checksummed: the extracted
+    # dir for an extract dataset, the file otherwise.
+    probe_key = eff_extract ? get_extract_path(entry.key) : entry.key
+    declared = !isempty(entry.sha256) && !(db.skip_checksum || entry.skip_checksum)
+    pools = datasets_pools(; project_root=get_project_root(db), storage_config=db.storage_config)
+    for pool in pools
+        cand = joinpath(pool, probe_key)
+        (isfile(cand) || isdir(cand)) || continue
+        if declared
+            actual = try; sha256_path(cand); catch; nothing; end
+            actual === nothing && continue
+            if actual != entry.sha256
+                # Present in the pool but its checksum disagrees — surface it (the manifest
+                # sha256 may be stale) rather than silently skip.
+                warn("Found $(entry.key) in read pool at $cand but its sha256 does not match " *
+                     "(manifest $(first(entry.sha256, 12))…, on disk $(first(actual, 12))…); " *
+                     "not adopted. Update/clear the manifest checksum or set skip_checksum if stale.")
+                continue
             end
         end
+        return cand
     end
-    return get_dataset_path(db, entry; extract=extract)
+    return ""
 end
 
 function build_uri(meta::DatasetEntry)
@@ -591,54 +655,10 @@ function _warn_legacy_dir_once()
     _LEGACY_DIR_WARNED[] && return
     _LEGACY_DIR_WARNED[] = true
     legacy = legacy_data_root()
-    current = store_dir("\$data", :datasets)
     warn("Reading datasets from the legacy location $legacy (pre-v1.1 default; read-only). " *
-         "New downloads go to the current data store at $current. To keep using the legacy " *
-         "folder, set DATAMANIFEST_DATA_DIR=$legacy; otherwise migrate it manually " *
-         "(e.g. with rsync) at your convenience.")
-end
-
-# One-time flag: fires the first time a bare (spec-v1.1) store selector is read
-# and auto-upgraded to spec-v2 `$`-form.
-const _BARE_STORE_WARNED = Ref{Bool}(false)
-
-function _warn_bare_store_once()
-    _BARE_STORE_WARNED[] && return
-    _BARE_STORE_WARNED[] = true
-    warn("Bare store selector (spec-v1.1 form, e.g. store = \"cache\") is deprecated; " *
-         "spec-v2 uses \$-folder references (store = \"\$cache\"). Auto-upgraded for this " *
-         "session and written in \$-form on the next write. Run DataManifest.migrate(path) " *
-         "to persist the change.")
-end
-
-# Normalize a `store` / `[_STORAGE].default` **selector** to spec-v2 `$`-form.
-# Already-`$` values pass through. A bare built-in name (`data`/`cache`/`repo`, the
-# spec-v1.1 form, possibly with a sub-path) is auto-upgraded with a one-time
-# warning. Any other bare value is rejected: spec-v2 is a hard migration off bare
-# selectors (and the `mount` store was removed), so user folders MUST be
-# `$`-referenced.
-function normalize_selector(value::AbstractString; field::AbstractString="store")::String
-    s = String(value)
-    isempty(s) && return s
-    startswith(s, "\$") && return s
-    base = String(split(s, '/'; limit=2)[1])
-    if base in BUILTIN_FOLDERS
-        _warn_bare_store_once()
-        return "\$" * s
-    end
-    hint = base == "mount" ? " (the `mount` store was removed in spec-v2)" :
-        " (define `$base` in [_STORAGE] and reference it as \"\$$base\")"
-    error("Invalid $field selector \"$s\": spec-v2 requires a \$-folder reference, " *
-          "e.g. \"\$data\"/\"\$cache\"/\"\$repo\"$hint.")
-end
-
-# The project-wide default selector: `[_STORAGE].default` (normalized to `$`-form),
-# falling back to `$data` when unset.
-function _default_selector(storage_config::AbstractDict)::String
-    d = get(storage_config, "default", "")
-    s = d === nothing ? "" : String(d)
-    isempty(s) && return "\$data"
-    return normalize_selector(s; field="default")
+         "spec-v4 fetches into [_STORAGE].datasets_dir (default ./datasets/). To keep using " *
+         "the legacy folder, set DATAMANIFEST_DATASETS_DIR=$legacy; otherwise migrate it " *
+         "manually (e.g. with rsync) at your convenience.")
 end
 
 # True when a string looks like a `Module[.Sub]:function` ref: no whitespace,
@@ -804,11 +824,6 @@ function init_dataset_entry(;
         end
     end
     entry.extra = passthrough
-    # spec-v2: normalize the `store` selector to `$`-form (auto-upgrade bare
-    # spec-v1.1 built-in names; reject other bare values).
-    if entry.store != ""
-        entry.store = normalize_selector(entry.store; field="store")
-    end
     # Parse own `[<ds>._LANG.julia]` bindings (v1); keep foreign `_LANG.<other>`.
     _parse_dataset_lang!(entry)
 
@@ -1011,7 +1026,9 @@ function register_dataset(db::Database, uris::Vector{String}; kwargs...)
 end
 
 function _remove_dataset_from_disk(db::Database, entry::DatasetEntry)
-    if entry.skip_download || entry.local_path != ""
+    # Never delete a skip_download dataset or a user-managed exact `storage_path` (no `$key`).
+    user_managed = entry.storage_path != "" && !occursin("\$key", entry.storage_path)
+    if entry.skip_download || user_managed
         return
     end
     download_path = get_dataset_path(db, entry; extract=false)
