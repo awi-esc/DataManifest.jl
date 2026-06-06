@@ -61,15 +61,24 @@ downloaded data and a local `.datamanifest-state.toml` (which records *where*
 each file landed on this machine) stay git-ignored. A collaborator runs
 `download_datasets()` to materialize everything.
 
-To be explicit instead of relying on the activated project (or to skip writing
-any file at all):
+To be explicit instead of relying on the activated project:
 
 ```julia
 db = Database("Datasets.toml", "my-data-folder")
 DataManifest.add(db, "https://…"; name="…")
 path = get_dataset_path(db, "co2")
+```
 
-db = Database(datasets_folder="my-data-folder", persist=false)   # in-memory: no TOML written
+For library code that wants checksummed downloads into a folder it controls —
+an OS-appropriate data dir, say — a **file-less database** skips the manifest
+entirely: no `Datasets.toml`, no state file, nothing written but the data. The
+folder accepts the same `$`-symbols as the storage model, e.g. `$user_data_dir`
+or `$user_cache_dir` (`raw"…"` keeps Julia from interpolating the `$`):
+
+```julia
+db = Database(datasets_folder=raw"$user_data_dir/mylib", persist=false)
+DataManifest.add(db, "https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"; name="co2")
+path = get_dataset_path(db, "co2")   # → ~/.local/share/mylib/gml.noaa.gov/…/co2_annmean_mlo.csv
 ```
 
 With a loader declared for the dataset (or its format), `load_dataset("co2")`
