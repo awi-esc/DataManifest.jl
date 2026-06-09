@@ -2,7 +2,7 @@
 
 Custom fetch and load logic lives in a dedicated `_LANG` namespace, so a single
 manifest can serve multiple language implementations without conflicts. The
-[README](../README.md#one-manifest-several-languages) shows the short version;
+[README](https://github.com/awi-esc/DataManifest.jl/blob/main/README.md#one-manifest-several-languages) shows the short version;
 this page is the full behaviour. Bindings are `module:function` references —
 never inline code (the snippets below are drawn from the spec's
 [`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml)):

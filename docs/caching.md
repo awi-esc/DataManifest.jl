@@ -1,6 +1,6 @@
 # Produce-or-load caching (`@cached`)
 
-The [README](../README.md#produce-or-load-caching-cached) shows the short
+The [README](https://github.com/awi-esc/DataManifest.jl/blob/main/README.md#produce-or-load-caching-cached) shows the short
 version; this page is the full behaviour of the `@cached` layer.
 
 Beyond *fetching* declared datasets, DataManifest can *produce-or-load* — cache the result

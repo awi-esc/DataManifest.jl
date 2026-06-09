@@ -1,6 +1,6 @@
 # Documentation
 
-Be sure you checked the [README](/README.md) first.
+Be sure you checked the [README](https://github.com/awi-esc/DataManifest.jl/blob/main/README.md) first.
 
 ## Working from an existing data "manifest" `Datasets.toml`:
 

@@ -1,6 +1,6 @@
 # Storage model and the state file
 
-The [README](../README.md#put-data-where-you-want-it) shows the short version;
+The [README](https://github.com/awi-esc/DataManifest.jl/blob/main/README.md#put-data-where-you-want-it) shows the short version;
 this page is the full storage reference: the two folder fields, `$`-symbols and
 their resolution ladder, per-dataset overrides, read pools, and the state file
 with its maintenance surface.
