@@ -20,21 +20,21 @@ such as PANGAEA or Zenodo and git hosts such as GitHub. The manifest format is
 same file, and brings a full command-line interface on top.
 
 <!-- intro-start -->
-- **Declare once, fetch anywhere.** Data dependencies — URLs, git repos,
+- **Declare dependencies in a file.** Data dependencies — URLs, git repos,
   checksums, formats — live in a plain `Datasets.toml` you commit; a
   collaborator runs `download_datasets()` to materialize everything, verified
   by SHA-256.
-- **One manifest, several languages.** The TOML schema is shared across
+- **Shared schema across languages.** The TOML schema is shared across
   implementations, so the same file is read by sibling tools in other languages
   via a `_LANG` namespace — a Julia and a Python project can share one data
   declaration without stepping on each other.
 - **Produce-or-load caching.** The `@cached` layer caches the result of an
   expensive computation on disk, keyed by its parameters — reproducible across
   tools, with the same storage machinery as fetched data.
-- **Put data where you want it.** Repo-local by default, or point a folder at a
+- **Configurable storage layout.** Repo-local by default, or point a folder at a
   shared location with `$`-symbols and per-host overrides; read pools reuse data
   another project already fetched.
-- **Declarative, no lock-in.** Custom fetch/load logic is a *reference* to
+- **Declarative configuration.** Custom fetch/load logic is a *reference* to
   external code (`Module:function`), not code embedded in the config; the
   manifest stays a plain, hand-editable TOML file.
 <!-- intro-end -->
@@ -95,14 +95,13 @@ for that.
 
 ## Related projects
 
-What sets DataManifest.jl apart is the **cross-language manifest**: it is one
-member of a multi-language *DataManifest family* built on a shared TOML schema,
-so the same `Datasets.toml` is read by sibling tools in other languages via the
-`_LANG` namespace — a Julia and a Python project can share one data declaration
-without stepping on each other. Configuration stays **declarative**: custom
-logic lives in *references to external Julia code* (`Module:function`) rather
-than code embedded in the config file. A casual user still writes three lines to
-register and fetch a dataset; the rest is there when a project needs it.
+DataManifest.jl is one member of a multi-language *DataManifest family* built
+on a shared TOML schema. The distinguishing feature is the **cross-language
+manifest**: the same `Datasets.toml` is read by sibling tools in other languages
+via the `_LANG` namespace — a Julia and a Python project can share one data
+declaration without stepping on each other. Configuration is **declarative**:
+custom logic lives in *references to external Julia code* (`Module:function`)
+rather than code embedded in the config file.
 
 **The DataManifest family (one manifest, many languages):**
 
@@ -119,7 +118,7 @@ register and fetch a dataset; the rest is there when a project needs it.
 
 ## From the same author
 
-A small toolkit for a Markdown-first scientific workflow.
+A few related tools I maintain, useful in a Markdown-based scientific workflow.
 
 **Scientific writing & data**
 
