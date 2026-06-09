@@ -116,3 +116,18 @@ register and fetch a dataset; the rest is there when a project needs it.
 - [`DrWatson.jl`](https://juliadynamics.github.io/DrWatson.jl/dev/) — broader scientific-project organization (simulations, file layout, naming), of which data handling is one part.
 - [`RemoteFiles.jl`](https://github.com/helgee/RemoteFiles.jl) — keep a local file in sync with a remote URL.
 - Pkg Artifacts (`Artifacts.toml`) — Julia's built-in TOML manifest of content-addressed, hash-pinned data/binary bundles tied to packages.
+
+## From the same author
+
+A small toolkit for a Markdown-first scientific workflow.
+
+**Scientific writing & data**
+
+- [**texmark**](https://perrette.github.io/texmark/) — write scientific articles in Markdown and submit them to any journal (Markdown → LaTeX/PDF).
+- [**papers**](https://perrette.github.io/papers/) — command-line BibTeX bibliography and PDF library manager.
+- [**datamanifest**](https://perrette.github.io/datamanifest/) — declarative, reproducible dataset management. *(See also the [datamanifest.toml](https://perrette.github.io/datamanifest.toml/) format spec and the [DataManifest.jl](https://awi-esc.github.io/DataManifest.jl/) Julia port.)*
+
+**Voice helpers** — handy for dictating and proofreading drafts by ear
+
+- [**scribe**](https://perrette.github.io/scribe/) — speech-to-text dictation (Whisper).
+- [**bard**](https://perrette.github.io/bard/) — text-to-speech reader (Kokoro / Piper).
