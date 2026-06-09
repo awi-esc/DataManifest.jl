@@ -16,8 +16,8 @@ file; `DataManifest.jl` downloads, verifies, extracts and loads them, and caches
 your own computed results with the same machinery. It supports data repositories
 such as PANGAEA or Zenodo and git hosts such as GitHub. The manifest format is
 [shared across languages](https://github.com/perrette/datamanifest.toml) — the
-[Python implementation](https://github.com/perrette/datamanifest) reads the same
-file, and brings a full command-line interface on top.
+[reference Python implementation](https://github.com/perrette/datamanifest) reads the
+same file, and brings a full command-line interface on top.
 
 <!-- intro-start -->
 - **Declare once, fetch anywhere.** Data dependencies — URLs, git repos,
@@ -107,7 +107,7 @@ register and fetch a dataset; the rest is there when a project needs it.
 **The DataManifest family (one manifest, many languages):**
 
 - [`perrette/datamanifest.toml`](https://github.com/perrette/datamanifest.toml) — the shared TOML schema spec; the common contract every implementation reads.
-- [`perrette/datamanifest`](https://github.com/perrette/datamanifest) — the Python implementation, sharing the same `Datasets.toml` via the `_LANG` namespace; also the home of the CLI.
+- [`perrette/datamanifest`](https://github.com/perrette/datamanifest) — the **reference** Python implementation, sharing the same `Datasets.toml` via the `_LANG` namespace; also the home of the CLI.
 
 **Julia alternatives** (single-language). As a rule of thumb: if you only need code-driven download-and-checksum, DataDeps.jl is lighter; if you want a rich declarative data ecosystem, DataToolkit.jl is richer; DataManifest.jl targets multi-dataset, multi-language scientific projects that want the whole dependency declaration — and its derived-data cache — in one shareable file.
 
