@@ -1,5 +1,30 @@
 # Changelog
 
+## [Unreleased] — spec-v4.4: `checksum` field
+
+Tracks datamanifest.toml **`spec-v4.4`**. The bare `sha256` field is replaced by a
+pooch-style **`checksum = "<algo>:<hex>"`** (`sha256:…`, `md5:…`; a bare hex value is
+read as `sha256`). Additive and backward-compatible.
+
+### Added
+
+- **`checksum` (per-dataset field).** Carries its algorithm and is used for
+  verification and change detection in that algorithm. Empty ⇒ computed (as `sha256:`)
+  on first download. `hash_algo` / `hash_value` accessors expose the parts.
+
+### Changed
+
+- **`sha256` is a legacy alias.** A `sha256 = "<hex>"` key is read as
+  `checksum = "sha256:<hex>"` and re-emitted as `checksum` on the next write (automatic
+  in-place migration). `entry.sha256` still works as a property (reads the hex when the
+  algorithm is sha256; assignment stores `checksum = "sha256:<hex>"`).
+- **Verification honors the declared algorithm** and never rewrites a non-`sha256`
+  digest to `sha256`. An algorithm this implementation cannot compute (the SHA stdlib
+  has no md5) is preserved but **not** verified — a warning is emitted and the check is
+  skipped rather than failing. (Full md5 verification would need an md5 dependency.)
+- The state file (`.datamanifest-state.toml`) keeps its `sha256` record (local change
+  detection), independent of the manifest's declared algorithm.
+
 ## [0.26.0] - 2026-06-06 — spec-v4.3: lazy access, object-store schemes, exact-or-error ids
 
 Tracks datamanifest.toml **`spec-v4.3`** (and folds in `spec-v4.2`, which standardized the

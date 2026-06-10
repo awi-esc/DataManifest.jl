@@ -52,7 +52,7 @@ edit by hand, byte-identical to what the sibling Python tool writes:
 
 ```toml
 [co2]
-sha256 = "0058b3788040b5c27b2b5c1dd6d26226b7e4deef85e34c153e64806c37df7c75"
+checksum = "sha256:0058b3788040b5c27b2b5c1dd6d26226b7e4deef85e34c153e64806c37df7c75"
 uri = "https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"
 ```
 

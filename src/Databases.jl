@@ -3,7 +3,7 @@ module Databases
 
 using TOML
 using URIs
-using ..Config: info, warn, sha256_path, get_extract_path, get_default_toml, DEFAULT_DATASETS_FOLDER_PATH,
+using ..Config: info, warn, sha256_path, hash_path, hashable_algo, get_extract_path, get_default_toml, DEFAULT_DATASETS_FOLDER_PATH,
     COMPRESSED_FORMATS, HIDE_STRUCT_FIELDS, project_root_from_paths
 using ..Storage: expand_path_expr, dataset_storage_path, datasets_dir, datacache_dir,
     datasets_pools, legacy_data_root, is_complete
@@ -26,7 +26,14 @@ Base.@kwdef mutable struct DatasetEntry
     # path without `$key` ⇒ a user-managed location used verbatim (maintenance never touches
     # it). Subsumes the former `store` selector and `local_path`. Empty ⇒ the keyed default.
     storage_path::String = ""
-    sha256::String = ""
+    # Expected content digest as `<algo>:<hex>` (e.g. `sha256:…`, `md5:…`); a bare
+    # hex value is read as sha256 (see `init_dataset_entry`). Used for fetch-time
+    # verification and change detection in the algorithm it names; empty ⇒ computed
+    # (as `sha256:`) on first download. Supersedes the legacy `sha256` key (still
+    # read, normalized on read; emitted as `checksum` on write). The `sha256`
+    # property (getproperty/setproperty! below) preserves `entry.sha256` access.
+    # Excluded from `==` (identity), as `sha256` was.
+    checksum::String = ""
     skip_checksum::Bool = false
     skip_download::Bool = false
     # spec-v4.3 access mode: open the `uri` in place via a loader (typically a remote object
@@ -68,7 +75,7 @@ function Base.:(==)(a::DatasetEntry, b::DatasetEntry)
         return false
     end
     for field in fieldnames(typeof(a))
-        if (field in [:sha256, :skip_checksum])
+        if (field in [:checksum, :skip_checksum])
             continue
         end
         if getfield(a, field) != getfield(b, field)
@@ -76,6 +83,42 @@ function Base.:(==)(a::DatasetEntry, b::DatasetEntry)
         end
     end
     return true
+end
+
+# Checksum accessors over the stored `checksum = "<algo>:<hex>"` field.
+"The checksum's algorithm (`sha256` for a bare/empty-prefixed value), or `\"\"`."
+function hash_algo(entry::DatasetEntry)
+    c = getfield(entry, :checksum)
+    isempty(c) && return ""
+    parts = split(c, ':'; limit=2)
+    return length(parts) == 2 ? String(parts[1]) : "sha256"
+end
+
+"The checksum's hex digest (without the `algo:` prefix), or `\"\"`."
+function hash_value(entry::DatasetEntry)
+    c = getfield(entry, :checksum)
+    isempty(c) && return ""
+    parts = split(c, ':'; limit=2)
+    return length(parts) == 2 ? String(parts[2]) : c
+end
+
+# Back-compat property: `entry.sha256` reads the hex when the algorithm is sha256
+# (else `""`), and `entry.sha256 = hex` stores `checksum = "sha256:<hex>"`. Every
+# other field falls through to the normal getfield/setfield!.
+function Base.getproperty(entry::DatasetEntry, name::Symbol)
+    if name === :sha256
+        return hash_algo(entry) in ("", "sha256") ? hash_value(entry) : ""
+    end
+    return getfield(entry, name)
+end
+
+function Base.setproperty!(entry::DatasetEntry, name::Symbol, value)
+    if name === :sha256
+        return setfield!(entry, :checksum, isempty(value) ? "" : "sha256:" * String(value))
+    end
+    # Mirror Julia's default setproperty!, which converts to the field type (so a
+    # SubString assigned to a String field is coerced, etc.).
+    return setfield!(entry, name, convert(fieldtype(DatasetEntry, name), value))
 end
 
 function build_dataset_key(entry::DatasetEntry, path::String="")
@@ -608,19 +651,21 @@ function resolve_from_pools(db::Database, entry::DatasetEntry; extract::Union{Bo
     # The probed location matches what the dataset is read from / checksummed: the extracted
     # dir for an extract dataset, the file otherwise.
     probe_key = eff_extract ? get_extract_path(entry.key) : entry.key
-    declared = !isempty(entry.sha256) && !(db.skip_checksum || entry.skip_checksum)
+    algo = hash_algo(entry)
+    declared = !isempty(entry.checksum) && hashable_algo(algo) &&
+               !(db.skip_checksum || entry.skip_checksum)
     pools = datasets_pools(; project_root=get_project_root(db), storage_config=db.storage_config)
     for pool in pools
         cand = joinpath(pool, probe_key)
         (isfile(cand) || isdir(cand)) || continue
         if declared
-            actual = try; sha256_path(cand); catch; nothing; end
+            actual = try; hash_path(cand, algo); catch; nothing; end
             actual === nothing && continue
-            if actual != entry.sha256
+            if actual != hash_value(entry)
                 # Present in the pool but its checksum disagrees — surface it (the manifest
-                # sha256 may be stale) rather than silently skip.
-                warn("Found $(entry.key) in read pool at $cand but its sha256 does not match " *
-                     "(manifest $(first(entry.sha256, 12))…, on disk $(first(actual, 12))…); " *
+                # checksum may be stale) rather than silently skip.
+                warn("Found $(entry.key) in read pool at $cand but its checksum does not match " *
+                     "(manifest $(first(entry.checksum, 18))…, on disk $(first(actual, 12))…); " *
                      "not adopted. Update/clear the manifest checksum or set skip_checksum if stale.")
                 continue
             end
@@ -802,13 +847,28 @@ function init_dataset_entry(;
         uris = String.(uris)
     end
 
+    # Checksum: accept the legacy `sha256 = "<hex>"` key and a bare-hex `checksum`,
+    # normalizing both to `checksum = "sha256:<hex>"` (an explicit `checksum` wins).
+    # This is the read half of the migration: the entry is re-emitted as `checksum`
+    # on the next write.
+    kw = Dict{Symbol,Any}(kwargs)
+    legacy_sha = pop!(kw, :sha256, nothing)
+    chk = get(kw, :checksum, nothing)
+    if chk !== nothing && chk != ""
+        if !occursin(':', String(chk))
+            kw[:checksum] = "sha256:" * String(chk)
+        end
+    elseif legacy_sha !== nothing && legacy_sha != ""
+        kw[:checksum] = "sha256:" * String(legacy_sha)
+    end
+
     # Separate known struct fields from unknown keys; unknown per-dataset keys
     # (scalars and foreign `_*` sub-tables) are kept verbatim in `entry.extra`.
     known = Set(fieldnames(DatasetEntry))
     passthrough = Dict{String,Any}()
     explicit_extra = nothing
     entry_kw = Pair{Symbol,Any}[]
-    for (k, v) in kwargs
+    for (k, v) in kw
         if k === :extra
             explicit_extra = v
         elseif k in known
@@ -927,19 +987,29 @@ function verify_checksum(db::Database, dataset::DatasetEntry; persist::Bool=true
     if (isdir(local_path) && db.skip_checksum_folders)
         return true
     end
-    if skip_if_complete && dataset.sha256 != "" && is_complete(local_path)
+    if skip_if_complete && dataset.checksum != "" && is_complete(local_path)
         return true
     end
-    checksum = sha256_path(local_path)
-    if dataset.sha256 == ""
-        dataset.sha256 = checksum
+    # An empty checksum is computed (and stored) as sha256; a declared checksum is
+    # verified in its own algorithm and never silently rewritten to sha256. An
+    # algorithm this implementation cannot compute (e.g. md5) is preserved but not
+    # verified — warn and skip rather than erroring.
+    if dataset.checksum == ""
+        dataset.checksum = "sha256:" * sha256_path(local_path)
         _maybe_persist_database(db, persist)
         return true
     end
-    if dataset.sha256 != checksum
-        message = "Checksum mismatch for dataset at $local_path. Expected: $(dataset.sha256), got: $checksum. Possible resolutions:"
+    algo = hash_algo(dataset)
+    if !hashable_algo(algo)
+        warn("Checksum algorithm '$algo' is not verifiable by this tool; " *
+             "skipping verification for $(dataset.key).")
+        return true
+    end
+    checksum = hash_path(local_path, algo)
+    if hash_value(dataset) != checksum
+        message = "Checksum mismatch for dataset at $local_path. Expected: $(dataset.checksum), got: $algo:$checksum. Possible resolutions:"
         message *= "\n- remove the file"
-        message *= "\n- reset the `sha256` field"
+        message *= "\n- reset the `checksum` field"
         message *= "\n- use a different `key`"
         message *= "\n- remove Entry checksum checks (`dataset.skip_checksum = true`)"
         message *= "\n- remove Database checksum checks (`db.skip_checksum = true`)"
@@ -975,8 +1045,8 @@ function update_entry(db::Database, oldname::String, oldentry::DatasetEntry, new
     if (existing_datapath != new_datapath && (isfile(existing_datapath) | isdir(existing_datapath)))
         if (isfile(new_datapath) | isdir(new_datapath))
             message *= "\n\nBoth old and new datasets exist on disk at:"
-            message *= "\n    $existing_datapath SHA-256: $(oldentry.sha256)"
-            message *= "\n    $new_datapath SHA-256: $(newentry.sha256)"
+            message *= "\n    $existing_datapath checksum: $(oldentry.checksum)"
+            message *= "\n    $new_datapath checksum: $(newentry.checksum)"
         else
             message *= "\nExisting dataset found at\n    $existing_datapath\n."
         end

@@ -286,7 +286,7 @@ register_dataset(db, ""; name="my_collection",
 [in_repo_dataset]
 uri = "https://example.com/dataset.csv"   # canonical source
 local_path = "data/dataset.csv"            # relative → resolved against the Datasets.toml directory
-sha256 = "..."                             # still verified
+checksum = "sha256:..."                    # still verified
 ```
 
 Semantics:
@@ -295,7 +295,7 @@ Semantics:
 - **No copy into the cache.** The dataset is *not* placed under `datasets_folder` / `key`; `get_dataset_path` returns the resolved `local_path` directly.
 - **Cache-hit logic is unchanged.** If the file is already at `local_path`, DataManifest returns it without invoking the URI — exactly the behavior for files that are committed to the repository.
 - **Cache miss → normal download.** If the file is missing, DataManifest proceeds with the usual download from `uri` and writes the result to `local_path`. This lets you redirect a fetched dataset into the repo instead of the user's cache directory.
-- **Checksum still applies.** If `sha256` is set, it is verified against the file at `local_path`.
+- **Checksum still applies.** If `checksum` is set, it is verified against the file at `local_path`.
 - **No deletion.** DataManifest will not remove a `local_path` entry from disk; it never owned the file.
 
 For sources that cannot be fetched automatically (Cloudflare, click-through agreements, manual logins), `local_path` can be combined with `skip_download = true` — the location comes from `local_path`, while `skip_download = true` makes the user-managed nature of the file explicit and prevents any download attempt. For files committed to the repository alongside `Datasets.toml`, this pairing is usually unnecessary: the file is always present, so cache-hit wins and `uri` is never consulted.

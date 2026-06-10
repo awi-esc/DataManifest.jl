@@ -62,6 +62,58 @@ function sha256_path(path::String)
     end
 end
 
+# Generic digest dispatch over the algorithms this implementation can compute.
+# `checksum = "<algo>:<hex>"` may name any algorithm both writer and reader
+# implement; the SHA stdlib gives us the SHA family but not md5, so an algorithm
+# we cannot compute (e.g. md5) raises here and the caller (verify_checksum) warns
+# and skips rather than failing or silently rewriting it to sha256.
+const _HASH_CTX = Dict{String,DataType}(
+    "sha1" => SHA1_CTX, "sha224" => SHA224_CTX, "sha256" => SHA256_CTX,
+    "sha384" => SHA384_CTX, "sha512" => SHA512_CTX,
+)
+
+hashable_algo(algo::String) = haskey(_HASH_CTX, algo)
+
+function hash_file(file_path, algo::String="sha256")
+    ctx_type = get(_HASH_CTX, algo, nothing)
+    ctx_type === nothing && error("unsupported hash algorithm: $algo")
+    open(file_path, "r") do file
+        ctx = ctx_type()
+        buffer = Vector{UInt8}(undef, 1024)
+        while !eof(file)
+            bytes_read = readbytes!(file, buffer)
+            update!(ctx, buffer[1:bytes_read])
+        end
+        return bytes2hex(digest!(ctx))
+    end
+end
+
+function hash_folder(folder_path, algo::String="sha256")
+    ctx_type = get(_HASH_CTX, algo, nothing)
+    ctx_type === nothing && error("unsupported hash algorithm: $algo")
+    ctx = ctx_type()
+    for (root, dirs, files) in walkdir(folder_path)
+        for file in files
+            open(joinpath(root, file), "r") do f
+                while !eof(f)
+                    update!(ctx, read(f, 1024))
+                end
+            end
+        end
+    end
+    return bytes2hex(digest!(ctx))
+end
+
+function hash_path(path::String, algo::String="sha256")
+    if isfile(path)
+        return hash_file(path, algo)
+    elseif isdir(path)
+        return hash_folder(path, algo)
+    else
+        error("Path does not exist: $path")
+    end
+end
+
 # Path constants
 const XDG_CACHE_HOME = get(ENV, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
 const DEFAULT_DATASETS_FOLDER_PATH = joinpath(XDG_CACHE_HOME, "Datasets")
