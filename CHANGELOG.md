@@ -8,25 +8,27 @@ symbol namespaces the produced cache, two git-ignored config files carry per-mac
 directives on a git-style resolution ladder, and the state file moves into a
 per-checkout `.datamanifest/` directory.
 
-### Changed
+### Breaking
 
-- **New built-in folder defaults.**
+- **New built-in folder defaults — data no longer lands repo-locally by default.**
   `datasets_dir = "$user_data_dir/datamanifest/shared/datasets"` (one keyed store,
   shared and de-duplicated across projects) and
   `datacache_dir = "$user_cache_dir/datamanifest/projects/$project/cached"`
-  (per-project). The repo holds only the manifest and `.datamanifest/`. Setting
-  `datasets_dir = "datasets"` / `datacache_dir = "cached"` restores the previous
-  repo-local layout; pre-existing repo-local data is still found via the new
-  `$repo/datasets` default read pool (never re-downloaded).
-- **New `POOL_DEFAULTS`:** `$repo/datasets`,
-  `$user_data_dir/datamanifest/shared/datasets` (the shared store doubles as the
-  default read pool, so it self-populates), then the legacy
-  `$user_data_dir/datamanifest/datasets` and `~/.cache/Datasets`.
+  (per-project). Existing data keeps resolving: repo-local datasets are found via the
+  new `$repo/datasets` default read pool (adopted, never re-downloaded), and produced
+  artifacts at their recorded locations via the state file's read-first resolution.
+  Set `datasets_dir = "datasets"` / `datacache_dir = "cached"` (manifest or config
+  file) to keep the previous repo-local layout; manifests migrated from spec-v3 pin
+  that explicitly and behave unchanged.
 - **State file relocated** to `.datamanifest/state.toml` (canonical). The legacy
   `.datamanifest-state.toml` and `cached.toml` paths are still read; the first
   `write_index` relocates the file (legacy removed only after the canonical write
   lands) and drops a `.datamanifest/.gitignore` containing `*`, so the whole
-  directory is git-ignored with no setup.
+  directory is git-ignored with no setup. The `Cache.STATE_FILE_NAME` constant now
+  holds the relative path `.datamanifest/state.toml` — code joining it to a project
+  root keeps working; code assuming a bare sibling filename must adapt.
+- **`project` is now a reserved `[_STORAGE]` key** (the `$project` symbol's override),
+  no longer available as a user-defined symbol name.
 
 ### Added
 
@@ -40,6 +42,13 @@ per-checkout `.datamanifest/` directory.
   → manifest `[_STORAGE]` → user config → built-in defaults.
   `Storage.config_layers` builds the chain; every resolver accepts a single
   `[_STORAGE]` dict or the vector of layers as `storage_config`.
+
+### Changed
+
+- **New `POOL_DEFAULTS`:** `$repo/datasets`,
+  `$user_data_dir/datamanifest/shared/datasets` (the shared store doubles as the
+  default read pool, so it self-populates), then the legacy
+  `$user_data_dir/datamanifest/datasets` and `~/.cache/Datasets`.
 
 Not mirrored (Python-side tooling, per the design's spec-normative/tooling split):
 the `config` command, the generalized `push`/`pull` operands and git-remote
