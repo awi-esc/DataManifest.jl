@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.28.0] - 2026-06-10 — spec-v5: global defaults, scoped config, `.datamanifest/`
+
+Tracks datamanifest.toml **`spec-v5`** (storage v5, phase 1 — the spec-normative
+surface). The two folder fields default to machine-global locations, a `$project`
+symbol namespaces the produced cache, two git-ignored config files carry per-machine
+directives on a git-style resolution ladder, and the state file moves into a
+per-checkout `.datamanifest/` directory.
+
+### Changed
+
+- **New built-in folder defaults.**
+  `datasets_dir = "$user_data_dir/datamanifest/shared/datasets"` (one keyed store,
+  shared and de-duplicated across projects) and
+  `datacache_dir = "$user_cache_dir/datamanifest/projects/$project/cached"`
+  (per-project). The repo holds only the manifest and `.datamanifest/`. Setting
+  `datasets_dir = "datasets"` / `datacache_dir = "cached"` restores the previous
+  repo-local layout; pre-existing repo-local data is still found via the new
+  `$repo/datasets` default read pool (never re-downloaded).
+- **New `POOL_DEFAULTS`:** `$repo/datasets`,
+  `$user_data_dir/datamanifest/shared/datasets` (the shared store doubles as the
+  default read pool, so it self-populates), then the legacy
+  `$user_data_dir/datamanifest/datasets` and `~/.cache/Datasets`.
+- **State file relocated** to `.datamanifest/state.toml` (canonical). The legacy
+  `.datamanifest-state.toml` and `cached.toml` paths are still read; the first
+  `write_index` relocates the file (legacy removed only after the canonical write
+  lands) and drops a `.datamanifest/.gitignore` containing `*`, so the whole
+  directory is git-ignored with no setup.
+
+### Added
+
+- **`$project` predefined symbol** — the project name; defaults to the basename of
+  the project root, overridable as a bare `project` field anywhere on the ladder
+  (a committed `[_STORAGE].project` names the project for every collaborator).
+- **Scoped config files**: `.datamanifest/config.toml` (per-checkout, git-ignored)
+  and `$XDG_CONFIG_HOME/datamanifest/config.toml` (user-global), both
+  `[_STORAGE]`-shaped including `_HOST` sections. Resolution ladder (first match
+  wins): `DATAMANIFEST_<NAME>` env → checkout config → manifest `[_STORAGE._HOST]`
+  → manifest `[_STORAGE]` → user config → built-in defaults.
+  `Storage.config_layers` builds the chain; every resolver accepts a single
+  `[_STORAGE]` dict or the vector of layers as `storage_config`.
+
+Not mirrored (Python-side tooling, per the design's spec-normative/tooling split):
+the `config` command, the generalized `push`/`pull` operands and git-remote
+targets, `normalize`, `export`, `default_remote`.
+
 ## [0.27.0] - 2026-06-10 — spec-v4.4: `checksum` field
 
 Tracks datamanifest.toml **`spec-v4.4`**. The bare `sha256` field is replaced by a

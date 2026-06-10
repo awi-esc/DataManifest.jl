@@ -3,10 +3,10 @@
 # The tag + per-file content hashes below are this tool's machine-checkable
 # conformance claim. Hashes are computed from fixture file contents (not the
 # tarball bytes) so the pin stays correct if GitHub re-packs the auto-archive.
-spec_tag = "spec-v4.3"
+spec_tag = "spec-v5"
 
 [files]
-"tests/fixtures/README.md" = "c656ade1ef66563d195bbb44a0a5e57a1717dd688a4b424e5dca3e2a467815f7"
+"tests/fixtures/README.md" = "c5afcdff35dcc9dea67a8423a6816d52a5977ede7cc6db28e0cf0df2c1dec6b7"
 "tests/fixtures/cached_index.expected.json" = "93167b5cd82ad295bc7039bfee8b9f512641cab4b144da726115ef1dd6182d3c"
 "tests/fixtures/cached_index.toml" = "6a1728ee164ab7fae843c953b6978c1fc4e30ee162c989d3cbd79762e4248f60"
 "tests/fixtures/config_sidecar.expected.json" = "3f3f34e31df88a44f7bd8b598fba93432b286109c7a1bea31953850aca7cbb0b"
@@ -23,7 +23,7 @@ spec_tag = "spec-v4.3"
 "tests/fixtures/single_julia.toml" = "7fae76fba97b995ca4f8bba204323f0aa5d9bc08e410b54ccbece4b55c39370f"
 "tests/fixtures/single_python.expected.json" = "6a41975b5ce5fd9a0f102dfbed55ece48b3779bee4a6922e21edb18f2da58085"
 "tests/fixtures/single_python.toml" = "9bcab1006d357e3a3875c9c07f2d453785528ea14c7f87fd73675a899fa397a3"
-"tests/fixtures/storage.expected.json" = "3b298bbd90a35a267a58f3366fc4c60b45bbafc764efe3efcefd8caa6a4e5e5a"
-"tests/fixtures/storage.toml" = "b8ca6bba2ced1ca07696ecacf575c1268d586be2c020d445b7a020cb3e979e99"
+"tests/fixtures/storage.expected.json" = "c6926a9b6f0fc55e6564efa4fe566f3632de2bc26dba9944b152fd2822e24d25"
+"tests/fixtures/storage.toml" = "822f327e9c858f8f6f870ddfd01a2117715b7be343f8693371013b3478ed1842"
 "tests/fixtures/unknown_structural.expected.json" = "914001f4d8b6c13911a7f9cbb38ede564a985deb4cca0b1efa55e6996fe08522"
 "tests/fixtures/unknown_structural.toml" = "b794906d29a2d7af6ed1f4edd37d23527bf0890fc693c7811080700f779f3b64"

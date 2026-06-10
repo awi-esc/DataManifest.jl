@@ -43,7 +43,7 @@ In an activated project (`using Pkg; Pkg.activate(...)`):
 using DataManifest
 
 DataManifest.add("https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"; name="co2")
-path = get_dataset_path("co2")   # resolves under datasets_dir, by default ./datasets/<key>
+path = get_dataset_path("co2")   # resolves under datasets_dir (a machine-global shared store by default)
 ```
 
 The `add` downloaded the Mauna Loa CO₂ record and wrote one entry to
@@ -57,9 +57,10 @@ uri = "https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"
 ```
 
 **Commit `Datasets.toml`** — it's the recipe (what to fetch and how). The
-downloaded data and a local `.datamanifest-state.toml` (which records *where*
-each file landed on this machine) stay git-ignored. A collaborator runs
-`download_datasets()` to materialize everything.
+downloaded data lives outside the repo by default, and the local
+`.datamanifest/state.toml` (which records *where* each file landed on this
+machine) sits in the git-ignored `.datamanifest/` directory. A collaborator
+runs `download_datasets()` to materialize everything.
 
 To be explicit instead of relying on the activated project:
 
@@ -101,8 +102,9 @@ load_anomaly(; grid="5x5")               # computes once, then loads from disk o
 load_anomaly(; grid="5x5", cached=false) # escape hatch: run the body, no disk I/O
 ```
 
-Each distinct parameter combination is stored separately under `./cached/` by
-default, self-describing and reproducible across tools. Serialization is the
+Each distinct parameter combination is stored separately under the per-project
+cache (`$user_cache_dir/datamanifest/projects/$project/cached` by default),
+self-describing and reproducible across tools. Serialization is the
 zero-dependency `jls` built-in; register others (`nc`, `jld2`, …) with
 `DataManifest.Cache.register_format!`, and pass `version=` to deliberately bust
 the cache. Full behaviour — the cache key, artifact layout, `cachetype`
@@ -167,21 +169,23 @@ bindings (`{ ref, args, kwargs }`), lazy access to object stores
 
 ## Put data where you want it
 
-Storage is two folders set in `[_STORAGE]` — `datasets_dir` (fetched data) and
-`datacache_dir` (`@cached` results) — repo-local `./datasets/` and `./cached/`
-by default, with `$`-symbols and per-host overrides for anything else:
+Storage is two folders — `datasets_dir` (fetched data) and `datacache_dir`
+(`@cached` results) — defaulting to a machine-global shared store and a
+per-project cache (spec-v5), with `$`-symbols and per-host overrides for
+anything else. Set them in the committed `[_STORAGE]`, or per machine in the
+git-ignored `.datamanifest/config.toml` / `~/.config/datamanifest/config.toml`:
 
 ```toml
 [_STORAGE]
-datasets_dir = "$user_data_dir/myproj"   # share across clones / projects
+datasets_dir = "datasets"                # repo-local layout, if you prefer it
 
 [_STORAGE._HOST."login*.hpc.edu"]
 datasets_dir = "/scratch/$USER/data"     # host-specific override
 ```
 
-Path expressions, the resolution ladder, per-dataset overrides, read pools
-(reuse data another project already fetched), and the state file that makes
-moved data recoverable: [docs/storage.md](docs/storage.md).
+Path expressions, the resolution ladder, the config files, per-dataset
+overrides, read pools (reuse data another project already fetched), and the
+state file that makes moved data recoverable: [docs/storage.md](docs/storage.md).
 
 ## Documentation
 
@@ -192,7 +196,7 @@ moved data recoverable: [docs/storage.md](docs/storage.md).
 
 ## Conformance
 
-This release targets the **datamanifest.toml spec tag `spec-v4.1`**
+This release targets the **datamanifest.toml spec tag `spec-v5`**
 (<https://github.com/perrette/datamanifest.toml>); a complete annotated example
 manifest lives there
 ([`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml)).

@@ -2,21 +2,30 @@
 
 The [README](../README.md#put-data-where-you-want-it) shows the short version;
 this page is the full storage reference: the two folder fields, `$`-symbols and
-their resolution ladder, per-dataset overrides, read pools, and the state file
-with its maintenance surface.
+their resolution ladder, the scoped config files, per-dataset overrides, read
+pools, and the state file with its maintenance surface.
 
 ## Two folder fields
 
-DataManifest storage reduces to **two folder fields**, both **local by default**, with nothing
-derived — the folder you set IS the location:
+DataManifest storage reduces to **two folder fields**, with nothing derived — the folder you
+set IS the location. Since spec-v5 they default to **machine-global** locations: one keyed
+store shared across projects for fetched datasets (a dataset key is a globally unique
+content identity, so the store deduplicates by construction), and a per-project
+(`$project`-namespaced) produced cache — the repository holds only the manifest and the
+git-ignored `.datamanifest/` directory:
+
+```toml
+datasets_dir  = "$user_data_dir/datamanifest/shared/datasets"            # fetched (default)
+datacache_dir = "$user_cache_dir/datamanifest/projects/$project/cached"  # produced (default)
+```
 
 ```toml
 [_META]
 schema = 1
 
 [_STORAGE]
-datasets_dir  = "datasets"       # fetched datasets  -> <datasets_dir>/<key>     (default ./datasets/)
-datacache_dir = "cached"         # produced cache    -> <datacache_dir>/<cachetype>/[<version>/]<hash>/  (default ./cached/)
+datasets_dir  = "datasets"       # repo-local opt-out: fetched data under ./datasets/
+datacache_dir = "cached"         # …and the produced cache under ./cached/
 scratch       = "$TMPDIR"        # user-defined symbol -> $scratch
 
 [_STORAGE._HOST."login*.hpc.edu"]
@@ -33,21 +42,35 @@ storage_path = "data/manual.nc"  # exact path, no $key -> user-managed, never to
 
 A **relative** folder is relative to the **project root** (`$repo`); an absolute path, a `~`
 path, or a `$symbol`-rooted path is used as written. There is **no scope, no prefix, no
-appname, no derived name, and no `store` selector** — to centralize or share data, point a
-folder at a shared location (e.g. `datasets_dir = "$user_data_dir/<name>"`) in one explicit
-edit; there is no automatic scoping.
+appname, no derived name, and no `store` selector** — to relocate data, point a folder at a
+location of your choice in one explicit edit.
 
 ## `$`-symbols and the resolution ladder
 
-**`$`-symbols** interpolate in any path. The predefined ones are **bare** (no `datamanifest`
-app segment): `$user_data_dir` (= `platformdirs.user_data_dir()`, e.g. `~/.local/share`),
-`$user_cache_dir` (`~/.cache`), and `$repo` (the project root); plus `$USER`/env vars and `~`.
-Any other bare `[_STORAGE]` key is a **user-defined symbol** (`scratch = "…"` → `$scratch`),
-and can be made host-specific via `[_STORAGE._HOST."<glob>"]`. Every symbol and field resolves
-through one ladder:
+**`$`-symbols** interpolate in any path. The predefined ones: `$user_data_dir`
+(= `platformdirs.user_data_dir()`, e.g. `~/.local/share` — **bare**, no `datamanifest` app
+segment), `$user_cache_dir` (`~/.cache`), `$repo` (the project root), and `$project` (the
+project **name** — the project-root basename by default, overridable as a bare `project`
+field); plus `$USER`/env vars and `~`. Any other bare `[_STORAGE]` key is a **user-defined
+symbol** (`scratch = "…"` → `$scratch`), and can be made host-specific via
+`[_STORAGE._HOST."<glob>"]`.
 
-> `DATAMANIFEST_<NAME>` env-var → `[_STORAGE._HOST.<glob>].<name>` →
-> base `[_STORAGE].<name>` → the predefined default.
+**Scoped config files (spec-v5).** Per-machine settings live in two optional,
+`[_STORAGE]`-shaped config files instead of the committed manifest:
+**`.datamanifest/config.toml`** (per-checkout, git-ignored — the `.datamanifest/` directory
+also holds the state file and self-ignores via its own `.gitignore`) and
+**`$XDG_CONFIG_HOME/datamanifest/config.toml`** (user-global, default
+`~/.config/datamanifest/config.toml`). Both accept the same fields, pools, `project`,
+symbols, and `_HOST` sub-tables. Every symbol and field resolves through one ladder (first
+match wins; within each file a `_HOST` glob match beats the base value):
+
+> `DATAMANIFEST_<NAME>` env-var → `.datamanifest/config.toml` → manifest
+> `[_STORAGE._HOST.<glob>]` → manifest `[_STORAGE]` →
+> `~/.config/datamanifest/config.toml` → the built-in default.
+
+In the API, `Storage.config_layers(db.storage_config; project_root=…)` builds the chain;
+every resolver (`datasets_dir`, `datacache_dir`, `resolve_symbol`, the pools) accepts either
+a single `[_STORAGE]` dict or that vector of layers as `storage_config`.
 
 **Per-dataset `storage_path`.** A dataset's `storage_path` is a path expression (default
 `$datasets_dir/$key`) that **replaces both the old `store` selector and `local_path`**:
@@ -80,16 +103,19 @@ datasets_pools  = ["$user_data_dir/shared/datasets", "~/.cache/Datasets"]  # lis
 ```
 
 `datasets_pools` is host-composable (`_HOST`) and env-overridable (`DATAMANIFEST_DATASETS_POOLS`,
-`pathsep`-separated); **undefined** falls back to the well-known defaults
-(`$user_data_dir/datamanifest/datasets`, `~/.cache/Datasets`), and an explicit **empty** list
-disables it. `datacache_pools` is **opt-in** (undefined ⇒ none). *(Python-parity feature, ahead
-of the spec.)*
+`pathsep`-separated); **undefined** falls back to the built-in defaults — `$repo/datasets`
+(so pre-spec-v5 repo-local data keeps being found and adopted; skipped without a project
+root), `$user_data_dir/datamanifest/shared/datasets` (the shared store doubles as the
+default read pool, so it self-populates), then the legacy
+`$user_data_dir/datamanifest/datasets` and `~/.cache/Datasets` — and an explicit **empty**
+list disables it. `datacache_pools` is **opt-in** (undefined ⇒ none).
 
-## The state file (`.datamanifest-state.toml`)
+## The state file (`.datamanifest/state.toml`)
 
 `Datasets.toml` is the committed **spec** — *what* to track and *how* to obtain it. *Where*
-each object actually landed on this machine is recorded separately in a sibling, **git-ignored**
-**`.datamanifest-state.toml`** — the *state file* (regenerable local state, schema 5). One
+each object actually landed on this machine is recorded separately in the **git-ignored**
+**`.datamanifest/state.toml`** — the *state file* (regenerable local state, schema 5),
+inside the per-checkout `.datamanifest/` directory beside the manifest. One
 inventory covers **both** fetched datasets and produced artifacts, under two namespaces. Read
 or build one with `CachedIndex` / `read_index` / `register!` / `register_dataset!` /
 `write_index`.
@@ -115,8 +141,10 @@ The `datacache` namespace keys each recipe by `(cachetype, version)` (`@` is the
 version separator) and maps each variation's parameter `hash` to the **artifact directory** it
 was written to — the **params themselves live in each artifact's `config.toml`**, not here.
 The `datasets` namespace records each fetched dataset's resolved `storage_path` and **actual**
-`sha256`. Registering **accumulates**. The legacy `cached.toml` filename and schema 1–4 forms
-are still read and migrated forward on the next write.
+`sha256`. Registering **accumulates**. The legacy `.datamanifest-state.toml` (pre-spec-v5
+sibling) and `cached.toml` paths and the schema 1–4 forms are still read; the first write
+relocates the file to the canonical `.datamanifest/state.toml` and migrates the shape
+forward.
 
 **Read-first resolution:** resolving where a fetched dataset lives consults the recorded
 `storage_path` first — if those bytes are present, a *moved* dataset is found where it really

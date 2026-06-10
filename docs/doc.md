@@ -73,15 +73,15 @@ rm /home/perrette/.cache/Datasets/LGM_foraminifera_assemblages_20240110.csv
 
 ## Data naming on disk
 
-The default folder for the `data` store is `$XDG_DATA_HOME/datamanifest/Datasets` (Linux), matching Python's `platformdirs.user_data_dir("datamanifest")`. If `XDG_DATA_HOME` is not set the fallback is `~/.local/share/datamanifest/Datasets`. For the `cache` store the default is `$XDG_CACHE_HOME/datamanifest/Datasets` (`~/.cache/datamanifest/Datasets` if unset).
+Fetched datasets land under the resolved **`datasets_dir`** — by default the machine-global
+shared store `$user_data_dir/datamanifest/shared/datasets` (Linux:
+`$XDG_DATA_HOME/...`, fallback `~/.local/share/...`), shared and de-duplicated across
+projects. Earlier default locations (`./datasets/`, `$user_data_dir/datamanifest/datasets`,
+`~/.cache/Datasets`) are probed read-only as built-in read pools, so old downloads keep
+resolving without a re-download.
 
-> **Note (v0.16.0 behavior change)**: the default download location moved from
-> `$XDG_CACHE_HOME/Datasets` to `$XDG_DATA_HOME/datamanifest/Datasets`.
-> If you have existing downloads in the old location, set
-> `DATAMANIFEST_DATA_DIR=~/.cache/Datasets` (or wherever your files live) so
-> DataManifest finds them without re-downloading.
-
-Any other folder can be provided by passing `datasets_folder=` when initializing the `Database` — this overrides the `data`-store root.
+Any other folder can be provided by passing `datasets_folder=` when initializing the
+`Database` — an exact override of the datasets folder.
 
 When `version=0.2.5` parameter is provided, the name on disk will be appended with `...#0.2.5`.
 
@@ -89,51 +89,25 @@ It is also possible to provide a preferred name on disk via `key=...` to add. Th
 
 ## Storage model
 
-A dataset is materialized under a **folder**, referenced as a `$`-variable that resolves to
-a **bare top-level root**. The consuming layer composes the rest of the path: a `datasets/`
-content prefix (fetch) and an optional `scope` partition. Three folders are built-in; any
-other `[_STORAGE]` key defines a user folder:
-
-| Folder   | Meaning                                 | Bare root (Linux)                                    |
-|----------|-----------------------------------------|------------------------------------------------------|
-| `$data`  | persistent user data (default)          | `$DATAMANIFEST_DIR` or `$XDG_DATA_HOME/datamanifest`  |
-| `$cache` | OS-reclaimable cache *location*         | `$DATAMANIFEST_DIR` or `$XDG_CACHE_HOME/datamanifest` |
-| `$repo`  | committed inside the project repository | `<project_root>`                                     |
-
-A fetched dataset lands at `<root>/datasets/[<scope>/]<key>`. (The `mount` store of
-spec-v1.1 was removed in spec-v2.) Declare a dataset's folder with a `$`-**selector**,
-optionally with a sub-path:
+Storage reduces to **two folder fields** — `datasets_dir` (fetched datasets, keyed
+`<datasets_dir>/<key>`) and `datacache_dir` (the produced cache,
+`<datacache_dir>/<cachetype>/[<version>/]<hash>/`). Since spec-v5 they default to
+machine-global locations:
 
 ```toml
-[my_dataset]
-store = "$cache"                # or "$cache/derived" to key under <cache>/derived/datasets/<key>
-uri   = "https://example.com/big_file.nc"
+datasets_dir  = "$user_data_dir/datamanifest/shared/datasets"            # shared, keyed
+datacache_dir = "$user_cache_dir/datamanifest/projects/$project/cached"  # per-project
 ```
 
-`store` defaults to the project-wide `[_STORAGE].default` selector, which itself
-defaults to `$data`. Define folders / overrides in `[_STORAGE]` (keys are bare
-*definitions*; references use `$`):
-
-```toml
-[_STORAGE]
-default = "$data"                               # project-wide default selector
-scratch = "$TMPDIR"                             # user folder -> $scratch (a bare root)
-_HOST."login*" = { scratch = "/scratch/$USER" }  # host-glob override
-_PREFIX = { datasets = "datasets", cached = "cached" }   # rename the per-layer subfolders
-_SCOPE  = { datasets = "shared-pool" }          # share fetched downloads within a group
-```
-
-Every folder variable resolves through one ladder: `DATAMANIFEST_<NAME>_DIR`
-env-var → first matching `_HOST.<glob>` → `[_STORAGE]` base → built-in default.
-(`_PROFILE` is shelved in spec-v3 — reserved/preserved, not resolved.) Prefixes and scopes
-resolve through `DATAMANIFEST_PREFIX_<KIND>` / `DATAMANIFEST_SCOPE_<KIND>` →
-`[_STORAGE._PREFIX | _SCOPE].<kind>` → default. Path expressions (`[_STORAGE]` values and
-`local_path`) interpolate `$`-folder variables, `$USER`/env, and `~`.
-
-When loading, DataManifest resolves the dataset's selected folder, then also
-probes the built-in folders `repo → data → cache` (each under its `datasets/` prefix),
-returning the first where the dataset exists and has a `.complete` marker. Existing v0.17.0
-downloads under `…/datamanifest/Datasets` are probed read-only for back-compat.
+Set them in the committed `[_STORAGE]` (e.g. `datasets_dir = "datasets"` for a repo-local
+layout), or per machine in the git-ignored `.datamanifest/config.toml` / the user-global
+`~/.config/datamanifest/config.toml`. Paths interpolate `$`-symbols — predefined
+`$user_data_dir` / `$user_cache_dir` / `$repo` / `$project`, user-defined `[_STORAGE]` keys,
+`$USER`/env, `~` — host-specific via `[_STORAGE._HOST."<glob>"]`. Resolution ladder (first
+match wins): `DATAMANIFEST_<NAME>` env → checkout config → manifest `_HOST` → manifest base
+→ user config → built-in default. A per-dataset `storage_path` overrides one dataset's
+location (`$key` ⇒ tool-managed; an exact path ⇒ user-managed). Read pools reuse data other
+projects already hold. Full reference: [docs/storage.md](storage.md).
 
 ## Produce-or-load caching (`@cached`)
 
@@ -155,19 +129,21 @@ and hash inputs are strings/integers/booleans/**finite floats**/arrays/objects o
 (finite floats use the normative Python `json.dumps` form; `NaN`/`±Inf` and nulls raise).
 Each artifact is self-describing: `config.toml` (re-hashable key table) and
 `metadata.toml` (provenance) sit alongside it at
-`<$cache>/cached/<project>/<cachetype>/[<version>/]<hash>/`, default `store = "$cache"`.
-`jls` is built in; register other formats with `DataManifest.Cache.register_format!`.
+`<datacache_dir>/<cachetype>/[<version>/]<hash>/` (default
+`$user_cache_dir/datamanifest/projects/$project/cached`). `jls` is built in; register other
+formats with `DataManifest.Cache.register_format!`.
 
-On a produce, the artifact is registered in the project's **`cached.toml`** (the
-produced-dataset registry, sibling to `datasets.toml`) by its portable `cachetype` + `hash`
-key, with `ref = "<module>:<function>"`. Use `CachedIndex` / `read_index` / `register!` /
-`write_index` to read or build one. The index defaults to `<project_root>/cached.toml`; pass
-a `cached_toml` kwarg (declared on the wrapped function) to override it, or `name=` to set the
-registry name.
+On a produce, the artifact is registered in the project's **state file**
+(`.datamanifest/state.toml`; the legacy `.datamanifest-state.toml` / `cached.toml` names are
+still read and relocated on the next write) by its portable `cachetype` + `hash` key, with
+`ref = "<module>:<function>"`. Use `CachedIndex` / `read_index` / `register!` /
+`write_index` to read or build one. The file defaults to
+`<project_root>/.datamanifest/state.toml`; pass a `cached_toml` kwarg (declared on the
+wrapped function) to override it.
 
 `inspect_store(db)` (capability `inspect`) enumerates produced artifacts and present fetched
-datasets as field-bearing `CacheObject`s (`kind`, `key`/`hash`, `scope`, `format`, `size`,
-`created`, `last_access`, `referenced`); `referenced` is resolved from `cached.toml`. Act on a
+datasets as field-bearing `CacheObject`s (`kind`, `key`/`hash`, `format`, `size`,
+`created`, `last_access`, `referenced`); `referenced` is resolved from the state file. Act on a
 filtered selection with `delete_object` / `move_object` (produced artifacts only; no automatic
 GC). `last_access` is read purely from the filesystem at inspect time (the directory's access
 time, falling back to mtime) and is **never written on read** (spec-v3.2) — coarse and
@@ -425,7 +401,7 @@ Examples of the declarative syntax.
 ```julia
 using DataManifest
 
-db = Database(datasets_folder="datasets", persist=false) # the default is ~/.cache/Datasets
+db = Database(datasets_folder="datasets", persist=false) # default: the resolved datasets_dir (shared store)
 
 register_dataset(db, "https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip";
   name="herzschuh2023",

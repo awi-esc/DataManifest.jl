@@ -66,7 +66,8 @@ The `inspect` composition root (spec-v4.1 store maintenance): enumerate produced
 maintenance objects, resolving `referenced` — the one place that bridges both layers.
 
 A produced artifact is `referenced` iff its `(cachetype, version, hash)` identity is rooted by
-the project's sibling state file (`.datamanifest-state.toml`, or a legacy `cached.toml`); a
+the project's state file (`.datamanifest/state.toml`, or a legacy `.datamanifest-state.toml` /
+`cached.toml`); a
 present fetched dataset is referenced by its manifest entry. `cache_root` / `cached_toml`
 override the resolved `datacache_dir` and the state-file path (both default from `db`). Pass
 the result through your own filter (`kind`, `referenced == false`, `last_access` age, …) and
@@ -75,7 +76,7 @@ act with [`delete_object`] / [`move_object`].
 function inspect_store(db::Databases.Database; cache_root::AbstractString="",
                        cached_toml::AbstractString="")::Vector{Cache.CacheObject}
     project_root = PipeLines.get_project_root(db)
-    sc = db.storage_config
+    sc = Storage.config_layers(db.storage_config; project_root=project_root)
     objects = Cache.CacheObject[]
 
     # Produced artifacts under the manifest's `datacache_dir` (spec-v4), tagged referenced via

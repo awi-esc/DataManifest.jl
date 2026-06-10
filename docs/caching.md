@@ -32,7 +32,8 @@ normative Python `json.dumps` form (`1.0`→`1.0`), while `NaN`/`±Inf` and null
 
 Each artifact is self-describing — `config.toml` (the re-hashable key table) and
 `metadata.toml` (provenance) sit alongside it under **`datacache_dir`** at
-`<datacache_dir>/<cachetype>/[<version>/]<hash>/` (default `./cached/`). `jls` (stdlib
+`<datacache_dir>/<cachetype>/[<version>/]<hash>/` (default the per-project
+`$user_cache_dir/datamanifest/projects/$project/cached`). `jls` (stdlib
 `Serialization`) is the built-in zero-dependency format; register others (`nc`, `jld2`, …)
 with `DataManifest.Cache.register_format!`. (The spec RECOMMENDS `jld2` as the Julia
 per-language default; shipping `jls` as the built-in self-saver is a documented,

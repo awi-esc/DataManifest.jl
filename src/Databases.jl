@@ -6,7 +6,7 @@ using URIs
 using ..Config: info, warn, sha256_path, hash_path, hashable_algo, get_extract_path, get_default_toml, DEFAULT_DATASETS_FOLDER_PATH,
     COMPRESSED_FORMATS, HIDE_STRUCT_FIELDS, project_root_from_paths
 using ..Storage: expand_path_expr, dataset_storage_path, datasets_dir, datacache_dir,
-    datasets_pools, legacy_data_root, is_complete
+    datasets_pools, legacy_data_root, is_complete, config_layers, ConfigLike
 
 # ----- Types (DatasetEntry, Database) -----
 Base.@kwdef mutable struct DatasetEntry
@@ -526,7 +526,7 @@ end
 # scope: `<root>[/subpath]/datasets/[<scope>/]<key>`. An explicitly-provided
 # `datasets_folder` (non-empty) is used verbatim for the `$data` selector (back-compat —
 # an exact folder, no prefix/scope).
-function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extract::Union{Bool,Nothing}=nothing, project_root::String="", storage_config::AbstractDict=Dict{String,Any}())
+function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extract::Union{Bool,Nothing}=nothing, project_root::String="", storage_config::ConfigLike=Dict{String,Any}())
     # spec-v4: one location per dataset — the `storage_path` field (default `$datasets_dir/$key`).
     # `lazy_access` opens the `uri` in place (spec-v4.3); `skip_download` (with no explicit path)
     # returns the documented `uri` verbatim. Both yield the `uri` as the "path".
@@ -541,13 +541,18 @@ function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extra
         storage_config=storage_config, datasets_folder=datasets_folder)
 end
 
+# The database's full spec-v5 configuration chain: the checkout config
+# (.datamanifest/config.toml), the manifest's [_STORAGE], and the user-global config.
+storage_layers(db::Database) =
+    config_layers(db.storage_config; project_root=get_project_root(db))
+
 function get_dataset_path(db::Database, entry::DatasetEntry; kwargs...)
-    return get_dataset_path(entry, get_datasets_folder(db); project_root=get_project_root(db), storage_config=db.storage_config, kwargs...)
+    return get_dataset_path(entry, get_datasets_folder(db); project_root=get_project_root(db), storage_config=storage_layers(db), kwargs...)
 end
 
 function get_dataset_path(db::Database, name::String; extract=nothing, kwargs...)
     (name, dataset) = search_dataset(db, name; kwargs...)
-    return get_dataset_path(dataset, get_datasets_folder(db); extract=extract, project_root=get_project_root(db), storage_config=db.storage_config)
+    return get_dataset_path(dataset, get_datasets_folder(db); extract=extract, project_root=get_project_root(db), storage_config=storage_layers(db))
 end
 
 # Read-side resolution (spec-v4): a dataset has a single location — its `storage_path`
@@ -654,7 +659,7 @@ function resolve_from_pools(db::Database, entry::DatasetEntry; extract::Union{Bo
     algo = hash_algo(entry)
     declared = !isempty(entry.checksum) && hashable_algo(algo) &&
                !(db.skip_checksum || entry.skip_checksum)
-    pools = datasets_pools(; project_root=get_project_root(db), storage_config=db.storage_config)
+    pools = datasets_pools(; project_root=get_project_root(db), storage_config=storage_layers(db))
     for pool in pools
         cand = joinpath(pool, probe_key)
         (isfile(cand) || isdir(cand)) || continue
@@ -708,7 +713,9 @@ function _warn_legacy_dir_once()
     _LEGACY_DIR_WARNED[] = true
     legacy = legacy_data_root()
     warn("Reading datasets from the legacy location $legacy (pre-v1.1 default; read-only). " *
-         "spec-v4 fetches into [_STORAGE].datasets_dir (default ./datasets/). To keep using " *
+         "spec-v5 fetches into the resolved datasets_dir (default the shared store " *
+         "\$user_data_dir/datamanifest/shared/datasets; the legacy folder is also a default " *
+         "read pool). To keep using " *
          "the legacy folder, set DATAMANIFEST_DATASETS_DIR=$legacy; otherwise migrate it " *
          "manually (e.g. with rsync) at your convenience.")
 end

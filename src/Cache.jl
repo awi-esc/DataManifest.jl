@@ -26,13 +26,13 @@ using TOML
 using SHA
 using Dates
 using Serialization
-using ..Storage: datacache_dir, datacache_pools, is_complete, marker_path, lock_path, tmp_path,
-    user_state_dir
+using ..Storage: datacache_dir, datacache_pools, config_layers, ConfigLike, is_complete, marker_path,
+    lock_path, tmp_path, user_state_dir
 using ..PipeLines: materialize
 
 export @cached, param_hash, cache_key, cached_dir,
     save_cache, load_cache, has_cache, read_config, config_is_valid, register_format!,
-    # state file (.datamanifest-state.toml, spec-v4.1, schema 5)
+    # state file (.datamanifest/state.toml, spec-v5, schema 5)
     CachedIndex, read_index, read_index_or_empty, register!, index_keys, reachable_keys,
     has_instance, ref_of, instance_path_of, remove_instance!, recipe_records,
     register_dataset!, has_dataset, dataset_path_of, dataset_sha256_of, set_dataset_path!,
@@ -258,13 +258,14 @@ end
 
 The directory holding a produced artifact and its sidecars (spec-v4). With an explicit
 `cache_dir`, it is used **verbatim** (`<cache_dir>/<cachetype>/[<version>/]<hash>`), the
-experiment-folder workflow. Otherwise it composes under the manifest's **`datacache_dir`**
-(default `<repo>/cached`): `<datacache_dir>/<cachetype>/[<version>/]<hash>`. No scope, prefix,
-or partition — the folder is the location.
+experiment-folder workflow. Otherwise it composes under the resolved **`datacache_dir`** (default
+`\$user_cache_dir/datamanifest/projects/\$project/cached`):
+`<datacache_dir>/<cachetype>/[<version>/]<hash>`. No scope, prefix, or partition — the
+folder is the location.
 """
 function cached_dir(cachetype::AbstractString, hash::AbstractString;
                     version=nothing, cache_dir=nothing,
-                    storage_config::AbstractDict=Dict{String,Any}(),
+                    storage_config::ConfigLike=Dict{String,Any}(),
                     env=ENV, host::AbstractString=gethostname(),
                     project_root::AbstractString="")::String
     leaf = (version === nothing || isempty(version)) ?
@@ -392,11 +393,11 @@ function write_metadata(dir::AbstractString; cachetype::AbstractString="",
     return path
 end
 
-# ── The state file (`.datamanifest-state.toml`, spec-v4.1, schema 5) ───────────
+# ── The state file (`.datamanifest/state.toml`, spec-v5, schema 5) ─────────────
 #
 # The hand-authored `datasets.toml` is the committed SPEC (what to track + how to obtain it).
-# WHERE each object actually landed on this machine is recorded separately in a sibling,
-# git-ignored **`.datamanifest-state.toml`** — the state file — a tool-maintained inventory of
+# WHERE each object actually landed on this machine is recorded separately in the
+# git-ignored **`.datamanifest/state.toml`** — the state file — a tool-maintained inventory of
 # both fetched datasets and produced artifacts. It is a read-only inventory: consulted to FIND
 # an existing object, never to direct a write (writes follow the current directive). Schema 5
 # has two namespaces:
@@ -407,11 +408,16 @@ end
 # `@` is the reserved version separator (a cachetype never contains `@`). The instance value is
 # the full artifact directory (params are NOT stored here — they live in each config.toml).
 # Older shapes (schema 1–4, the produced-only `cached.toml`) are still READ and rewritten
-# forward; `cached.toml` is the recognized legacy filename. Mirrors the Python `cache/_index.py`.
+# forward. spec-v5: the canonical path is `.datamanifest/state.toml` (the `.datamanifest/`
+# directory is entirely git-ignored — a `.gitignore` containing `*` is dropped on first
+# write); the legacy `.datamanifest-state.toml` (spec-v4 sibling) and `cached.toml` names are
+# still read, and the first write relocates the file to the canonical path. Mirrors the
+# Python `cache/_index.py`.
 
-const STATE_FILE_NAME = ".datamanifest-state.toml"
+const PRIVATE_DIR_NAME = ".datamanifest"
+const STATE_FILE_NAME = joinpath(PRIVATE_DIR_NAME, "state.toml")
 const CACHED_INDEX_NAME = STATE_FILE_NAME   # historical alias used across the codebase
-const _LEGACY_INDEX_NAMES = ("cached.toml",)
+const _LEGACY_INDEX_NAMES = (".datamanifest-state.toml", "cached.toml")
 const CACHED_INDEX_SCHEMA = 5
 const _VERSION_SEP = "@"
 
@@ -436,7 +442,7 @@ end
 """
     CachedIndex(; recipes=Dict(), datasets=Dict(), path="")
 
-In-memory view of a `.datamanifest-state.toml` (schema 5): `recipes` (produced) maps a recipe
+In-memory view of a `.datamanifest/state.toml` state file (schema 5): `recipes` (produced) maps a recipe
 identity `(cachetype, version)` to `Dict("ref","format","instances" => Dict(hash => storage_path))`
 — each per-instance value the recorded full artifact directory; `datasets` (fetched) maps a
 storage `key` to `Dict("storage_path","sha256")`. `path` is the file read from / written to.
@@ -459,7 +465,7 @@ function _index_resolve_path(path::AbstractString)::String
 end
 
 # The path a WRITE targets: a directory or a legacy-named file migrates to the canonical
-# sibling; a canonical/custom file path is honored verbatim.
+# `.datamanifest/state.toml`; a canonical/custom file path is honored verbatim.
 function _index_canonical_path(path::AbstractString)::String
     p = String(path)
     isdir(p) && return joinpath(p, STATE_FILE_NAME)
@@ -467,17 +473,27 @@ function _index_canonical_path(path::AbstractString)::String
     return p
 end
 
+# The project directory a state path belongs to: `base` itself when a directory; the
+# grandparent for a `<root>/.datamanifest/state.toml` file path; else the dirname.
+function _state_project_dir(b::AbstractString)::String
+    isdir(b) && return String(b)
+    d = dirname(String(b))
+    basename(d) == PRIVATE_DIR_NAME && return dirname(d)
+    return d
+end
+
 """
     locate_state(base) -> String
 
 The state file to **read** at `base` (a directory or file path): the canonical
-`.datamanifest-state.toml` when present, else a legacy `cached.toml` sibling, else the
-canonical path (which may not exist). Lets callers find an inventory under either name.
+`.datamanifest/state.toml` when present, else a legacy `.datamanifest-state.toml` /
+`cached.toml` sibling, else the canonical path (which may not exist). Lets callers find an
+inventory under any recognized name.
 """
 function locate_state(base::AbstractString)::String
     b = String(base)
     isfile(b) && return b
-    d = isdir(b) ? b : dirname(b)
+    d = _state_project_dir(b)
     isempty(d) && (d = ".")
     canonical = joinpath(d, STATE_FILE_NAME)
     isfile(canonical) && return canonical
@@ -592,17 +608,14 @@ end
     read_index_or_empty(path) -> CachedIndex
 
 Read the state file at `path` (canonical or legacy name), or an empty one bound to the
-canonical path when none exists — so the next [`write_index`] migrates a legacy file forward.
+canonical path when none exists. The index keeps the path it was actually read from, so the
+next [`write_index`] relocates a legacy-named file to the canonical
+`.datamanifest/state.toml`.
 """
 function read_index_or_empty(path::AbstractString)::CachedIndex
-    canonical = _index_canonical_path(path)
     target = locate_state(path)
-    if isfile(target)
-        idx = read_index(target)
-        idx.path = canonical
-        return idx
-    end
-    return CachedIndex(path=canonical)
+    isfile(target) && return read_index(target)
+    return CachedIndex(path=_index_canonical_path(path))
 end
 
 # ----- produced recipes -----
@@ -830,16 +843,32 @@ one), canonically ordered, via a temp file + atomic rename (so concurrent additi
 never observe a half-written inventory). Returns the path written.
 """
 function write_index(index::CachedIndex, path::AbstractString="")::String
-    target = isempty(path) ? index.path : _index_canonical_path(path)
+    origin = index.path
+    target = _index_canonical_path(isempty(path) ? index.path : path)
     isempty(target) && error("write_index: no path given and CachedIndex has no loaded path")
     target = _index_resolve_path(target)
     dir = dirname(target)
-    !isempty(dir) && mkpath(dir)
+    if !isempty(dir)
+        mkpath(dir)
+        # spec-v5: `.datamanifest/` is entirely git-ignored — self-ignore on first write.
+        if basename(dir) == PRIVATE_DIR_NAME
+            gi = joinpath(dir, ".gitignore")
+            if !isfile(gi)
+                try; open(io -> print(io, "*\n"), gi, "w"); catch; end
+            end
+        end
+    end
     tmp = "$(target).$(getpid()).tmp"
     open(tmp, "w") do io
         TOML.print(io, _index_to_dict(index); sorted=true)
     end
     mv(tmp, target; force=true)
+    # First write relocates: a legacy-named source file is removed only AFTER the canonical
+    # file landed, so the inventory is never lost.
+    if !isempty(origin) && abspath(origin) != abspath(target) &&
+       basename(origin) in _LEGACY_INDEX_NAMES && isfile(origin)
+        try; rm(origin); catch; end
+    end
     index.path = target
     return target
 end
@@ -1210,9 +1239,8 @@ end
 # audit anchor). An explicit `cache_dir` per call overrides location entirely.
 
 # Load `[_STORAGE]` from the nearest manifest at `project_root` (empty when none/unreadable)
-# — so the same centralized storage settings that drive fetched datasets ($-folder roots,
-# `_HOST`/`_SCOPE`/`_PREFIX`) also drive produced artifacts when no `Database` is in scope.
-# Mirrors the Python `_load_storage_config`.
+# — so the same storage settings that drive fetched datasets also drive produced artifacts
+# when no `Database` is in scope. Mirrors the Python `_load_storage_config`.
 function _discover_storage_config(project_root::AbstractString)::Dict{String,Any}
     isempty(project_root) && return Dict{String,Any}()
     for name in ("Datasets.toml", "datasets.toml", "DataManifest.toml", "datamanifest.toml")
@@ -1234,13 +1262,16 @@ function _cache_context()
     catch
         pwd()
     end
-    return (storage_config=_discover_storage_config(proot), project_root=proot)
+    # The full spec-v5 ladder: checkout config → manifest [_STORAGE] → user config.
+    return (storage_config=config_layers(_discover_storage_config(proot); project_root=proot),
+            project_root=proot)
 end
 
-# Resolve the `cached.toml` path a produced artifact is registered in (the spec's
-# "sibling of datasets.toml" convention, with pragmatic fallbacks): an explicit
-# `cached_toml` (file, or a directory holding the default) → `<project_root>/cached.toml`
-# → `<cwd>/cached.toml`. Mirrors the Python `_locate_cached_toml`.
+# Resolve the state-file path a produced artifact is registered in (the spec's
+# `.datamanifest/state.toml` convention, with pragmatic fallbacks): an explicit
+# `cached_toml` (file, or a directory holding the default) →
+# `<project_root>/.datamanifest/state.toml` → the cwd equivalent. Mirrors the Python
+# `_locate_cached_toml`.
 function _locate_cached_toml(cached_toml, project_root::AbstractString)::String
     if cached_toml !== nothing && !isempty(string(cached_toml))
         ct = String(cached_toml)

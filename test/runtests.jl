@@ -65,6 +65,10 @@ end
 
 datasets_dir = mktempdir(prefix="DataManifest_test_"; cleanup=true)
 
+# Isolate the spec-v5 user-global config (~/.config/datamanifest/config.toml) so a
+# developer's real config never leaks into resolution during tests.
+ENV["XDG_CONFIG_HOME"] = mktempdir(prefix="DataManifest_xdgconfig_"; cleanup=true)
+
 try
 @testset "DataManifest.jl" begin
     db = setup_db(datasets_dir)
@@ -237,13 +241,25 @@ try
         @test_throws ErrorException DB.search_dataset(dba, "shared")   # ambiguous alias errors
     end
 
-    @testset "spec-v4 two-folder storage" begin
+    @testset "spec-v5 two-folder storage" begin
         S = DataManifest.Storage
         env = Dict("XDG_DATA_HOME" => "/d", "XDG_CACHE_HOME" => "/c")
 
-        # The two folders default to repo-relative `datasets/` and `cached/`.
-        @test S.datasets_dir(; project_root="/r", env=env) == "/r/datasets"
-        @test S.datacache_dir(; project_root="/r", env=env) == "/r/cached"
+        # The two folders default to machine-global locations: one shared keyed store for
+        # fetched datasets, a per-project ($project) produced cache.
+        @test S.datasets_dir(; project_root="/r/myproj", env=env) ==
+              "/d/datamanifest/shared/datasets"
+        @test S.datacache_dir(; project_root="/r/myproj", env=env) ==
+              "/c/datamanifest/projects/myproj/cached"
+        # $project defaults to the project-root basename; a `project` field overrides it.
+        @test S.resolve_symbol("project"; project_root="/r/myproj") == "myproj"
+        @test S.datacache_dir(; project_root="/r/myproj", env=env,
+                              storage_config=Dict{String,Any}("project" => "renamed")) ==
+              "/c/datamanifest/projects/renamed/cached"
+        # Relative values restore the pre-v5 repo-local layout.
+        sc_local = Dict{String,Any}("datasets_dir" => "datasets", "datacache_dir" => "cached")
+        @test S.datasets_dir(; project_root="/r", storage_config=sc_local, env=env) == "/r/datasets"
+        @test S.datacache_dir(; project_root="/r", storage_config=sc_local, env=env) == "/r/cached"
         # Env-var overrides (DATAMANIFEST_<FIELD>) win.
         envd = merge(env, Dict("DATAMANIFEST_DATASETS_DIR" => "/abs/data",
                                "DATAMANIFEST_DATACACHE_DIR" => "/abs/cache"))
@@ -262,6 +278,9 @@ try
 
         # dataset_storage_path: default keyed location is `$datasets_dir/$key`.
         @test S.dataset_storage_path("", "host/f.nc"; project_root="/r", env=env) ==
+              "/d/datamanifest/shared/datasets/host/f.nc"
+        @test S.dataset_storage_path("", "host/f.nc"; project_root="/r",
+                                     storage_config=sc_local, env=env) ==
               "/r/datasets/host/f.nc"
         # A `$scratch/$key` override is tool-managed keyed (uses a user symbol).
         scu = Dict{String,Any}("scratch" => "/scratch/me")
@@ -311,6 +330,85 @@ try
             @test db_v4b.datasets["a"].storage_path == "\$scratch/\$key"
             @test db_v4b.datasets["b"].storage_path == "/data/exact/b.nc"
             @test db_v4b.datasets["c"].storage_path == ""
+        end
+    end
+
+    @testset "spec-v5 scoped config files + ladder + state relocation" begin
+        S = DataManifest.Storage
+        C = DataManifest.Cache
+        env = Dict("XDG_DATA_HOME" => "/d", "XDG_CACHE_HOME" => "/c")
+
+        mktempdir() do root
+            # Layer files: checkout config overrides the manifest; user config only fills in.
+            mkpath(joinpath(root, ".datamanifest"))
+            write(joinpath(root, ".datamanifest", "config.toml"), """
+            datasets_dir = "\$user_data_dir/from-local"
+            [_HOST."*"]
+            scratch = "/local-scratch"
+            """)
+            userdir = mktempdir()
+            mkpath(joinpath(userdir, "datamanifest"))
+            write(joinpath(userdir, "datamanifest", "config.toml"), """
+            datacache_dir = "\$user_cache_dir/from-user"
+            project = "user-named"
+            """)
+            envc = merge(env, Dict("XDG_CONFIG_HOME" => userdir))
+            manifest_sc = Dict{String,Any}("datacache_dir" => "cached", "scratch" => "/mani-scratch")
+
+            layers = S.config_layers(manifest_sc; project_root=root, env=envc)
+            @test length(layers) == 3
+            # checkout config (rung 2) beats the manifest (rung 4):
+            @test S.datasets_dir(; project_root=root, storage_config=layers, env=envc) ==
+                  "/d/from-local"
+            # ...including its _HOST section (rung 2 host beats manifest base).
+            @test S.resolve_symbol("scratch"; project_root=root, storage_config=layers, env=envc) ==
+                  "/local-scratch"
+            # the manifest (rung 4) beats the user config (rung 5):
+            @test S.datacache_dir(; project_root=root, storage_config=layers, env=envc) ==
+                  joinpath(root, "cached")
+            # the user config fills in what nothing above sets ($project here):
+            @test S.resolve_symbol("project"; project_root=root, storage_config=layers, env=envc) ==
+                  "user-named"
+            # env (rung 1) beats everything:
+            enve = merge(envc, Dict("DATAMANIFEST_DATASETS_DIR" => "/abs/override"))
+            @test S.datasets_dir(; project_root=root, storage_config=layers, env=enve) ==
+                  "/abs/override"
+        end
+
+        # POOL_DEFAULTS (spec-v5): $repo/datasets first (skipped without a project root),
+        # then the shared store, then the legacy locations.
+        @test S.POOL_DEFAULTS == ("\$repo/datasets",
+                                  "\$user_data_dir/datamanifest/shared/datasets",
+                                  "\$user_data_dir/datamanifest/datasets",
+                                  "~/.cache/Datasets")
+        pools_r = S.datasets_pools(; project_root="/r", env=env)
+        @test pools_r[1] == "/r/datasets"
+        @test pools_r[2] == "/d/datamanifest/shared/datasets"
+        # Without a project root the $repo/datasets default is skipped entirely.
+        @test S.datasets_pools(; env=env)[1] == "/d/datamanifest/shared/datasets"
+
+        # State file: canonical .datamanifest/state.toml; a legacy sibling
+        # .datamanifest-state.toml is read and RELOCATED on first write; the
+        # .datamanifest/ dir self-ignores.
+        mktempdir() do dir
+            legacy = joinpath(dir, ".datamanifest-state.toml")
+            write(legacy, """
+            [_META]
+            schema = 5
+            [datasets."ex.com/foo.nc"]
+            storage_path = "datasets/ex.com/foo.nc"
+            sha256 = "abc"
+            """)
+            @test C.locate_state(dir) == legacy
+            idx = read_index_or_empty(dir)
+            @test DataManifest.Cache.dataset_path_of(idx, "ex.com/foo.nc") ==
+                  "datasets/ex.com/foo.nc"
+            target = write_index(idx)
+            @test target == joinpath(dir, ".datamanifest", "state.toml")
+            @test isfile(target)
+            @test !isfile(legacy)                      # first write relocates
+            @test strip(read(joinpath(dir, ".datamanifest", ".gitignore"), String)) == "*"
+            @test C.locate_state(dir) == target
         end
     end
 
@@ -981,7 +1079,7 @@ try
         # `cached_toml` / DATAMANIFEST_USAGE_LOG are pinned to a tempdir so register-on-
         # produce (Phase 2) never touches the repo or the real depot usage log.
         dir = mktempdir()
-        idx_path = joinpath(dir, ".datamanifest-state.toml")
+        idx_path = joinpath(dir, ".datamanifest", "state.toml")
         usage_path = joinpath(dir, "usage.toml")
         calls = Ref(0)
         @cached cachetype="demo" key=(a -> (; a.grid, a.n)) function demo(;
@@ -1039,7 +1137,7 @@ try
         @test occursin("keyword-only", kwonly_err)
     end
 
-    @testset "Cache index + usage + inspect (spec-v4.1 state file)" begin
+    @testset "Cache index + usage + inspect (state file)" begin
         C = DataManifest.Cache
 
         # --- state-file round-trip (schema 5: datacache + datasets namespaces) ----
@@ -1096,6 +1194,7 @@ try
         @test reachable_keys(lg) == Set([("esm", "", "d"^64)])
         @test endswith(write_index(lg, legdir), C.STATE_FILE_NAME)  # migrated on write
         @test isfile(joinpath(legdir, C.STATE_FILE_NAME))
+        @test !isfile(joinpath(legdir, "cached.toml"))   # legacy file relocated (removed)
 
         # --- usage log + last-access ----------------------------------------------
         usage_path = joinpath(dir, "usage.toml")
@@ -1250,7 +1349,7 @@ try
     end
 end
 
-@testset "Conformance suite (spec-v4.3)" begin
+@testset "Conformance suite (pinned spec tag)" begin
     # Source of truth: github.com/perrette/datamanifest.toml (tag pinned below).
     # The pin file records the spec tag + per-file sha256 of each fixture; hashes
     # are over file contents (not the tarball), keeping the pin robust to GitHub
@@ -1484,14 +1583,12 @@ end
                         if storage_exp !== nothing
                             sc = db.storage_config
 
-                            # The two folder fields: raw [_STORAGE] values.
-                            if haskey(storage_exp, "datasets_dir")
-                                @test String(get(sc, "datasets_dir", "")) ==
-                                      storage_exp["datasets_dir"]
-                            end
-                            if haskey(storage_exp, "datacache_dir")
-                                @test String(get(sc, "datacache_dir", "")) ==
-                                      storage_exp["datacache_dir"]
+                            # The two folder fields + the project name: raw [_STORAGE] values.
+                            for fieldname in ("datasets_dir", "datacache_dir", "project")
+                                if haskey(storage_exp, fieldname)
+                                    @test String(get(sc, fieldname, "")) ==
+                                          storage_exp[fieldname]
+                                end
                             end
 
                             # User-defined symbols (bare [_STORAGE] keys, reserved excluded).
