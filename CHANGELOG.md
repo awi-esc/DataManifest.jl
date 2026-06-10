@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] — spec-v4.4: `checksum` field
+## [0.27.0] - 2026-06-10 — spec-v4.4: `checksum` field
 
 Tracks datamanifest.toml **`spec-v4.4`**. The bare `sha256` field is replaced by a
 pooch-style **`checksum = "<algo>:<hex>"`** (`sha256:…`, `md5:…`; a bare hex value is
