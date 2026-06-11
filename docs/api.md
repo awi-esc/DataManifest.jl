@@ -426,7 +426,7 @@ in-memory database to disk.
   TOML output. When the keyword is omitted (`nothing`), the `canonical` config
   field decides (default `false`) — resolved on the ordinary ladder, see
   [`Storage.canonical_write`](#storage-helpers) and the
-  [write section in doc.md](doc.md#maintaining-a-local-datasetstoml). If the
+  [write section in doc.md](doc.md#maintaining-the-manifest-file). If the
   CLI is not found, native TOML is written with a warning.
 
 ---

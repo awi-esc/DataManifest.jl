@@ -5,7 +5,7 @@ later calls with the same parameters load the saved result instead of recomputin
 it. The saved result is called an **artifact**. This is separate from fetching
 declared datasets: an artifact comes from running your own code, not from
 downloading a URI, and it has no entry in `datasets.toml`. The
-[README](../README.md#produce-or-load-caching-cached) shows the short version;
+[walkthrough](doc.md) shows the short version;
 this page describes the full behaviour.
 
 ```julia

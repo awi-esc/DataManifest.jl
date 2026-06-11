@@ -175,7 +175,7 @@ When DataManifest.jl rewrites the manifest (for example after
 `register_dataset`), foreign `_LANG.<other>` subtrees, bare bindings,
 `[_LOADERS]`, and unknown `_*` tables are preserved verbatim; only the Julia
 `_LANG` subtree is regenerated. The
-[README](../README.md#one-manifest-several-languages) shows a short example,
+[walkthrough](doc.md) shows a short example,
 and the spec's
 [`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml)
 collects more.

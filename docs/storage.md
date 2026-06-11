@@ -1,6 +1,6 @@
 # Storage: where data lands on disk
 
-The [README](../README.md#put-data-where-you-want-it) shows the short version. This
+The [walkthrough](doc.md) shows the short version. This
 page is the full reference: the two storage folders and their defaults, the config
 files that change them, path symbols and how a value is looked up, read pools, the
 state file, store maintenance, and the advanced corners (per-dataset paths,
@@ -66,6 +66,11 @@ variable named `DATAMANIFEST_<NAME>` in upper case — for the two folders,
 `DATAMANIFEST_DATASETS_DIR` and `DATAMANIFEST_DATACACHE_DIR`.
 
 ## `$`-symbols and the resolution ladder
+
+> The complete list of configuration variables, their scopes, and worked
+> examples live on the [configuration page](configuration.md); this section
+> explains the path machinery behind them.
+
 
 A **`$`-symbol** is a named placeholder, written `$name` or `${name}`, that can
 appear in any path value. The predefined symbols:

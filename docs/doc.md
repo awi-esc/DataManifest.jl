@@ -1,6 +1,6 @@
 # Documentation
 
-This is the main user guide. It assumes you have skimmed the [README](/README.md).
+This is the main user guide. It assumes you have skimmed the [introduction](index.md).
 
 A few terms used throughout:
 
@@ -168,6 +168,9 @@ When `name` is omitted, it is derived from the URI (for git repositories, the
 `download_dataset` in one call.
 
 ## Configuration
+
+> Every configuration variable, its scopes, and the resolution rule are
+> summarized on the [configuration page](configuration.md).
 
 ### Where data is stored
 
@@ -597,8 +600,10 @@ When a dataset is loaded or fetched, the binding is chosen in this order:
   `[_LANG.julia.loaders][format]` → the built-in default for the format →
   error. Loaders never spawn a subprocess.
 - **Fetch:** the dataset's own `_LANG.julia.fetcher` → its
-  `_LANG.shell.fetcher` → the built-in download from `uri`/`uris` → error.
-  Delegation to peer CLIs is not implemented.
+  `_LANG.shell.fetcher` → delegation to the Python `datamanifest` CLI when the
+  dataset's bytes can only be produced by a foreign-language fetcher (see
+  [language-bindings.md](language-bindings.md)) → the built-in download from
+  `uri`/`uris` → error.
 
 #### Parameterized bindings (`{ ref, args, kwargs }`)
 

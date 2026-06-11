@@ -71,6 +71,7 @@ nav:
       - Produce-or-load caching: caching.md
       - Per-language bindings: language-bindings.md
       - Storage model: storage.md
+      - Configuration: configuration.md
       - Manage your data from the shell: shell.md
   - Reference:
       - API: api.md

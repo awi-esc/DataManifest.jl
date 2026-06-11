@@ -8,6 +8,7 @@
 # DataManifest.jl
 
 [![CI](https://github.com/awi-esc/DataManifest.jl/actions/workflows/ci.yaml/badge.svg)](https://github.com/awi-esc/DataManifest.jl/actions/workflows/ci.yaml)
+[![docs](https://img.shields.io/badge/docs-awi--esc.github.io%2FDataManifest.jl-blue)](https://awi-esc.github.io/DataManifest.jl/)
 
 DataManifest.jl keeps track of the datasets a scientific project depends on.
 You declare each dataset — its URL or git repository, an optional checksum
@@ -218,10 +219,13 @@ path = get_dataset_path(db, "co2")   # → ~/.local/share/mylib/gml.noaa.gov/…
 
 ## Documentation
 
+Browsable site: **<https://awi-esc.github.io/DataManifest.jl/>**. The same pages in the repo:
+
 - [docs/doc.md](docs/doc.md) — the long-form walkthrough; [docs/api.md](docs/api.md) — the API.
-- [docs/language-bindings.md](docs/language-bindings.md) — `_LANG`, resolution order, `lazy_access`.
+- [docs/configuration.md](docs/configuration.md) — every configuration variable, its scopes, and how values are resolved.
 - [docs/storage.md](docs/storage.md) — storage model, read pools, state file, maintenance.
 - [docs/caching.md](docs/caching.md) — the `@cached` layer in full.
+- [docs/language-bindings.md](docs/language-bindings.md) — `_LANG`, resolution order, `lazy_access`.
 
 ## Conformance
 

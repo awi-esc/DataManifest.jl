@@ -1,38 +1,37 @@
 # Installation
 
-`DataManifest.jl` is a registered Julia package:
+DataManifest.jl is a registered Julia package:
 
 ```julia
 using Pkg
 Pkg.add("DataManifest")
 ```
 
-Bleeding edge, straight from the repository:
+Development version, straight from the repository:
 
 ```julia
 Pkg.add(url="https://github.com/awi-esc/DataManifest.jl")
 ```
 
-It requires Julia 1.10 or newer.
-
-`DataManifest.jl` is still actively developed, with breaking changes until
-v1.0.0 is reached.
+It requires Julia 1.10 or newer. DataManifest.jl is still actively developed,
+with breaking changes possible until v1.0.0.
 
 ## Optional dependencies
 
 The core package downloads, verifies, extracts and caches data with no extra
-dependencies. Built-in *loaders* for specific formats (CSV, Parquet, NetCDF,
-…) use optional packages and only kick in once you add them to your project —
-e.g. `Pkg.add("CSV")` to enable the `csv` loader. A loader that needs a package
-you have not installed errors with an explicit "add Package" message rather than
+dependencies. The built-in **loaders** — functions that open a downloaded file
+and return a Julia object — rely on optional packages for specific formats
+(CSV, Parquet, NetCDF, …) and become available once you add the package to
+your project, e.g. `Pkg.add("CSV")` for the `csv` loader. A loader whose
+package is missing errors with the `Pkg.add` command to run rather than
 failing silently.
 
-## The Python sibling (CLI)
+## The Python CLI
 
-`DataManifest.jl` ships no command-line interface of its own. The manifest
-format is [shared across languages](https://github.com/perrette/datamanifest.toml),
+DataManifest.jl has no command-line interface of its own. The manifest format
+is [shared across languages](https://github.com/perrette/datamanifest.toml),
 and the [Python implementation](https://github.com/perrette/datamanifest)
-brings a full `datamanifest` CLI that manages the *same* `Datasets.toml`:
+provides a `datamanifest` CLI that manages the same `Datasets.toml`:
 
 ```bash
 pip install datamanifestpy

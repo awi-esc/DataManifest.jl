@@ -1,8 +1,3 @@
-<!--
-  Home page. The feature bullets are pulled straight from README.md (single
-  source of truth) via the include-markdown plugin; everything else links into
-  the guide.
--->
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/perrette/datamanifest.toml/main/design/logo/lockup-dark.svg">
@@ -12,15 +7,14 @@
 
 # DataManifest.jl
 
-Keep track of the datasets used in a scientific project.
-
-{%
-  include-markdown "../README.md"
-  start="<!-- intro-start -->"
-  end="<!-- intro-end -->"
-%}
-
-## Get started
+DataManifest.jl keeps track of the datasets a scientific project depends on.
+You declare each dataset — its URL or git repository, an optional checksum
+(a hash of the file contents, used to verify a download), a format — in a
+**manifest**: a plain `Datasets.toml` file that lives in your repository.
+DataManifest.jl then downloads, verifies, extracts and loads the data on
+demand, and can cache your own computed results with the same machinery. The
+same manifest is read by a sibling Python tool, which also provides a
+command-line interface.
 
 ```julia
 using Pkg
@@ -29,21 +23,34 @@ Pkg.add("DataManifest")
 
 ```julia
 using DataManifest
+
 DataManifest.add("https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"; name="co2")
 path = get_dataset_path("co2")
 ```
 
-- **[Installation](installation.md)** — the package, optional loaders, the Python CLI sibling.
-- **[Quick start](quickstart.md)** — your first dataset, the file-less database.
-- **[Documentation walkthrough](doc.md)** — every feature, end to end.
-- **[API reference](api.md)** — every function and field.
+`add` writes one entry to `Datasets.toml` and downloads the file into a
+shared folder under your user data directory; `get_dataset_path` returns the
+on-disk path. The [quick start](quickstart.md) walks through this example.
 
-## Guides
+## Where to go next
 
-- [Produce-or-load caching (`@cached`)](caching.md) — cache expensive results, keyed by parameters.
-- [Per-language bindings](language-bindings.md) — `_LANG`, fetch/load ladders, `lazy_access`, migration.
-- [Storage model](storage.md) — where data lands, `$`-symbols, read pools, the state file.
+**Getting started**
+
+- [Installation](installation.md) — the package, optional loader packages, the Python CLI.
+- [Quick start](quickstart.md) — your first dataset, what to commit, manifest-less databases.
+
+**Guides**
+
+- [Walkthrough](doc.md) — the main user guide, from everyday usage to advanced topics.
+- [Produce-or-load caching (`@cached`)](caching.md) — cache computed results, keyed by parameters.
+- [Fetchers, loaders, and language bindings](language-bindings.md) — custom fetch and load code, `_LANG`, lazy access.
+- [Storage](storage.md) — where data lands on disk, read pools, the state file.
+- [Configuration](configuration.md) — every configuration variable, its scopes, and how values are resolved.
 - [Manage your data from the shell](shell.md) — the Python `datamanifest` CLI over the same manifest.
+
+**Reference**
+
+- [API](api.md) — every function and field.
 
 ## From the same author
 
@@ -53,7 +60,7 @@ A few other open-source tools I maintain.
 
 - [**texmark**](https://perrette.github.io/texmark/) — write scientific articles in Markdown and convert them to journal-ready LaTeX/PDF.
 - [**papers**](https://perrette.github.io/papers/) — command-line BibTeX bibliography and PDF library manager.
-- [**datamanifest**](https://perrette.github.io/datamanifest/) — declarative, reproducible dataset management. *(See also the [datamanifest.toml](https://perrette.github.io/datamanifest.toml/) format spec.)*
+- [**datamanifest**](https://perrette.github.io/datamanifest/) — the Python implementation of the same manifest format. *(See also the [datamanifest.toml](https://perrette.github.io/datamanifest.toml/) format spec.)*
 
 **Speech to Text (dictate) and Text to Speech (read-aloud) tools**
 
