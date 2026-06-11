@@ -1,176 +1,19 @@
-## `add`
+# API reference
 
-```
-add([db::Database], uri::String="";
-    name::String="",
-    overwrite::Bool=false,
-    persist::Bool=true,
-    check_duplicate::Bool=true,
-    skip_download::Bool=false,
-    version::String="",
-    branch::String="",
-    doi::String="",
-    aliases::Vector{String}=String[],
-    key::String="",
-    sha256::String="",
-    skip_checksum::Bool=false,
-    extract::Bool=false,
-    format::String=""
-) -> Pair{String, DatasetEntry}
-```
+This page lists the public functions and types with their signatures. The
+long-form walkthrough is in [doc.md](doc.md); the storage layout and
+configuration model in [storage.md](storage.md); produce-or-load caching in
+[caching.md](caching.md); loaders and fetchers in
+[language-bindings.md](language-bindings.md).
 
-Add a dataset to the database and optionally download it.
+**Default database:** wherever the `db::Database` argument is shown in
+brackets, it may be omitted. The default database is then used, which requires
+an activated Julia project with a datasets TOML file that exists or can be
+inferred.
 
-This is a convenience function that calls [`register_dataset`](#register_dataset) to register the dataset, and then [`download_dataset`](#download_dataset) unless `skip_download=true`.
+## Core
 
-See [`register_dataset`](#register_dataset) and [`download_dataset`](#download_dataset) for details on arguments and behavior.
-
-**Returns:**
-A pair `(name => entry)` where `entry` is the registered `DatasetEntry`.
-
----
-
-## `register_dataset`
-
-```
-register_dataset([db::Database], uri::String="";
-    name::String="",
-    overwrite::Bool=false,
-    persist::Bool=true,
-    check_duplicate::Bool=true,
-    uris::Vector{String}=String[],
-    version::String="",
-    branch::String="",
-    doi::String="",
-    aliases::Vector{String}=String[],
-    key::String="",
-    sha256::String="",
-    skip_checksum::Bool=false,
-    skip_download::Bool=false,
-    extract::Bool=false,
-    format::String=""
-```
-
-Alternatively, `uri` may be passed as a `Vector{String}` (equivalent to `uris=`):
-```
-register_dataset([db::Database], uris::Vector{String}; ...) -> Pair{String, DatasetEntry}
-```
-
-Register a dataset in the database, without downloading it.
-
-- If `db` is not provided, the default database is used (requires an activated Julia project).
-- If `name` is not provided, it is inferred from the URI or dataset entry.
-- Use `uris` (or `uri` as a list) to register a multi-file dataset; the key is auto-derived from the common host + path prefix, or can be set explicitly via `key=`.
-- All keyword arguments (except for internal fields) correspond to fields in `DatasetEntry`.
-- Duplicate entries are checked by default; set `check_duplicate=false` to disable.
-- If an entry with the same name or key exists, it is updated or overwritten according to the `overwrite` flag.
-
-**Returns:**
-A pair `(name => entry)` where `entry` is the registered `DatasetEntry`.
-
----
-
-## `download_dataset`
-
-```
-download_dataset([db::Database], name::String; extract::Union{Nothing,Bool}=nothing, overwrite::Bool=false, kwargs...) -> String
-download_dataset([db::Database], entry::DatasetEntry; extract::Union{Nothing,Bool}=nothing, overwrite::Bool=false) -> String
-download_dataset(name::String; extract::Union{Nothing,Bool}=nothing, overwrite::Bool=false, kwargs...) -> String
-```
-
-Download a dataset by name or entry, and return the local path.
-
-- If `db` is not provided, the default database is used (requires an activated Julia project).
-- You can provide either the dataset name or a `DatasetEntry` object.
-- If the dataset is already present, it is not downloaded again (unless `overwrite=true`).
-- If `overwrite=true`, skips existence checks and re-downloads (overwrites in place; git and extracted dirs require removal first).
-- If `extract=true`, the dataset is extracted after download (if applicable).
-- Checksum verification is performed unless disabled.
-
-**Returns:**
-The local path as a `String`.
-
----
-
-## `requires` (DatasetEntry field)
-
-The `requires` field specifies other datasets that must be present before this one. Each entry is resolved by name, DOI, or key via `search_dataset`. When downloading, dependencies are fetched first (in topological order). `overwrite` applies only to the main dataset, not to dependencies. Circular dependencies raise an error.
-
-**TOML example:**
-```toml
-[datasets.downstream]
-uri = "https://..."
-requires = ["upstream_dataset", "10.1594/PANGAEA.123456"]
-```
-
----
-
-## `delete_dataset`
-
-```
-delete_dataset([db::Database], name::String; keep_cache::Bool=false, persist::Bool=true)
-delete_dataset(name::String; keep_cache::Bool=false, persist::Bool=true)
-```
-
-Remove a dataset from the database (and optionally from disk).
-
-- Removes the entry from `datasets_toml` (or in-memory db).
-- If `keep_cache=false` (default), also removes the dataset files/directories from disk.
-- If `keep_cache=true`, keeps the dataset on disk but removes the entry from the database.
-- For extracted datasets, removes both the archive and the extracted directory when `keep_cache=false`.
-
----
-
-## `download_datasets`
-
-```
-download_datasets([db::Database], names::Union{Nothing,Vector{<:Any}}=nothing; kwargs...) -> Nothing
-download_datasets(names::Union{Nothing,Vector{<:Any}}=nothing; kwargs...) -> Nothing
-```
-
-Download multiple datasets by name.
-
-- If `db` is not provided, the default database is used (requires an activated Julia project).
-- If `names` is `nothing`, all datasets in the database are downloaded.
-- Each dataset is downloaded using [`download_dataset`](#download_dataset), with the same keyword arguments.
-- If a dataset is already present, it is not downloaded again.
-
-**Arguments:**
-- `db::Database` (optional): The database to use.
-- `names::Union{Nothing,Vector{<:Any}}`: List of dataset names to download. If `nothing`, downloads all datasets.
-- `kwargs...`: Additional keyword arguments passed to [`download_dataset`](#download_dataset).
-
-**Returns:**
-Nothing.
-
----
-
-## `get_dataset_path`
-
-```
-get_dataset_path([db::Database], name::String; extract::Union{Nothing,Bool}=nothing) -> String
-get_dataset_path([db::Database], entry::DatasetEntry; extract::Union{Nothing,Bool}=nothing) -> String
-get_dataset_path(name::String; extract::Union{Nothing,Bool}=nothing) -> String
-```
-
-Return the local path for a dataset entry, based on its scheme, host, path, and version.
-
-- If `db` is not provided, the default database is used (requires an activated Julia project).
-- You can provide either the dataset name or a `DatasetEntry` object.
-- The `extract` keyword controls whether the path points to the extracted folder (if applicable).
-
-**Arguments:**
-- `db::Database` (optional): The database to search in.
-- `name::String`: The name of the dataset.
-- `entry::DatasetEntry`: The dataset entry.
-- `extract::Union{Nothing,Bool}`: Whether to return the path to the extracted folder.
-
-**Returns:**
-The local path as a `String`.
-
----
-
-## `Database`
+### `Database`
 
 ```
 Database(;
@@ -185,17 +28,26 @@ Database(;
 Database(datasets_toml::String, datasets_folder::String=""; kwargs...) -> Database
 ```
 
-Create a new dataset database.
+Create a dataset database — the in-memory counterpart of a `Datasets.toml`
+manifest.
 
-- If `datasets_folder` is not provided, the `data` store root is resolved via `Storage.store_root` (defaults to `$XDG_DATA_HOME/datamanifest/Datasets` on Linux). To override, set `DATAMANIFEST_DATA_DIR` or pass `datasets_folder=`.
-- If `datasets_toml` is not provided and `persist` is `true`, attempts to infer a TOML file from the project or environment.
-- If a TOML file is provided and exists, datasets are loaded from it.
+- If `datasets_folder` is not provided, the fetched-datasets folder is resolved
+  via `Storage.datasets_dir` (default: the machine-global shared store,
+  `$user_data_dir/datamanifest/shared/datasets`). To override, set the
+  `datasets_dir` config field or the `DATAMANIFEST_DATASETS_DIR` environment
+  variable, or pass `datasets_folder=` explicitly. See [storage.md](storage.md)
+  for the full resolution ladder.
+- If `datasets_toml` is not provided and `persist` is `true`, a TOML file is
+  inferred from the project or environment.
+- If the TOML file exists, datasets are loaded from it.
+- The configuration (storage fields, environment, host) is frozen at
+  construction; see [`freeze_config!`](#freeze_config) to re-read it.
 
 **Arguments:**
 - `datasets_toml::String`: Path to the TOML file for persistence.
 - `datasets_folder::String`: Path to the datasets folder.
 - `persist::Bool`: Whether to persist changes to disk.
-- `skip_checksum::Bool`: Skip SHA-256 checksum verification.
+- `skip_checksum::Bool`: Skip checksum verification.
 - `skip_checksum_folders::Bool`: Skip checksum verification for folders.
 - `datasets::Dict{String, DatasetEntry}`: Initial datasets.
 
@@ -204,23 +56,153 @@ A `Database` object.
 
 ---
 
-**Note:**
-For all functions, if the `db::Database` argument is omitted, the default database is used, which requires that a Julia project is activated and a datasets TOML file is available or can be inferred.
+### `read_dataset`
 
+```
+read_dataset(datasets_toml::String, datasets_folder::String=""; kwargs...) -> Database
+```
 
+Read a manifest TOML file into a `Database`. Equivalent to
+`Database(datasets_toml, datasets_folder; kwargs...)`; keyword arguments are
+the same as for [`Database`](#database).
 
-## `search_datasets`
+---
+
+### `add`
+
+```
+add([db::Database], uri::String=""; skip_download::Bool=false, kwargs...) -> Pair{String, DatasetEntry}
+```
+
+Add a dataset to the database and download it.
+
+This is a convenience function that calls
+[`register_dataset`](#register_dataset) to register the dataset, then
+[`download_dataset`](#download_dataset) unless `skip_download=true`. All other
+keyword arguments are passed to `register_dataset` — see there for the list.
+
+`add_dataset` is an alias for `add`.
+
+**Returns:**
+A pair `(name => entry)` where `entry` is the registered `DatasetEntry`.
+
+---
+
+### `download_dataset`
+
+```
+download_dataset([db::Database], name::String; extract::Union{Nothing,Bool}=nothing, overwrite::Bool=false, kwargs...) -> String
+download_dataset([db::Database], entry::DatasetEntry; extract::Union{Nothing,Bool}=nothing, overwrite::Bool=false) -> String
+```
+
+Download a dataset by name or entry, and return the local path.
+
+- If the dataset is already present on disk, it is not downloaded again
+  (unless `overwrite=true`).
+- If `overwrite=true`, skips existence checks and re-downloads (overwrites in
+  place; git and extracted dirs require removal first).
+- If `extract=true`, the dataset is extracted after download (if applicable).
+- Checksum verification is performed unless disabled (see `skip_checksum` on
+  the entry or the database).
+- Datasets listed in the entry's [`requires`](#requires-datasetentry-field)
+  field are downloaded first.
+
+**Returns:**
+The local path as a `String`.
+
+---
+
+### `download_datasets`
+
+```
+download_datasets([db::Database], names::Union{Nothing,Vector{<:Any}}=nothing; kwargs...) -> Nothing
+```
+
+Download multiple datasets by name.
+
+- If `names` is `nothing`, all datasets in the database are downloaded.
+- Each dataset is downloaded using [`download_dataset`](#download_dataset),
+  with the same keyword arguments.
+- Datasets already present on disk are not downloaded again.
+
+**Returns:**
+Nothing.
+
+---
+
+### `get_dataset_path`
+
+```
+get_dataset_path([db::Database], name::String; extract::Union{Nothing,Bool}=nothing) -> String
+get_dataset_path([db::Database], entry::DatasetEntry; extract::Union{Nothing,Bool}=nothing) -> String
+```
+
+Return the local path for a dataset, based on its `storage_path` (or the keyed
+default `$datasets_dir/$key`) — see [storage.md](storage.md) for path
+resolution.
+
+- You can provide either the dataset name or a `DatasetEntry` object.
+- The `extract` keyword controls whether the path points to the extracted
+  folder (if applicable).
+
+**Returns:**
+The local path as a `String`.
+
+---
+
+### `load_dataset`
+
+```
+load_dataset([db::Database], name::String; loader=nothing, kwargs...)
+load_dataset([db::Database], entry::DatasetEntry; loader=nothing, kwargs...)
+```
+
+Download a dataset if needed, then open it and return the loaded value.
+
+- `loader` may be a function `path -> value`, the name of a loader defined in
+  the manifest, or a built-in format name (`csv`, `parquet`, `nc`, `dimstack`,
+  `md`, `txt`, `json`, `yaml`, `yml`, `toml`, `zip`, `tar`, `tar.gz`).
+- When `loader` is not given, the loader is resolved from the manifest: the
+  dataset's own loader binding, then the manifest's per-format loaders, then
+  the built-in format default. See
+  [language-bindings.md](language-bindings.md).
+- For a dataset with `lazy_access=true`, the URI is opened in place by the
+  loader (no download); a loader is required in that case.
+
+---
+
+### `delete_dataset`
+
+```
+delete_dataset([db::Database], name::String; keep_cache::Bool=false, persist::Bool=true)
+```
+
+Remove a dataset from the database (and optionally from disk).
+
+- Removes the entry from the manifest TOML (or the in-memory db).
+- If `keep_cache=false` (default), also removes the dataset files/directories
+  from disk. For extracted datasets, removes both the archive and the
+  extracted directory.
+- If `keep_cache=true`, keeps the dataset on disk but removes the entry from
+  the database.
+- Datasets with `skip_download` or `lazy_access` set, and datasets with a
+  user-managed `storage_path` (an exact path without `$key`), are never
+  removed from disk.
+
+---
+
+## Searching
+
+### `search_datasets`
 
 ```
 search_datasets([db::Database], name::String; alt=true, partial=false) -> Vector{Pair{String, DatasetEntry}}
 ```
 
-Search for datasets in the database by name or alternative keys, returning all matches as a vector of `(name => entry)` pairs.
+Search for datasets in the database by name or alternative keys, returning all
+matches as a vector of `(name => entry)` pairs.
 
-- If `db` is not provided, the default database is used (requires an activated Julia project).
-- The search is **case-insensitive** and proceeds in the following order:
-
-### Search Logic and Field Priority
+The search is **case-insensitive** and proceeds in the following order:
 
 1. **Exact match on dataset name** (the main key in the database).
 2. **Exact match on alternative keys** (if `alt=true`):
@@ -231,7 +213,8 @@ Search for datasets in the database by name or alternative keys, returning all m
 3. **Partial match on dataset name** (if `partial=true`):
    Checks if `name` is a substring of any dataset name.
 4. **Partial match on alternative keys** (if `alt=true` and `partial=true`):
-   Checks if `name` is a substring of any value in the alternative keys listed above.
+   Checks if `name` is a substring of any value in the alternative keys listed
+   above.
 
 All matches found in the above order are returned.
 
@@ -246,24 +229,21 @@ A vector of `(name => entry)` pairs for all matching datasets.
 
 ---
 
-## `search_dataset`
+### `search_dataset`
 
 ```
 search_dataset([db::Database], name::String; raise=true, alt=true, partial=false) -> Tuple{String, DatasetEntry}
 ```
 
-Search for a dataset by name or alternative keys in the database, returning the first match as a tuple `(name, entry)`.
+Search for a dataset by name or alternative keys in the database, returning the
+first match as a tuple `(name, entry)`.
 
-- The search logic and field priority are the same as in [`search_datasets`](#search_datasets).
-- If no match is found and `raise=true` (default), an error is thrown. If `raise=false`, returns `nothing`.
-- If multiple matches are found, an error is thrown (or a warning if `raise=false`).
-
-**Arguments:**
-- `db::Database` (optional): The database to search in.
-- `name::String`: The name, alias, DOI, key, or path of the dataset.
-- `raise::Bool`: Whether to throw an error if no match are found, or a warning if multiple matches are found (default: `true`).
-- `alt::Bool`: Whether to search alternative keys (default: `true`).
-- `partial::Bool`: Whether to allow partial (substring) matches (default: `false`).
+- The search logic and field priority are the same as in
+  [`search_datasets`](#search_datasets).
+- If no match is found and `raise=true` (default), an error is thrown. If
+  `raise=false`, returns `nothing`.
+- If multiple matches are found, an error is thrown (or a warning if
+  `raise=false`).
 
 **Returns:**
 A tuple `(name, entry)` where `entry` is the found `DatasetEntry`.
@@ -277,63 +257,245 @@ This is equivalent to `search_dataset(db, "dataset_name")[2]`.
 
 ---
 
-## `DatasetEntry`
+## Registering and editing entries
+
+### `register_dataset`
+
+```
+register_dataset([db::Database], uri::String="";
+    name::String="",
+    overwrite::Bool=false,
+    persist::Bool=true,
+    check_duplicate::Bool=true,
+    kwargs...
+) -> Pair{String, DatasetEntry}
+
+register_dataset([db::Database], uris::Vector{String}; ...) -> Pair{String, DatasetEntry}
+```
+
+Register a dataset in the database, without downloading it.
+
+- If `name` is not provided, it is inferred from the URI or dataset entry.
+- `uri` may be passed as a `Vector{String}` (equivalent to the `uris=` keyword)
+  to register a multi-file dataset; the key is auto-derived from the common
+  host + path prefix, or can be set explicitly via `key=`.
+- The remaining keyword arguments set [`DatasetEntry`](#datasetentry) fields:
+  `version`, `branch`, `doi`, `aliases`, `key`, `checksum` (a legacy `sha256=`
+  hex value is also accepted), `skip_checksum`, `skip_download`, `extract`,
+  `format`, `storage_path`, and so on.
+- Duplicate entries are checked by default; set `check_duplicate=false` to
+  disable.
+- If an entry with the same name or key exists, it is updated or overwritten
+  according to the `overwrite` flag.
+
+**Returns:**
+A pair `(name => entry)` where `entry` is the registered `DatasetEntry`.
+
+---
+
+### `DatasetEntry`
 
 ```
 struct DatasetEntry
     uri::String = ""
+    uris::Vector{String} = []     # Multi-file dataset: several URIs under one key
     version::String = ""
     branch::String = ""           # For git repositories
     doi::String = ""
     aliases::Vector{String} = []
+    description::String = ""      # Free-text description
     key::String = ""              # Unique key for the dataset, usually the DOI or a unique name
-    local_path::String = ""       # Path to a user-managed local file; bypasses the cache (relative to Datasets.toml dir, or absolute)
-    store::String = ""            # $-folder selector: "" (project default -> $data), "$data", "$cache", "$repo", "$cache/sub", or a user "$folder"
-    sha256::String = ""
-    skip_checksum::Bool = false   # Whether to skip SHA-256 checksum checks for this dataset
-    skip_download::Bool = false   # Skip download (e.g. to keep local files out of the download folder)
-    extract::Bool = false         # Whether to extract the dataset after downloading
+    storage_path::String = ""     # Per-dataset path expression; empty = "$datasets_dir/$key"
+    checksum::String = ""         # Expected content digest, "<algo>:<hex>"
+    skip_checksum::Bool = false   # Skip checksum checks for this dataset
+    skip_download::Bool = false   # Never download (user-managed or custom-fetched files)
+    lazy_access::Bool = false     # Open the uri in place via a loader; no local copy
+    extract::Bool = false         # Extract the dataset after downloading
     format::String = ""           # File format (e.g., "zip", "tar")
-    shell::String = ""            # When set, run this shell command instead of built-in download
-    julia::String = ""            # When set, run this Julia code in an isolated module (takes precedence over shell)
-    julia_modules::Vector{String} = String[]
-    # Schema v1 bindings (parameterized form):
+    shell::String = ""            # Run this shell command instead of the built-in download
+    julia::String = ""            # Run this Julia code instead (takes precedence over shell)
+    julia_modules::Vector{String} = []
+    loader::String = ""           # Per-dataset loader (Julia shorthand)
+    requires::Vector{String} = [] # Datasets that must be present first
+    # Julia bindings, parsed from [<ds>._LANG.julia] (see language-bindings.md):
     lang_julia_fetcher::String = ""
     lang_julia_fetcher_args::Vector{Any} = []
     lang_julia_fetcher_kwargs::Dict{String,Any} = Dict()
     lang_julia_loader::String = ""
     lang_julia_loader_args::Vector{Any} = []
     lang_julia_loader_kwargs::Dict{String,Any} = Dict()
+    extra::Dict{String,Any} = Dict()  # Unknown keys, preserved verbatim for round-trip
 end
 ```
 
 A `DatasetEntry` holds metadata and configuration for a dataset.
-It is initialized via the `add` method (and internally, `register_dataset` and `init_dataset_entry`).
+It is initialized via the `add` method (and internally, `register_dataset` and
+`init_dataset_entry`).
 
 **Fields:**
-- `uri::String`: The dataset URI (required).
+- `uri::String`: The dataset URI (required, unless the dataset is produced by a
+  fetcher or is user-managed).
+- `uris::Vector{String}`: URIs of a multi-file dataset, stored under one key.
 - `version::String`: Version or tag for the dataset.
 - `branch::String`: Branch for git repositories.
 - `doi::String`: DOI for the dataset.
 - `aliases::Vector{String}`: Alternative names for the dataset.
+- `description::String`: Free-text description.
 - `key::String`: Unique key for the dataset.
-- `local_path::String`: Path to a user-managed local file.
-- `store::String`: a spec-v2 `$`-folder **selector** choosing which folder holds the dataset, optionally with a literal sub-path — `""` (use the project-wide `[_STORAGE].default`, itself defaulting to `$data`), `"$data"`, `"$cache"`, `"$repo"`, `"$cache/derived"`, or a user-defined `"$folder"` declared in `[_STORAGE]`. The dataset is materialized at `<resolved-folder>[/subpath]/<key>`. Omitted on write when empty. Bare spec-v1.1 names (`"cache"`) are auto-upgraded to `$`-form with a deprecation warning; the former `"mount"` store was removed. (To bypass the keyed layout entirely and point at an exact file, use `local_path` — a path expression that may itself interpolate `$`-folder variables, `$USER`/env, and `~`.)
-- `sha256::String`: SHA-256 checksum.
+- `storage_path::String`: A path expression for where this dataset lives,
+  defaulting to `$datasets_dir/$key`. A value containing `$key` is a
+  tool-managed keyed location; an exact path without `$key` is a user-managed
+  location used verbatim (maintenance never touches it, and a relative path
+  resolves against the project root). The expression may interpolate
+  `$`-symbols, environment variables, and `~` — see [storage.md](storage.md).
+- `checksum::String`: Expected content digest as `<algo>:<hex>` (e.g.
+  `sha256:…`, `md5:…`); a bare hex value is read as sha256, and the legacy
+  `sha256` key is still accepted. Empty means the checksum is computed on
+  first download. Used for fetch-time verification and change detection.
 - `skip_checksum::Bool`: Skip checksum verification for this dataset.
-- `skip_download::Bool`: Skip downloading this dataset. For declaring a user-managed local file, prefer `local_path` (newer, self-documenting); `skip_download` is retained for back-compatibility and for entries fetched by custom `shell`/`julia` code that doesn't need a download step.
+- `skip_download::Bool`: Skip downloading this dataset — for files that must
+  never be fetched, or entries materialized by custom `shell`/`julia` code
+  that does not need a download step. For pointing at a user-managed local
+  file, prefer an exact `storage_path`.
+- `lazy_access::Bool`: Open the `uri` in place via a loader (typically a
+  remote object store) instead of materializing a local copy — no download, no
+  checksum. Requires a loader. See
+  [language-bindings.md](language-bindings.md).
 - `extract::Bool`: Extract the dataset after download.
 - `format::String`: File format (e.g., "zip", "tar").
-- `shell::String`: When set, run this shell command instead of built-in download. Template placeholders: `$download_path`, `$project_root`, `$uri`, `$key`, `$version`, `$doi`, `$format`, `$branch`. Command runs with working directory = project root when available.
-- `julia::String`: When set, run this Julia code in an isolated module (takes precedence over shell). Use `julia_modules` to load modules before the code. The code sees `download_path`, `project_root`, `entry`, `uri`, `key`, `version`, `doi`, `format`, `branch` (same names as shell template placeholders).
-- `julia_modules::Vector{String}`: Module names for `using X` before running `julia`.
+- `shell::String`: When set, run this shell command instead of the built-in
+  download. Template placeholders: `$download_path`, `$project_root`, `$uri`,
+  `$key`, `$version`, `$doi`, `$format`, `$branch`, plus `$requires_paths` and
+  `$path_<n>` for [dependencies](#requires-datasetentry-field). The command
+  runs with working directory = project root when available.
+- `julia::String`: When set, run this Julia code in an isolated module (takes
+  precedence over `shell`). Use `julia_modules` to load modules before the
+  code. The code sees `download_path`, `project_root`, `entry`, `uri`, `key`,
+  `version`, `doi`, `format`, `branch`, and `requires` (same names as the
+  shell template placeholders).
+- `julia_modules::Vector{String}`: Module names for `using X` before running
+  `julia`.
+- `loader::String`: Per-dataset loader — a name, a `module:function` ref, or
+  inline code. Shorthand for the Julia binding in
+  [language-bindings.md](language-bindings.md).
+- `requires::Vector{String}`: Datasets that must be present before this one;
+  see [below](#requires-datasetentry-field).
+- `lang_julia_*`: Julia fetcher/loader bindings parsed from
+  `[<ds>._LANG.julia]`, with optional `args`/`kwargs` payloads for
+  parameterized bindings — see [language-bindings.md](language-bindings.md).
+- `extra::Dict{String,Any}`: Unknown per-dataset keys, kept verbatim so the
+  manifest round-trips losslessly.
 
 **Note:**
-Fields such as `host`, `path`, and `scheme` are internal and not documented here.
+Fields such as `host`, `path`, and `scheme` are internal and not documented
+here.
 
 ---
 
-## `migrate`
+### `requires` (DatasetEntry field)
+
+The `requires` field specifies other datasets that must be present before this
+one. Each entry is resolved by name, DOI, or key via `search_dataset`. When
+downloading, dependencies are fetched first (in topological order). `overwrite`
+applies only to the main dataset, not to dependencies. Circular dependencies
+raise an error.
+
+**TOML example:**
+```toml
+[datasets.downstream]
+uri = "https://..."
+requires = ["upstream_dataset", "10.1594/PANGAEA.123456"]
+```
+
+---
+
+### `write`
+
+```
+write(db::Database, datasets_toml::String; canonical::Union{Bool,Nothing}=nothing)
+```
+
+Write the database to a manifest TOML file. Functions that modify the database
+call this automatically when `persist=true`; use it directly to write an
+in-memory database to disk.
+
+- The output is sorted: structural `_*` tables first, then datasets, both
+  alphabetical.
+- `canonical=true` pipes the output through the Python `datamanifest format`
+  CLI for cross-tool byte-identical files; `canonical=false` forces native
+  TOML output. When the keyword is omitted (`nothing`), the `canonical` config
+  field decides (default `false`) — resolved on the ordinary ladder, see
+  [`Storage.canonical_write`](#storage-helpers) and the
+  [write section in doc.md](doc.md#maintaining-a-local-datasetstoml). If the
+  CLI is not found, native TOML is written with a warning.
+
+---
+
+## Configuration
+
+### `freeze_config!`
+
+```
+freeze_config!(db::Database) -> db
+```
+
+Re-read a Database's frozen configuration snapshot.
+
+Configuration (the checkout config `.datamanifest/config.toml`, the manifest's
+`[_STORAGE]`, the user-global config, the environment, and the host name) is
+captured **once**, when the Database is created, so every config variable has
+one well-defined value for the Database's lifetime. Call `freeze_config!(db)`
+to re-read the config files and environment for an existing Database — e.g.
+after editing a config file. See [storage.md](storage.md) for the resolution
+ladder.
+
+---
+
+### Storage helpers
+
+The `Storage` submodule resolves storage paths and config fields. The main
+entry points (all take the optional keywords `storage_config=`, `env=ENV`,
+`host=gethostname()`, and where relevant `project_root=`; see
+[storage.md](storage.md) for the resolution ladder):
+
+```
+Storage.datasets_dir(; ...) -> String
+Storage.datacache_dir(; ...) -> String
+Storage.dataset_storage_path(storage_path, key; ...) -> String
+Storage.canonical_write(; ...) -> Bool
+Storage.lock_stale_age(; ...) -> Float64
+Storage.ConfigSnapshot
+```
+
+- `datasets_dir`: The resolved fetched-datasets folder (default
+  `$user_data_dir/datamanifest/shared/datasets`). Overridable by
+  `DATAMANIFEST_DATASETS_DIR` or the `datasets_dir` config field.
+- `datacache_dir`: The resolved produced-cache folder (default
+  `$user_cache_dir/datamanifest/projects/$project/cached`). Overridable by
+  `DATAMANIFEST_DATACACHE_DIR` or the `datacache_dir` config field. See
+  [caching.md](caching.md).
+- `dataset_storage_path(storage_path, key; ...)`: Resolve a dataset's on-disk
+  path from its `storage_path` field (empty means `$datasets_dir/$key`).
+- `canonical_write`: The `canonical` manifest-write directive (default
+  `false`) — whether persisted manifests are piped through the Python
+  `datamanifest format` CLI for byte-identical output. Resolved from
+  `DATAMANIFEST_CANONICAL` or the `canonical` config field; truthy strings are
+  `"1"`/`"true"`/`"yes"`/`"on"` (case-insensitive).
+- `lock_stale_age`: The age in seconds (default 30) after which another
+  process's materialization lock is considered stale and may be broken.
+  Resolved from `DATAMANIFEST_LOCK_STALE_AGE` or the `lock_stale_age` config
+  field; non-positive or unparsable values fall back to the default.
+- `ConfigSnapshot`: A frozen configuration — the file-backed config layers
+  together with the environment and host they are resolved against, captured
+  at Database creation (see [`freeze_config!`](#freeze_config)). Accepted
+  anywhere `storage_config` is, making every lookup deterministic for the
+  snapshot's lifetime.
+
+---
+
+## Migration
+
+### `migrate`
 
 ```
 migrate(path::String) -> Nothing
@@ -341,18 +503,18 @@ migrate(path::String) -> Nothing
 
 Rewrite a v0 manifest at `path` to schema v1 format, in-place.
 
-- Reads the TOML, detects the schema version, and exits early if the file is already v1 (`_META.schema ≥ 1`).
-- Moves `[_LOADERS]` entries that are `module:function` refs into `[_LANG.julia.loaders]` (format → ref map).
-- Moves per-dataset `julia=` / `loader=` fields that are refs into `[<ds>._LANG.julia]` (`fetcher` / `loader`).
-- Inline code that cannot be expressed as a ref is preserved verbatim with a log note — it is the user's responsibility to extract it into a module function.
+- Reads the TOML, detects the schema version, and exits early if the file is
+  already v1 (`_META.schema ≥ 1`).
+- Moves `[_LOADERS]` entries that are `module:function` refs into
+  `[_LANG.julia.loaders]` (format → ref map).
+- Moves per-dataset `julia=` / `loader=` fields that are refs into
+  `[<ds>._LANG.julia]` (`fetcher` / `loader`).
+- Inline code that cannot be expressed as a ref is preserved verbatim with a
+  log note — it is the user's responsibility to extract it into a module
+  function.
 - Sets `[_META].schema = 1` in the rewritten file.
 - Foreign keys and non-Julia `_LANG` subtrees are never modified.
 - The call is idempotent: running `migrate` on an already-v1 file is a no-op.
 
-**Arguments:**
-- `path::String`: Path to the TOML manifest to migrate.
-
 **Returns:**
 Nothing.
-
----

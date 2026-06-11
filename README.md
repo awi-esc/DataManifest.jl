@@ -9,18 +9,18 @@
 
 [![CI](https://github.com/awi-esc/DataManifest.jl/actions/workflows/ci.yaml/badge.svg)](https://github.com/awi-esc/DataManifest.jl/actions/workflows/ci.yaml)
 
-Keep track of the datasets used in a scientific project. You declare your data
-dependencies — URLs, git repositories, checksums, formats — in a `Datasets.toml`
-file; `DataManifest.jl` downloads, verifies, extracts and loads them, and caches
-your own computed results with the same machinery. It supports data repositories
-such as PANGAEA or Zenodo and git hosts such as GitHub. The manifest format is
-[shared across languages](https://github.com/perrette/datamanifest.toml) — the
-[Python implementation](https://github.com/perrette/datamanifest) reads the same
-file, and brings a [full command-line interface](#manage-your-data-from-the-shell)
-on top.
+DataManifest.jl keeps track of the datasets a scientific project depends on.
+You declare each dataset — its URL or git repository, an optional checksum
+(a hash of the file contents, used to verify a download), a format — in a
+**manifest**: a plain `Datasets.toml` file that lives in your repository.
+DataManifest.jl then downloads, verifies, extracts and loads the data on
+demand, and can cache your own computed results with the same machinery. It
+works with data repositories such as PANGAEA or Zenodo and with git hosts such
+as GitHub, and the same manifest is read by a sibling Python tool, which also
+provides a [command-line interface](#manage-your-data-from-the-shell).
 
-`DataManifest.jl` is still actively developed, with breaking changes until
-v1.0.0 is reached.
+DataManifest.jl is still actively developed, with breaking changes possible
+until v1.0.0.
 
 ## Installation
 
@@ -29,7 +29,7 @@ using Pkg
 Pkg.add("DataManifest")
 ```
 
-Bleeding edge:
+Development version:
 
 ```julia
 Pkg.add(url="https://github.com/awi-esc/DataManifest.jl")
@@ -43,12 +43,12 @@ In an activated project (`using Pkg; Pkg.activate(...)`):
 using DataManifest
 
 DataManifest.add("https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"; name="co2")
-path = get_dataset_path("co2")   # resolves under datasets_dir (a machine-global shared store by default)
+path = get_dataset_path("co2")
 ```
 
-The `add` downloaded the Mauna Loa CO₂ record and wrote one entry to
-`Datasets.toml` next to your `Project.toml` — a plain TOML file you can read and
-edit by hand, byte-identical to what the sibling Python tool writes:
+`add` downloaded the Mauna Loa CO₂ record and wrote one entry to
+`Datasets.toml`, next to your `Project.toml`. The manifest is a plain TOML
+file you can read and edit by hand:
 
 ```toml
 [co2]
@@ -56,39 +56,38 @@ checksum = "sha256:0058b3788040b5c27b2b5c1dd6d26226b7e4deef85e34c153e64806c37df7
 uri = "https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"
 ```
 
-**Commit `Datasets.toml`** — it's the recipe (what to fetch and how). The
-downloaded data lives outside the repo by default, and the local
-`.datamanifest/state.toml` (which records *where* each file landed on this
-machine) sits in the git-ignored `.datamanifest/` directory. A collaborator
-runs `download_datasets()` to materialize everything.
+By default the data itself is stored outside your repository, in a shared
+folder under your user data directory (on Linux,
+`~/.local/share/datamanifest/shared/datasets`), so several projects can reuse
+the same downloads. `get_dataset_path` returns the resolved on-disk path.
 
-To be explicit instead of relying on the activated project:
+## What to commit to git
 
-```julia
-db = Database("Datasets.toml", "my-data-folder")
-DataManifest.add(db, "https://…"; name="…")
-path = get_dataset_path(db, "co2")
-```
+Commit **`Datasets.toml`** — it is the recipe: what to fetch and how to verify
+it. Everything else stays out of git:
 
-For library code that wants checksummed downloads into a folder it controls —
-an OS-appropriate data dir, say — a **file-less database** skips the manifest
-entirely: no `Datasets.toml`, no state file, nothing written but the data. The
-folder accepts the same `$`-symbols as the storage model, e.g. `$user_data_dir`
-or `$user_cache_dir` (`raw"…"` keeps Julia from interpolating the `$`):
+- the downloaded data lives outside the repository (see above);
+- the `.datamanifest/` directory, which records where each file landed on
+  *this* machine (`state.toml`) and holds per-machine configuration, is
+  git-ignored automatically.
 
-```julia
-db = Database(datasets_folder=raw"$user_data_dir/mylib", persist=false)
-DataManifest.add(db, "https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"; name="co2")
-path = get_dataset_path(db, "co2")   # → ~/.local/share/mylib/gml.noaa.gov/…/co2_annmean_mlo.csv
-```
+A collaborator who clones your repository runs `download_datasets()` to fetch
+everything declared in the manifest.
 
-With a loader declared for the dataset (or its format), `load_dataset("co2")`
-returns the loaded object directly — see
-[per-language bindings](docs/language-bindings.md).
+## Loading datasets
 
-## Produce-or-load caching (`@cached`)
+`get_dataset_path` gives you a path; `load_dataset` goes one step further and
+returns the loaded object. For that, the dataset (or its file format) needs a
+**loader**: a reference to a Julia function, written as `"Module:function"` in
+the manifest. For example, with `csv = "CSV:read"` declared as a project-wide
+loader, `load_dataset("co2")` returns the parsed table directly. How loaders
+are declared and resolved is covered in
+[docs/language-bindings.md](docs/language-bindings.md).
 
-Cache the result of an expensive computation, keyed by its parameters:
+## Caching computed results (`@cached`)
+
+The same storage machinery can cache the result of an expensive computation,
+keyed by its parameters:
 
 ```julia
 using DataManifest
@@ -99,24 +98,49 @@ using DataManifest
 end
 
 load_anomaly(; grid="5x5")               # computes once, then loads from disk on repeat calls
-load_anomaly(; grid="5x5", cached=false) # escape hatch: run the body, no disk I/O
+load_anomaly(; grid="5x5", cached=false) # bypass the cache: run the body, no disk I/O
 ```
 
-Each distinct parameter combination is stored separately under the per-project
-cache (`$user_cache_dir/datamanifest/projects/$project/cached` by default),
-self-describing and reproducible across tools. Serialization is the
-zero-dependency `jls` built-in; register others (`nc`, `jld2`, …) with
-`DataManifest.Cache.register_format!`, and pass `version=` to deliberately bust
-the cache. Full behaviour — the cache key, artifact layout, `cachetype`
-identity: [docs/caching.md](docs/caching.md).
+Each distinct parameter combination is stored separately under a per-project
+cache directory (by default
+`$user_cache_dir/datamanifest/projects/$project/cached`), in a self-describing
+layout. Serialization defaults to the dependency-free `jls` built-in (Julia's
+standard `Serialization`); other formats (`nc`, `jld2`, …) can be registered
+with `DataManifest.Cache.register_format!`, and a `version=` argument lets you
+deliberately invalidate old results. The full behaviour — cache key, artifact
+layout, `cachetype` identity — is described in
+[docs/caching.md](docs/caching.md).
+
+## Choosing where data is stored
+
+Storage comes down to two folders: `datasets_dir` (fetched data) and
+`datacache_dir` (`@cached` results). The defaults are the machine-global
+shared store and the per-project cache described above; both can be changed,
+with `$`-symbols (placeholders like `$USER` expanded at resolution time) and
+per-host overrides. Set them in the committed `[_STORAGE]` section of the
+manifest, or per machine in the git-ignored `.datamanifest/config.toml` or in
+`~/.config/datamanifest/config.toml`:
+
+```toml
+[_STORAGE]
+datasets_dir = "datasets"                # repo-local layout, if you prefer it
+
+[_STORAGE._HOST."login*.hpc.edu"]
+datasets_dir = "/scratch/$USER/data"     # host-specific override
+```
+
+Path expressions, the order in which settings are resolved, per-dataset
+overrides, **read pools** (extra directories searched read-only, so a project
+can reuse data another project already fetched), and the state file that makes
+moved data recoverable are documented in [docs/storage.md](docs/storage.md).
 
 ## Manage your data from the shell
 
-DataManifest.jl ships no CLI of its own — it doesn't need one. The manifest is
-language-neutral, and the Python implementation's **`datamanifest`** CLI manages
-the same file (it auto-detects `Datasets.toml`): everything around the data —
-adding, listing, verifying, repairing, syncing — works from the shell, without
-touching your Julia code.
+DataManifest.jl has no command-line interface of its own. The manifest is
+language-neutral, and the Python implementation's `datamanifest` CLI manages
+the same file (it auto-detects `Datasets.toml`): adding, listing, verifying,
+repairing and syncing data all work from the shell, without touching your
+Julia code.
 
 ```bash
 pip install datamanifestpy
@@ -132,18 +156,20 @@ datamanifest storage              # where data goes on this host
 ```
 
 See the [Python README](https://github.com/perrette/datamanifest#readme) for
-the use cases and the [CLI reference](https://github.com/perrette/datamanifest/blob/main/docs/cli.md)
+the use cases and the
+[CLI reference](https://github.com/perrette/datamanifest/blob/main/docs/cli.md)
 for every command. The two tools also cooperate at fetch time: a dataset whose
-fetcher is written in Python is materialized by delegating to this same CLI
-(and the Python tool can delegate to Julia in turn) — see
+fetcher is written in Python is fetched by delegating to this CLI (and the
+Python tool can delegate to Julia in turn) — see
 [cross-language fetch](docs/language-bindings.md#the-ladders).
 
 ## One manifest, several languages
 
-A dataset can carry per-language `fetcher`/`loader` bindings under `_LANG` —
-`Module:function` references, never inline code. Each implementation runs its
-own and preserves the others verbatim, so one manifest serves a mixed
-Julia/Python project:
+A dataset can carry per-language bindings under a `_LANG` table: a
+**fetcher** (a function that downloads or produces the data) and a loader,
+each given as a `Module:function` reference — never inline code. Each
+implementation runs its own bindings and preserves the others verbatim, so
+one manifest serves a mixed Julia/Python project:
 
 ```toml
 [_LANG.julia.loaders]            # project-wide format → loader defaults
@@ -161,75 +187,77 @@ loader = "MyClimate:load_argo"   # per-dataset override
 loader = "myclimate.load:argo"   # Python's binding; Julia never touches it
 ```
 
-A single-language project can skip the `_LANG` ceremony with bare
-`fetcher` / `loader` / `shell` fields. Resolution ladders, parameterized
-bindings (`{ ref, args, kwargs }`), lazy access to object stores
-(`lazy_access`), and cross-language fetch:
+A single-language project can use bare `fetcher` / `loader` / `shell` fields
+instead of the `_LANG` table. Resolution order, parameterized bindings
+(`{ ref, args, kwargs }`), opening remote objects in place without downloading
+(`lazy_access`), and cross-language fetch are covered in
 [docs/language-bindings.md](docs/language-bindings.md).
 
-## Put data where you want it
+## Explicit and manifest-less databases
 
-Storage is two folders — `datasets_dir` (fetched data) and `datacache_dir`
-(`@cached` results) — defaulting to a machine-global shared store and a
-per-project cache (spec-v5), with `$`-symbols and per-host overrides for
-anything else. Set them in the committed `[_STORAGE]`, or per machine in the
-git-ignored `.datamanifest/config.toml` / `~/.config/datamanifest/config.toml`:
+The quick start relied on the activated Julia project to locate the manifest.
+You can instead build the `Database` object explicitly:
 
-```toml
-[_STORAGE]
-datasets_dir = "datasets"                # repo-local layout, if you prefer it
-
-[_STORAGE._HOST."login*.hpc.edu"]
-datasets_dir = "/scratch/$USER/data"     # host-specific override
+```julia
+db = Database("Datasets.toml", "my-data-folder")
+DataManifest.add(db, "https://…"; name="…")
+path = get_dataset_path(db, "co2")
 ```
 
-Path expressions, the resolution ladder, the config files, per-dataset
-overrides, read pools (reuse data another project already fetched), and the
-state file that makes moved data recoverable: [docs/storage.md](docs/storage.md).
+Library code that only wants checksummed downloads into a folder it controls
+can skip the manifest entirely with `persist=false`: no `Datasets.toml`, no
+state file, nothing written but the data. The folder accepts the same
+`$`-symbols as the storage configuration (`raw"…"` keeps Julia from
+interpolating the `$`):
+
+```julia
+db = Database(datasets_folder=raw"$user_data_dir/mylib", persist=false)
+DataManifest.add(db, "https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"; name="co2")
+path = get_dataset_path(db, "co2")   # → ~/.local/share/mylib/gml.noaa.gov/…/co2_annmean_mlo.csv
+```
 
 ## Documentation
 
 - [docs/doc.md](docs/doc.md) — the long-form walkthrough; [docs/api.md](docs/api.md) — the API.
-- [docs/language-bindings.md](docs/language-bindings.md) — `_LANG`, ladders, `lazy_access`, migration.
+- [docs/language-bindings.md](docs/language-bindings.md) — `_LANG`, resolution order, `lazy_access`.
 - [docs/storage.md](docs/storage.md) — storage model, read pools, state file, maintenance.
 - [docs/caching.md](docs/caching.md) — the `@cached` layer in full.
 
 ## Conformance
 
-This release targets the **datamanifest.toml spec tag `spec-v5`**
-(<https://github.com/perrette/datamanifest.toml>); a complete annotated example
-manifest lives there
+The manifest format is defined by a shared specification,
+[datamanifest.toml](https://github.com/perrette/datamanifest.toml) (currently
+tag `spec-v5.5`), common to this package and the sibling Python tool
+([`datamanifestpy`](https://pypi.org/project/datamanifestpy/) on PyPI). A
+complete annotated example manifest lives in the spec repository
 ([`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml)).
 Implemented capabilities: `lang-read`, `lang-write`, `shell-fetch`, `storage`,
-`binding-args`, `byte-identity`, `cache-produce`, `inspect`, `delegation`; only
-`sync` (cross-machine `push`/`pull`) is not yet implemented — use the Python CLI
-for that.
-
-## Roadmap
-
-Nothing at this point. After some time of usage and feedbacks, the roadmap will
-be updated, and eventually I'll make the v1.0.0 release.
+`binding-args`, `byte-identity`, `cache-produce`, `inspect`, `delegation`.
+Only `sync` (cross-machine `push`/`pull`) is not implemented — use the Python
+CLI for that.
 
 ## Related projects
 
-What sets DataManifest.jl apart is the **cross-language manifest**: it is one
-member of a multi-language *DataManifest family* built on a shared TOML schema,
-so the same `Datasets.toml` is read by sibling tools in other languages via the
-`_LANG` namespace — a Julia and a Python project can share one data declaration
-without stepping on each other. Configuration stays **declarative**: custom
-logic lives in *references to external Julia code* (`Module:function`) rather
-than code embedded in the config file. A casual user still writes three lines to
-register and fetch a dataset; the rest is there when a project needs it.
+DataManifest.jl is one member of a multi-language family built on the shared
+TOML schema: the same `Datasets.toml` is read by sibling tools in other
+languages via the `_LANG` namespace, so a Julia and a Python project can share
+one data declaration without stepping on each other. Configuration stays
+declarative: custom logic lives in references to external Julia code
+(`Module:function`) rather than code embedded in the config file.
 
-**The DataManifest family (one manifest, many languages):**
+**The DataManifest family:**
 
-- [`perrette/datamanifest.toml`](https://github.com/perrette/datamanifest.toml) — the shared TOML schema spec; the common contract every implementation reads.
+- [`perrette/datamanifest.toml`](https://github.com/perrette/datamanifest.toml) — the shared TOML schema; the common contract every implementation reads.
 - [`perrette/datamanifest`](https://github.com/perrette/datamanifest) — the Python implementation, sharing the same `Datasets.toml` via the `_LANG` namespace; also the home of the [CLI](#manage-your-data-from-the-shell).
 
-**Julia alternatives** (single-language). As a rule of thumb: if you only need code-driven download-and-checksum, DataDeps.jl is lighter; if you want a rich declarative data ecosystem, DataToolkit.jl is richer; DataManifest.jl targets multi-dataset, multi-language scientific projects that want the whole dependency declaration — and its derived-data cache — in one shareable file.
+**Julia alternatives** (single-language). As a rule of thumb: if you only need
+code-driven download-and-checksum, DataDeps.jl is lighter; if you want a rich
+declarative data ecosystem, DataToolkit.jl is richer; DataManifest.jl targets
+multi-dataset, multi-language scientific projects that want the whole
+dependency declaration — and its derived-data cache — in one shareable file.
 
 - [`DataDeps.jl`](https://github.com/oxinabox/DataDeps.jl) — download-on-first-access with checksum verification; registration lives in code rather than a manifest file (see [Issue #1](https://github.com/awi-esc/DataManifest.jl/issues/1) for a discussion).
-- [`DataToolkit.jl`](https://discourse.julialang.org/t/ann-datatoolkit-jl-reproducible-flexible-and-convenient-data-management/104757) — the most comparable: a rich, declarative data-management ecosystem with lazy loading and a broad driver set (the better fit for large driver sets and lazily-loaded web resources; it also allows in-config code via its meta `@syntax`, where DataManifest prefers refs to external code).
+- [`DataToolkit.jl`](https://discourse.julialang.org/t/ann-datatoolkit-jl-reproducible-flexible-and-convenient-data-management/104757) — the most comparable: a rich, declarative data-management ecosystem with lazy loading and a broad driver set (the better fit for large driver sets and lazily-loaded web resources; it also allows in-config code via its meta `@syntax`, where DataManifest prefers references to external code).
 - [`DrWatson.jl`](https://juliadynamics.github.io/DrWatson.jl/dev/) — broader scientific-project organization (simulations, file layout, naming), of which data handling is one part.
 - [`RemoteFiles.jl`](https://github.com/helgee/RemoteFiles.jl) — keep a local file in sync with a remote URL.
 - Pkg Artifacts (`Artifacts.toml`) — Julia's built-in TOML manifest of content-addressed, hash-pinned data/binary bundles tied to packages.
