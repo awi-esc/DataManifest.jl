@@ -24,6 +24,39 @@
   explicit `write(db, path; canonical=true|false)` overrides the environment
   either way.
 
+## [0.29.0] - 2026-06-11 — spec-v5.2: wait on lock contention (compute-once)
+
+Tracks datamanifest.toml **`spec-v5.2`** (lock contention: wait, heartbeat,
+bounded staleness). Concurrent workers — e.g. HPC jobs hitting the same
+`@cached` variation — now compute an artifact **once** and load it everywhere
+else, instead of the second worker crashing on the lock.
+
+### Changed
+
+- **Lock contention now waits (was: raise).** `materialize` takes the
+  `<target>.lock` pidfile via the stdlib `FileWatching.Pidfile`: the holder
+  refreshes the lock's mtime every `stale_age/2` (a heartbeat, so a live
+  holder's lock never goes stale however long the write takes), and a
+  contender **blocks** until the lock is released or goes stale. The previous
+  raise-on-contention behavior is available as `on_locked=:fail`, and
+  `on_locked=:proceed` (the Python tool's old behavior) writes without
+  exclusivity through process-private staging. A lock is reclaimed as stale
+  once its age exceeds `stale_age` (default 30s, `$DATAMANIFEST_LOCK_STALE_AGE`
+  overrides) AND its PID is dead on this host or the age exceeds 5×`stale_age`
+  (missed heartbeats: a holder crashed on another node, or frozen). A wrong
+  reclaim is safe by construction (staging + atomic rename + completion
+  marker): worst case duplicate work, never a partial entry.
+- **Recheck after acquiring (`skip_if`).** `materialize` accepts a
+  `skip_if(target)` predicate evaluated once the lock is acquired; the
+  `@cached` produce path passes its hit check, so a waiter loads what its peer
+  just published instead of recomputing, and the fetch path passes
+  `is_complete` (unless `overwrite`), so a waiter adopts a peer's download.
+- **Lock file format.** The pidfile now records `<pid> <hostname>` (the stdlib
+  `Pidfile` format, shared with the Python tool); legacy bare-PID locks are
+  still read (empty hostname = local).
+
+## [0.28.1] - 2026-06-11 — git worktrees share the main checkout's state file
+
 ### Fixed
 
 - **Linked `git worktree`s find the project's state file.** A worktree starts

@@ -1219,6 +1219,93 @@ try
         @test occursin("keyword-only", kwonly_err)
     end
 
+    @testset "materialize lock semantics (spec-v5.2)" begin
+        M = DataManifest.PipeLines
+        S = DataManifest.Storage
+
+        d = mktempdir()
+
+        # Baseline publish + skip_if: the recheck under the lock skips the write entirely.
+        t = joinpath(d, "obj.bin")
+        M.materialize(tmp -> write(tmp, "payload"), t)
+        @test read(t, String) == "payload"
+        @test S.is_complete(t)
+        @test !isfile(S.lock_path(t))
+        called = Ref(false)
+        M.materialize(t; skip_if=S.is_complete) do tmp
+            called[] = true
+            write(tmp, "clobber")
+        end
+        @test !called[]
+        @test read(t, String) == "payload"
+
+        # on_locked=:fail raises on a fresh lock held by a live foreign process (pid 1).
+        t2 = joinpath(d, "obj2.bin")
+        write(S.lock_path(t2), "1 $(gethostname())")
+        err = try
+            M.materialize(tmp -> write(tmp, "x"), t2; on_locked=:fail)
+            ""
+        catch e
+            sprint(showerror, e)
+        end
+        @test occursin("locked by another process", err)
+        rm(S.lock_path(t2))
+
+        # A stale lock (age > stale_age, dead PID) is reclaimed.
+        t3 = joinpath(d, "obj3.bin")
+        write(S.lock_path(t3), "999999999 $(gethostname())")
+        sleep(0.8)
+        M.materialize(tmp -> write(tmp, "y"), t3; on_locked=:fail, stale_age=0.5)
+        @test read(t3, String) == "y"
+
+        # on_locked=:proceed publishes via process-private staging under a live holder.
+        t4 = joinpath(d, "obj4.bin")
+        write(S.lock_path(t4), "1 $(gethostname())")
+        M.materialize(tmp -> write(tmp, "z"), t4; on_locked=:proceed)
+        @test read(t4, String) == "z"
+        @test S.is_complete(t4)
+        @test isfile(S.lock_path(t4))   # the foreign holder's lock was left untouched
+        rm(S.lock_path(t4))
+
+        # Default :wait + skip_if recheck — a contender blocks on the holder's lock, then
+        # adopts what the holder published instead of rewriting it.
+        t5 = joinpath(d, "obj5.bin")
+        ran = String[]
+        holder = @async M.materialize(t5) do tmp
+            push!(ran, "holder")
+            sleep(1.0)
+            write(tmp, "holder")
+        end
+        sleep(0.3)   # let the holder take the lock
+        waited = @elapsed M.materialize(t5; skip_if=S.is_complete) do tmp
+            push!(ran, "contender")
+            write(tmp, "contender")
+        end
+        wait(holder)
+        @test waited > 0.5            # actually blocked until the holder released
+        @test ran == ["holder"]       # the contender skipped after the recheck
+        @test read(t5, String) == "holder"
+
+        # @cached compute-once under contention: concurrent callers of the same variation
+        # wait on the producer, then load its artifact — the body runs exactly once.
+        cdir = mktempdir()
+        cidx = joinpath(cdir, ".datamanifest", "state.toml")
+        cusage = joinpath(cdir, "usage.toml")
+        ncalls = Ref(0)
+        @cached cachetype="concurrent_demo" key=(a -> (; a.n)) function concurrent_demo(;
+                n::Int=0, cache_dir=nothing, cached_toml=nothing)
+            ncalls[] += 1
+            sleep(0.8)
+            return n * 2
+        end
+        withenv("DATAMANIFEST_USAGE_LOG" => cusage) do
+            tasks = [@async concurrent_demo(; n=21, cache_dir=cdir, cached_toml=cidx)
+                     for _ in 1:3]
+            @test all(==(42), fetch.(tasks))
+            @test ncalls[] == 1
+        end
+    end
+
     @testset "Cache index + usage + inspect (state file)" begin
         C = DataManifest.Cache
 

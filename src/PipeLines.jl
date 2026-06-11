@@ -2,6 +2,8 @@
 module PipeLines
 
 import Downloads
+using FileWatching: Pidfile
+using FileWatching.Pidfile: mkpidlock, trymkpidlock
 using ..Config: info, COMPRESSED_FORMATS
 using ..Databases: DatasetEntry, Database, get_datasets, get_dataset_path, resolve_existing_path,
     resolve_from_pools, search_dataset, verify_checksum, record_dataset_state,
@@ -431,39 +433,46 @@ end
 
 # --- safe materialization -----------------------------------------------------
 
-# True if `pid` is a live process on this host (best-effort; assume alive when
-# unknown so we never clobber an active writer).
-function _pid_alive(pid::Integer)::Bool
-    try
-        if Sys.isunix()
-            return success(pipeline(`kill -0 $pid`; stdout=devnull, stderr=devnull))
-        end
-    catch
-    end
-    return true
-end
+# Default lock staleness age (seconds), spec-v5.2. The lock holder refreshes the pidfile's
+# mtime every `stale_age/2` (the stdlib Pidfile heartbeat), so a live holder's lock age
+# stays near zero however long the write takes. A lock is reclaimed as stale once its age
+# exceeds `stale_age` AND (its PID is dead on this host, or the age exceeds 5×`stale_age`
+# — a holder that missed many consecutive heartbeats on another node). With 30s: a crashed
+# same-host holder is picked up within ~30s, a cross-host frozen holder after ~2.5min.
+# Reclaiming a live holder's lock is safe by construction (staging + atomic rename +
+# completion marker): worst case is duplicate work, never a partial entry.
+const LOCK_STALE_AGE = 30.0
 
-# Acquire `lock` (a pidfile). A lock owned by a dead PID is reclaimed; one owned
-# by a live foreign PID raises (another process is materializing the same target).
-function _acquire_lock(lock::String)
-    if isfile(lock)
-        pid = tryparse(Int, strip(read(lock, String)))
-        if pid !== nothing && pid != getpid() && _pid_alive(pid)
-            error("Dataset target is locked by another process (pid $pid): $lock")
-        end
-        rm(lock; force=true)
-    end
-    write(lock, string(getpid()))
+# `$DATAMANIFEST_LOCK_STALE_AGE` overrides the default staleness age (cluster tuning).
+function _lock_stale_age(env=ENV)::Float64
+    v = tryparse(Float64, get(env, "DATAMANIFEST_LOCK_STALE_AGE", ""))
+    (v === nothing || v <= 0) ? LOCK_STALE_AGE : v
 end
 
 """
-    materialize(write_fn, target) -> target
+    materialize(write_fn, target; on_locked=:wait, stale_age=_lock_stale_age(),
+                skip_if=nothing) -> target
 
 Safely publish a dataset at `target`. `write_fn(tmp)` populates the staging path
 `tmp = <target>.tmp` (a file or a directory); on success it is atomically
 renamed onto `target` and a completion marker is created (`<target>/.complete`
-for a directory, `<target>.complete` for a file). A `<target>.lock` pidfile is
-held for the duration and removed afterwards.
+for a directory, `<target>.complete` for a file). A `<target>.lock` pidfile
+(recording `pid host`, mtime-refreshed every `stale_age/2` while held) is held
+for the duration and removed afterwards.
+
+When the lock is already held, `on_locked` decides (spec-v5.2):
+
+- `:wait` (default) — block until the holder releases it (or its lock goes
+  stale, see [`LOCK_STALE_AGE`](@ref)), then proceed.
+- `:fail` — raise immediately (the pre-0.29 behavior).
+- `:proceed` — go ahead without exclusivity, staging under a process-private
+  `<target>.tmp.<pid>` so concurrent writers never clobber each other's staging;
+  the last atomic rename wins.
+
+`skip_if(target)`, when given, is evaluated **after** the lock is acquired: if it
+returns `true` the write is skipped entirely and `target` is returned as-is —
+the recheck that lets a waiter adopt the entry its peer just published instead
+of recomputing it.
 
 A failed or interrupted `write_fn` leaves no marker and no published entry —
 only a stray `.tmp` — so the target is still treated as absent on the next load.
@@ -472,14 +481,39 @@ For back-compatibility with fetchers that write straight to `target` (e.g. the
 `rsync`/`file` schemes, which deposit the source basename into the parent dir),
 a `write_fn` that produced `target` directly (and no `tmp`) is accepted as-is.
 """
-function materialize(write_fn, target::AbstractString)
+function materialize(write_fn, target::AbstractString;
+                     on_locked::Symbol=:wait,
+                     stale_age::Real=_lock_stale_age(),
+                     skip_if=nothing)
+    on_locked in (:wait, :fail, :proceed) ||
+        throw(ArgumentError("materialize: on_locked must be :wait, :fail, or :proceed; got :$on_locked"))
     target = String(target)
     tmp = tmp_path(target)
     lock = lock_path(target)
     dir = dirname(target)
     !isempty(dir) && mkpath(dir)
-    _acquire_lock(lock)
+    monitor = nothing
+    if on_locked === :wait
+        monitor = mkpidlock(lock; stale_age=stale_age)
+    else
+        got = trymkpidlock(lock; stale_age=stale_age)
+        if got === false
+            if on_locked === :fail
+                pid, host, _ = Pidfile.parse_pidfile(lock)
+                error("Dataset target is locked by another process (pid $pid" *
+                      (isempty(host) ? "" : " on $host") * "): $lock")
+            end
+            # :proceed — no exclusivity; stage under a process-private path.
+            tmp = string(tmp, ".", getpid())
+        else
+            monitor = got
+        end
+    end
     try
+        # Recheck under the lock: a peer may have just published this very target.
+        if skip_if !== nothing && skip_if(target)
+            return target
+        end
         # Clear any stale staging artifact from a previous interrupted run.
         (isfile(tmp) || isdir(tmp)) && rm(tmp; force=true, recursive=true)
         write_fn(tmp)
@@ -490,7 +524,7 @@ function materialize(write_fn, target::AbstractString)
         end
         touch(marker_path(target))
     finally
-        rm(lock; force=true)
+        monitor === nothing || close(monitor)
     end
     return target
 end
@@ -740,7 +774,9 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
                 push!(req_paths_ordered, get_dataset_path(db, dep_entry; extract=extract !== nothing ? extract : dep_entry.extract))
             end
         end
-        materialize(download_path) do tmp
+        # On lock contention, wait for the peer fetching this same target; unless an
+        # explicit overwrite was requested, adopt what it published instead of re-fetching.
+        materialize(download_path; skip_if=(t -> !overwrite && is_complete(t))) do tmp
             _download_dataset(dataset, tmp; project_root=project_root, overwrite=overwrite,
                              required_paths_by_ref=req_paths_by_ref, required_paths_ordered=req_paths_ordered,
                              loaders_julia_modules=db.loaders_julia_modules, db=db)
