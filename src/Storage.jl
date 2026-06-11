@@ -47,15 +47,17 @@ using SHA
 export expand_path_expr, resolve_symbol, datasets_dir, datacache_dir, dataset_storage_path,
     datasets_pools, datacache_pools, user_state_dir, user_symbols, PREDEFINED_SYMBOLS,
     RESERVED_STORAGE_KEYS, POOL_DEFAULTS, legacy_data_root,
-    config_layers, local_config_path, user_config_path
+    config_layers, local_config_path, user_config_path,
+    canonical_write
 
 """Predefined `\$`-symbols (platform/project-resolved; never user-redefinable shadows)."""
 const PREDEFINED_SYMBOLS = ("user_data_dir", "user_cache_dir", "repo", "project")
 
 """Reserved `[_STORAGE]` keys that are NOT user-defined symbols (the folder fields, the read-pool
-list fields, the `project` name, and `_HOST`)."""
+list fields, the `project` name, the `canonical` write directive, and `_HOST`)."""
 const RESERVED_STORAGE_KEYS = ("datasets_dir", "datacache_dir",
-                               "datasets_pools", "datacache_pools", "project", "_HOST")
+                               "datasets_pools", "datacache_pools", "project", "canonical",
+                               "_HOST")
 
 """Built-in default field values (spec-v5: machine-global; relative ⇒ repo-relative)."""
 const _DEFAULT_DATASETS_DIR = "\$user_data_dir/datamanifest/shared/datasets"
@@ -211,10 +213,55 @@ every layer. Pass the result as `storage_config` to any resolver.
 function config_layers(storage_config::AbstractDict=Dict{String,Any}();
                        project_root::AbstractString="", env=ENV)::Vector{Dict{String,Any}}
     return Dict{String,Any}[
-        _read_config_file(local_config_path(project_root)),
+        _read_config_file(_locate_local_config(project_root)),
         Dict{String,Any}(storage_config),
         _read_config_file(user_config_path(env)),
     ]
+end
+
+# The checkout-config file to read for `project_root`: the project's own
+# `.datamanifest/config.toml` when present; in a linked `git worktree` without one, the
+# corresponding file in the **main checkout** (a worktree starts without the git-ignored
+# `.datamanifest/` directory, so worktrees share the per-checkout scope — the same
+# rationale as the spec-v5.1 state-file fallback). A config file present in the worktree
+# itself always wins.
+function _locate_local_config(project_root::AbstractString)::String
+    path = local_config_path(project_root)
+    (isempty(path) || isfile(path)) && return path
+    main = _main_checkout_dir(abspath(String(project_root)))
+    isempty(main) && return path
+    mainpath = local_config_path(main)
+    return isfile(mainpath) ? mainpath : path
+end
+
+"""
+    _main_checkout_dir(dir) -> String
+
+The directory in the **main checkout** corresponding to `dir` when `dir` lives inside a
+linked `git worktree`; `""` when `dir` is the main checkout itself, is not in a git
+repository, the main repository is bare, the mapped directory does not exist, or `git` is
+unavailable. Resolved by asking the `git` executable (the on-disk worktree layout is git
+internal), so any failure simply disables the fallback.
+"""
+function _main_checkout_dir(dir::AbstractString)::String
+    d = abspath(String(dir))
+    isdir(d) || return ""
+    out = try
+        read(pipeline(`git -C $d rev-parse --git-dir --git-common-dir --show-toplevel`;
+                      stderr=devnull), String)
+    catch e
+        e isa Union{Base.IOError,Base.ProcessFailedException,SystemError} || rethrow()
+        return ""
+    end
+    lines = split(strip(out), '\n')
+    length(lines) == 3 || return ""
+    # Relative outputs are relative to `d` (the `git -C` working directory).
+    gitdir, commondir, toplevel =
+        [normpath(isabspath(String(l)) ? String(l) : joinpath(d, String(l))) for l in lines]
+    gitdir == commondir && return ""            # main checkout (not a linked worktree)
+    basename(commondir) == ".git" || return ""  # bare main repository: no main checkout
+    mapped = normpath(joinpath(dirname(commondir), relpath(d, toplevel)))
+    return isdir(mapped) ? mapped : ""
 end
 
 # --- symbol discovery & resolution -------------------------------------------
@@ -267,6 +314,44 @@ function _ladder_value(name::AbstractString, storage_config::ConfigLike, env, ho
             return String(layer[name])
     end
     return nothing
+end
+
+# The raw, uncoerced ladder value for a scalar config field (env string first, then per
+# layer: `_HOST` glob → base, whatever TOML type the layer holds); `nothing` when
+# undefined. The scalar sibling of `_ladder_value`, whose String-coercing contract fits
+# path expressions only (a TOML number would not survive it).
+function _ladder_raw(name::AbstractString, storage_config::ConfigLike, env, host)
+    envkey = "DATAMANIFEST_$(uppercase(name))"
+    haskey(env, envkey) && !isempty(env[envkey]) && return String(env[envkey])
+    for layer in _layers(storage_config)
+        hosts = get(layer, "_HOST", nothing)
+        if hosts isa AbstractDict
+            for pat in sort(collect(keys(hosts)))  # deterministic
+                entry = hosts[pat]
+                (_glob_match(pat, host) && entry isa AbstractDict && haskey(entry, name)) &&
+                    return entry[name]
+            end
+        end
+        haskey(layer, name) && return layer[name]
+    end
+    return nothing
+end
+
+"""
+    canonical_write(; storage_config=Dict(), env=ENV, host=gethostname()) -> Bool
+
+The `canonical` manifest-write directive (default `false`) — opt in to piping every
+persisted manifest through the Python `datamanifest format` CLI for cross-tool
+byte-identical output. Resolved on the ordinary ladder: `DATAMANIFEST_CANONICAL` env →
+config layers (per layer: `_HOST` glob → base). The value may be a TOML boolean or a
+string; "1"/"true"/"yes"/"on" (case-insensitive) are truthy, anything else is false.
+"""
+function canonical_write(; storage_config::ConfigLike=Dict{String,Any}(), env=ENV,
+                         host::AbstractString=gethostname())::Bool
+    raw = _ladder_raw("canonical", storage_config, env, host)
+    raw === nothing && return false
+    raw isa Bool && return raw
+    return lowercase(strip(string(raw))) in ("1", "true", "yes", "on")
 end
 
 """

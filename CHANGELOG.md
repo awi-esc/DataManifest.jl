@@ -14,15 +14,29 @@
   nested tables) are TOML-library formatting with no stdlib knobs; use the
   canonical pipe below for byte-identical output.
 
-- **`DATAMANIFEST_CANONICAL=1` pipes every persisted manifest through the
-  Python CLI.** With the environment variable set (opt-in; `1`/`true`/`yes`/`on`,
-  case-insensitive), `write` defaults to the `canonical=true` behavior from
-  0.16.0: the manifest is piped through `datamanifest format` so Julia and
-  Python emit byte-identical files. The CLI is looked up next to the manifest
-  first (`<manifest dir>/.venv/bin/datamanifest`), then on `PATH`; when absent,
-  the native TOML is written and a warning is emitted once per session. An
-  explicit `write(db, path; canonical=true|false)` overrides the environment
-  either way.
+- **`canonical` config field pipes every persisted manifest through the Python
+  CLI.** A new opt-in directive on the ordinary resolution ladder —
+  `DATAMANIFEST_CANONICAL` env → checkout config (`.datamanifest/config.toml`)
+  → manifest `[_STORAGE]` → user config, within a layer `_HOST` glob before the
+  base value (`Storage.canonical_write`). When truthy (TOML `true`, or
+  `1`/`true`/`yes`/`on` case-insensitive), `write` defaults to the
+  `canonical=true` behavior from 0.16.0: the manifest is piped through
+  `datamanifest format` so Julia and Python emit byte-identical files. The CLI
+  is looked up next to the manifest first (`<manifest dir>/.venv/bin/datamanifest`,
+  falling through to the main checkout's `.venv` from a linked git worktree),
+  then on `PATH`; when absent, the native TOML is written and a warning is
+  emitted once per session. An explicit `write(db, path; canonical=true|false)`
+  overrides the ladder either way. `canonical` is a reserved `[_STORAGE]` key
+  (not a user symbol).
+
+- **Linked `git worktree`s read the main checkout's config file.** The
+  checkout-scope config lookup (`.datamanifest/config.toml`) now applies the
+  same worktree fallback as the spec-v5.1 state file: a worktree starts without
+  the git-ignored `.datamanifest/` directory, so when it has no config file of
+  its own and sits inside a linked worktree, `config_layers` reads the
+  corresponding file in the main checkout. A config file present in the
+  worktree itself always wins. (`Cache._main_checkout_dir` moved to
+  `Storage._main_checkout_dir`; the state-file behavior is unchanged.)
 
 ## [0.29.0] - 2026-06-11 — spec-v5.2: wait on lock contention (compute-once)
 

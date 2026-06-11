@@ -6,7 +6,8 @@ using URIs
 using ..Config: info, warn, sha256_path, hash_path, hashable_algo, get_extract_path, get_default_toml, DEFAULT_DATASETS_FOLDER_PATH,
     COMPRESSED_FORMATS, HIDE_STRUCT_FIELDS, project_root_from_paths
 using ..Storage: expand_path_expr, dataset_storage_path, datasets_dir, datacache_dir,
-    datasets_pools, legacy_data_root, is_complete, config_layers, ConfigLike
+    datasets_pools, legacy_data_root, is_complete, config_layers, ConfigLike,
+    canonical_write, _main_checkout_dir
 
 # ----- Types (DatasetEntry, Database) -----
 Base.@kwdef mutable struct DatasetEntry
@@ -431,24 +432,25 @@ function TOML.print(db::Database; sorted=true, by=_toml_sort_key, kwargs...)
 end
 
 # Locate the Python `datamanifest` CLI: the project-local venv next to the
-# manifest first (`<dir>/.venv/bin/datamanifest`), then PATH.
+# manifest first (`<dir>/.venv/bin/datamanifest`), then — when the manifest
+# sits inside a linked `git worktree`, which starts without the project's
+# `.venv` — the corresponding directory in the main checkout, then PATH.
 function _find_datamanifest_cli(datasets_toml::String)
     if datasets_toml != ""
         bindir = Sys.iswindows() ? "Scripts" : "bin"
         exename = Sys.iswindows() ? "datamanifest.exe" : "datamanifest"
-        venv_exe = joinpath(dirname(abspath(datasets_toml)), ".venv", bindir, exename)
+        dir = dirname(abspath(datasets_toml))
+        venv_exe = joinpath(dir, ".venv", bindir, exename)
         isfile(venv_exe) && return venv_exe
+        main = _main_checkout_dir(dir)
+        if main != ""
+            venv_exe = joinpath(main, ".venv", bindir, exename)
+            isfile(venv_exe) && return venv_exe
+        end
     end
     return Sys.which("datamanifest")
 end
 
-# Default `canonical` write mode from the environment (opt-in):
-# `DATAMANIFEST_CANONICAL=1` (or "true"/"yes"/"on", case-insensitive) pipes
-# every persisted manifest through the Python CLI; unset or anything else
-# keeps native output. An explicit `canonical=` keyword always wins.
-function _canonical_default()::Bool
-    return lowercase(get(ENV, "DATAMANIFEST_CANONICAL", "")) in ("1", "true", "yes", "on")
-end
 
 # Warn only once per session when DATAMANIFEST_CANONICAL is set but the CLI is
 # missing — persisting happens after every registration and would spam otherwise.
@@ -477,7 +479,11 @@ function write(db::Database, datasets_toml::String; canonical::Union{Bool,Nothin
         error("Failed to convert Database to TOML string.")
     end
     explicit = canonical !== nothing
-    if explicit ? canonical : _canonical_default()
+    # The configuration is anchored at the write target (its directory is the
+    # project root for the checkout-config lookup), not at db.datasets_toml —
+    # the two coincide on every internal persist path.
+    if explicit ? canonical : canonical_write(storage_config=config_layers(db.storage_config;
+            project_root=project_root_from_paths(datasets_toml, Base.current_project())))
         exe = _find_datamanifest_cli(datasets_toml)
         if exe === nothing
             if explicit || !_canonical_cli_missing_warned[]

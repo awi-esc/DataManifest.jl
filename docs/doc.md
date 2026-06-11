@@ -176,10 +176,16 @@ The output is sorted: structural `_*` tables (`_META`, `_LANG`, `_LOADERS`,
 `_STORAGE`) first, then datasets, both alphabetical — the same top-level order
 the Python tool writes. Formatting details (multi-line vs. inline arrays,
 indentation of nested tables) still differ between the two TOML libraries. For
-byte-identical files, pass `write(db, path; canonical=true)` or set
-`DATAMANIFEST_CANONICAL=1` to pipe every persisted manifest through the Python
-`datamanifest format` CLI; the CLI is looked up next to the manifest
-(`<manifest dir>/.venv/bin/datamanifest`) and then on `PATH`, and when it is
+byte-identical files, pass `write(db, path; canonical=true)` or set the
+`canonical` config field to pipe every persisted manifest through the Python
+`datamanifest format` CLI. `canonical` is resolved on the ordinary ladder —
+`DATAMANIFEST_CANONICAL` env var, the checkout config
+(`.datamanifest/config.toml`), the manifest `[_STORAGE]`, the user config
+(`~/.config/datamanifest/config.toml`), each with `_HOST` glob support — so
+e.g. `canonical = true` in the checkout config enables it for that project on
+that machine. The CLI is looked up next to the manifest
+(`<manifest dir>/.venv/bin/datamanifest`, falling through to the main
+checkout's `.venv` from a linked git worktree) and then on `PATH`; when it is
 absent the native TOML is written instead (with a warning).
 
 ## Checksum

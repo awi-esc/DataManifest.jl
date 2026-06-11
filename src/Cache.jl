@@ -26,7 +26,7 @@ using TOML
 using SHA
 using Dates
 using Serialization
-using ..Storage: datacache_dir, datacache_pools, config_layers, ConfigLike, is_complete, marker_path,
+using ..Storage: datacache_dir, datacache_pools, config_layers, ConfigLike, is_complete, marker_path, _main_checkout_dir,
     lock_path, tmp_path, user_state_dir
 using ..PipeLines: materialize
 
@@ -480,36 +480,6 @@ function _state_project_dir(b::AbstractString)::String
     d = dirname(String(b))
     basename(d) == PRIVATE_DIR_NAME && return dirname(d)
     return d
-end
-
-"""
-    _main_checkout_dir(dir) -> String
-
-The directory in the **main checkout** corresponding to `dir` when `dir` lives inside a
-linked `git worktree`; `""` when `dir` is the main checkout itself, is not in a git
-repository, the main repository is bare, the mapped directory does not exist, or `git` is
-unavailable. Resolved by asking the `git` executable (the on-disk worktree layout is git
-internal), so any failure simply disables the fallback.
-"""
-function _main_checkout_dir(dir::AbstractString)::String
-    d = abspath(String(dir))
-    isdir(d) || return ""
-    out = try
-        read(pipeline(`git -C $d rev-parse --git-dir --git-common-dir --show-toplevel`;
-                      stderr=devnull), String)
-    catch e
-        e isa Union{Base.IOError,Base.ProcessFailedException,SystemError} || rethrow()
-        return ""
-    end
-    lines = split(strip(out), '\n')
-    length(lines) == 3 || return ""
-    # Relative outputs are relative to `d` (the `git -C` working directory).
-    gitdir, commondir, toplevel =
-        [normpath(isabspath(String(l)) ? String(l) : joinpath(d, String(l))) for l in lines]
-    gitdir == commondir && return ""            # main checkout (not a linked worktree)
-    basename(commondir) == ".git" || return ""  # bare main repository: no main checkout
-    mapped = normpath(joinpath(dirname(commondir), relpath(d, toplevel)))
-    return isdir(mapped) ? mapped : ""
 end
 
 # The existing state file under `dir` (canonical or a legacy name), or `nothing`.

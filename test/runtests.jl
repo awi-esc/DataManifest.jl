@@ -163,6 +163,84 @@ try
         @test read_dataset(env_toml, datasets_dir; persist=false) == db
     end
 
+    @testset "canonical directive (config ladder + worktree routing)" begin
+        ST = DataManifest.Storage
+
+        # Ladder unit: TOML booleans and truthy strings; _HOST glob beats the
+        # base value within a layer; env beats every layer.
+        layers = [Dict{String,Any}("canonical" => false,
+                      "_HOST" => Dict{String,Any}("h*" => Dict{String,Any}("canonical" => true)))]
+        @test ST.canonical_write(storage_config=layers, env=Dict(), host="hpc1")
+        @test !ST.canonical_write(storage_config=layers, env=Dict(), host="other")
+        @test ST.canonical_write(storage_config=[Dict{String,Any}("canonical" => "yes")], env=Dict(), host="x")
+        @test !ST.canonical_write(storage_config=[Dict{String,Any}("canonical" => "off")], env=Dict(), host="x")
+        @test !ST.canonical_write(storage_config=Dict{String,Any}(), env=Dict(), host="x")
+        @test !ST.canonical_write(storage_config=layers,
+            env=Dict("DATAMANIFEST_CANONICAL" => "0"), host="hpc1")
+
+        # A fake `datamanifest` CLI that marks its output, so the tests can tell
+        # the canonical pipe ran without needing the real Python tool.
+        make_fake_cli(dir) = begin
+            bin = joinpath(dir, ".venv", "bin")
+            mkpath(bin)
+            exe = joinpath(bin, "datamanifest")
+            Base.write(exe, "#!/bin/sh\necho '# formatted-by-fake'\ncat\n")
+            chmod(exe, 0o755)
+            exe
+        end
+        new_db(folder) = begin
+            d = Database(datasets_folder=folder; persist=false)
+            register_dataset(d, "https://example.com/a.csv"; name="a",
+                skip_checksum=true, persist=false)
+            d
+        end
+
+        # `canonical = true` in the checkout config (.datamanifest/config.toml)
+        # turns the pipe on; the CLI is found in the project-local .venv.
+        proj = mktempdir(); xdg = mktempdir()  # isolate the user-global config
+        make_fake_cli(proj)
+        mkpath(joinpath(proj, ".datamanifest"))
+        Base.write(joinpath(proj, ".datamanifest", "config.toml"), "canonical = true\n")
+        withenv("DATAMANIFEST_CANONICAL" => nothing, "XDG_CONFIG_HOME" => xdg) do
+            target = joinpath(proj, "Datasets.toml")
+            write(new_db(mktempdir()), target)
+            @test startswith(read(target, String), "# formatted-by-fake")
+
+            # The environment beats the config layers: =0 forces native output.
+            withenv("DATAMANIFEST_CANONICAL" => "0") do
+                write(new_db(mktempdir()), target)
+                @test !startswith(read(target, String), "# formatted-by-fake")
+            end
+        end
+
+        # A linked git worktree starts without the project's .datamanifest/ and
+        # .venv: both the checkout-config lookup and the CLI lookup fall through
+        # to the corresponding paths in the main checkout.
+        repo = mktempdir()
+        run(`git -C $repo init -q -b main`)
+        run(`git -C $repo -c user.email=t@t -c user.name=t commit -q --allow-empty -m init`)
+        make_fake_cli(repo)
+        mkpath(joinpath(repo, ".datamanifest"))
+        Base.write(joinpath(repo, ".datamanifest", "config.toml"), "canonical = true\n")
+        wt = joinpath(repo, "wt")
+        run(`git -C $repo worktree add -q $wt`)
+        withenv("DATAMANIFEST_CANONICAL" => nothing, "XDG_CONFIG_HOME" => xdg,
+                "PATH" => "/usr/bin:/bin") do
+            target = joinpath(wt, "Datasets.toml")
+            write(new_db(mktempdir()), target)
+            @test startswith(read(target, String), "# formatted-by-fake")
+        end
+        # A config file present in the worktree itself wins over the main checkout's.
+        mkpath(joinpath(wt, ".datamanifest"))
+        Base.write(joinpath(wt, ".datamanifest", "config.toml"), "canonical = false\n")
+        withenv("DATAMANIFEST_CANONICAL" => nothing, "XDG_CONFIG_HOME" => xdg,
+                "PATH" => "/usr/bin:/bin") do
+            target = joinpath(wt, "Datasets.toml")
+            write(new_db(mktempdir()), target)
+            @test !startswith(read(target, String), "# formatted-by-fake")
+        end
+    end
+
     @testset "read pools (datasets_pools)" begin
         DB = DataManifest.Databases
         pooldir = mktempdir()
