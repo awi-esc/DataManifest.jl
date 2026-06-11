@@ -180,13 +180,13 @@ try
         @test !ST.canonical_write(storage_config=layers,
             env=Dict("DATAMANIFEST_CANONICAL" => "0"), host="hpc1")
 
-        # A ConfigSnapshot carries its own env/host: they replace the live
-        # defaults (deterministic resolution), while an explicitly passed
-        # env/host still wins (foreign-context resolution).
+        # A ConfigSnapshot is authoritative: its captured env/host replace
+        # the resolver inputs (a passed env/host is ignored) — another context
+        # gets its own snapshot instead.
         snap = ST.ConfigSnapshot([Dict{String,Any}()],
             Dict("DATAMANIFEST_CANONICAL" => "1"), "h")
         @test ST.canonical_write(storage_config=snap)
-        @test !ST.canonical_write(storage_config=snap, env=Dict())
+        @test ST.canonical_write(storage_config=snap, env=Dict())
         @test ST.canonical_write(storage_config=snap, host="other")
 
         # A fake `datamanifest` CLI that marks its output, so the tests can tell

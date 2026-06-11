@@ -90,15 +90,13 @@ _layers(sc::AbstractDict) = AbstractDict[sc]
 _layers(sc::AbstractVector) = AbstractDict[l for l in sc if l isa AbstractDict]
 _layers(sc::ConfigSnapshot) = _layers(sc.layers)
 
-# A snapshot's captured env/host replace the resolver's *defaults* (live ENV /
-# this host, signalled by `env === ENV` / an empty `host`); an explicitly
-# passed env/host still wins — a caller resolving in a foreign context (e.g. a
-# remote machine's probed environment) overrides the snapshot.
+# A snapshot is AUTHORITATIVE: its captured env/host replace the resolver
+# inputs, so every ladder lookup against it — environment rung included — is
+# deterministic for its lifetime. Resolving in another context (e.g. a remote
+# machine) means building that context's own snapshot, not overriding pieces
+# of this one.
 function _snapshot_env_host(sc, env, host)
-    if sc isa ConfigSnapshot
-        env === ENV && (env = sc.env)
-        isempty(host) && (host = sc.host)
-    end
+    sc isa ConfigSnapshot && return (sc.env, sc.host)
     isempty(host) && (host = gethostname())
     return (env, host)
 end

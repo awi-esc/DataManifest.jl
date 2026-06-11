@@ -14,12 +14,12 @@
   Database's lifetime; the per-call config-file re-reads and the worktree
   `git rev-parse` probe also leave the path-resolution hot path. Re-read the
   files and environment deliberately with `freeze_config!(db)` (exported). A
-  snapshot replaces only the resolvers' *defaults*: an explicitly passed
-  `env`/`host` still wins, so foreign-context resolution (a remote machine's
-  probed environment) is unaffected. Directly assigning `db.storage_config`
-  (or `db.datasets_toml`) invalidates the snapshot, which is re-frozen on next
-  use. Mirrors the Python tool, where the `ScopedConfig` built at Database
-  init now also carries the frozen env/host.
+  snapshot is authoritative — every resolution against it uses its captured
+  env/host; foreign-context resolution (e.g. a remote machine's
+  probed environment) builds its own snapshot. Directly assigning
+  `db.storage_config` (or `db.datasets_toml`) invalidates the snapshot, which
+  is re-frozen on next use. Mirrors the Python tool, where the `ScopedConfig`
+  built at Database init now also carries the frozen env/host.
 
 ## [0.30.0] - 2026-06-11 — spec-v5.4: `_*`-tables first, the `canonical` directive
 
