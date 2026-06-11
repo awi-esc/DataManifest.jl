@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **The configuration is frozen at Database materialization.** `Database` now
+  captures a `Storage.ConfigSnapshot` — the three file-backed layers (checkout
+  config, manifest `[_STORAGE]`, user config) **together with the environment
+  and host** — when it is materialized, and every resolution (the folder
+  fields, pools, symbols, `canonical`, `lock_stale_age`) runs against that
+  snapshot. The whole ladder, environment rung included, is evaluated against
+  load-time state, so each config variable has one well-defined value for the
+  Database's lifetime; the per-call config-file re-reads and the worktree
+  `git rev-parse` probe also leave the path-resolution hot path. Re-read the
+  files and environment deliberately with `freeze_config!(db)` (exported). A
+  snapshot replaces only the resolvers' *defaults*: an explicitly passed
+  `env`/`host` still wins, so foreign-context resolution (a remote machine's
+  probed environment) is unaffected. Directly assigning `db.storage_config`
+  (or `db.datasets_toml`) invalidates the snapshot, which is re-frozen on next
+  use. Mirrors the Python tool, where the `ScopedConfig` built at Database
+  init now also carries the frozen env/host.
+
 ## [0.30.0] - 2026-06-11 — spec-v5.4: `_*`-tables first, the `canonical` directive
 
 Tracks datamanifest.toml **`spec-v5.4`** (canonical ordering with structural

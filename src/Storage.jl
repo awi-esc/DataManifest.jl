@@ -48,7 +48,7 @@ export expand_path_expr, resolve_symbol, datasets_dir, datacache_dir, dataset_st
     datasets_pools, datacache_pools, user_state_dir, user_symbols, PREDEFINED_SYMBOLS,
     RESERVED_STORAGE_KEYS, POOL_DEFAULTS, legacy_data_root,
     config_layers, local_config_path, user_config_path,
-    canonical_write, lock_stale_age, DEFAULT_LOCK_STALE_AGE
+    canonical_write, lock_stale_age, DEFAULT_LOCK_STALE_AGE, ConfigSnapshot
 
 """Predefined `\$`-symbols (platform/project-resolved; never user-redefinable shadows)."""
 const PREDEFINED_SYMBOLS = ("user_data_dir", "user_cache_dir", "repo", "project")
@@ -63,13 +63,45 @@ const RESERVED_STORAGE_KEYS = ("datasets_dir", "datacache_dir",
 const _DEFAULT_DATASETS_DIR = "\$user_data_dir/datamanifest/shared/datasets"
 const _DEFAULT_DATACACHE_DIR = "\$user_cache_dir/datamanifest/projects/\$project/cached"
 
-"""A storage configuration: one `[_STORAGE]`-shaped dict, or a vector of them in precedence
-order (checkout config → manifest → user config; see [`config_layers`])."""
-const ConfigLike = Union{AbstractDict,AbstractVector}
+"""
+    ConfigSnapshot
+
+A **frozen** configuration: the file-backed layers (checkout config → manifest
+`[_STORAGE]` → user config) together with the environment and host they are resolved
+against, captured in one moment (at `Database` materialization — see
+`Databases.freeze_config!`). Accepted anywhere `storage_config` is: every resolver
+unwraps the embedded `env`/`host` in place of its live defaults, so each ladder lookup
+against a snapshot is deterministic for the snapshot's lifetime — the whole ladder,
+environment rung included, is evaluated against load-time state.
+"""
+struct ConfigSnapshot
+    layers::Vector{Dict{String,Any}}
+    env::Dict{String,String}
+    host::String
+end
+
+"""A storage configuration: one `[_STORAGE]`-shaped dict, a vector of them in precedence
+order (checkout config → manifest → user config; see [`config_layers`]), or a frozen
+[`ConfigSnapshot`]."""
+const ConfigLike = Union{AbstractDict,AbstractVector,ConfigSnapshot}
 
 # The configuration layers of `storage_config`, in precedence order.
 _layers(sc::AbstractDict) = AbstractDict[sc]
 _layers(sc::AbstractVector) = AbstractDict[l for l in sc if l isa AbstractDict]
+_layers(sc::ConfigSnapshot) = _layers(sc.layers)
+
+# A snapshot's captured env/host replace the resolver's *defaults* (live ENV /
+# this host, signalled by `env === ENV` / an empty `host`); an explicitly
+# passed env/host still wins — a caller resolving in a foreign context (e.g. a
+# remote machine's probed environment) overrides the snapshot.
+function _snapshot_env_host(sc, env, host)
+    if sc isa ConfigSnapshot
+        env === ENV && (env = sc.env)
+        isempty(host) && (host = sc.host)
+    end
+    isempty(host) && (host = gethostname())
+    return (env, host)
+end
 
 # --- glob matching (`*`, `?`) for `_HOST` patterns ---------------------------
 
@@ -298,6 +330,7 @@ end
 # _HOST glob → base), or `nothing` when none applies. The value is a path expression (not
 # yet expanded).
 function _ladder_value(name::AbstractString, storage_config::ConfigLike, env, host)
+    (env, host) = _snapshot_env_host(storage_config, env, host)
     envkey = "DATAMANIFEST_$(uppercase(name))"
     haskey(env, envkey) && !isempty(env[envkey]) && return String(env[envkey])
     for layer in _layers(storage_config)
@@ -321,6 +354,7 @@ end
 # undefined. The scalar sibling of `_ladder_value`, whose String-coercing contract fits
 # path expressions only (a TOML number would not survive it).
 function _ladder_raw(name::AbstractString, storage_config::ConfigLike, env, host)
+    (env, host) = _snapshot_env_host(storage_config, env, host)
     envkey = "DATAMANIFEST_$(uppercase(name))"
     haskey(env, envkey) && !isempty(env[envkey]) && return String(env[envkey])
     for layer in _layers(storage_config)
@@ -347,7 +381,8 @@ config layers (per layer: `_HOST` glob → base). The value may be a TOML boolea
 string; "1"/"true"/"yes"/"on" (case-insensitive) are truthy, anything else is false.
 """
 function canonical_write(; storage_config::ConfigLike=Dict{String,Any}(), env=ENV,
-                         host::AbstractString=gethostname())::Bool
+                         host::AbstractString="")::Bool
+    (env, host) = _snapshot_env_host(storage_config, env, host)
     raw = _ladder_raw("canonical", storage_config, env, host)
     raw === nothing && return false
     raw isa Bool && return raw
@@ -367,7 +402,8 @@ value may be a TOML number or a numeric string; an unparsable or non-positive va
 back to the default. See `PipeLines.materialize` for what the staleness age governs.
 """
 function lock_stale_age(; storage_config::ConfigLike=Dict{String,Any}(), env=ENV,
-                        host::AbstractString=gethostname())::Float64
+                        host::AbstractString="")::Float64
+    (env, host) = _snapshot_env_host(storage_config, env, host)
     raw = _ladder_raw("lock_stale_age", storage_config, env, host)
     raw === nothing && return DEFAULT_LOCK_STALE_AGE
     v = raw isa Real ? Float64(raw) : tryparse(Float64, strip(string(raw)))
@@ -385,8 +421,9 @@ non-predefined symbol is an error.
 """
 function resolve_symbol(name::AbstractString; project_root::AbstractString="",
                         storage_config::ConfigLike=Dict{String,Any}(), env=ENV,
-                        host::AbstractString=gethostname(),
+                        host::AbstractString="",
                         _seen::Set{String}=Set{String}())::String
+    (env, host) = _snapshot_env_host(storage_config, env, host)
     name = String(name)
     name in _seen && error("Storage symbol \$$name references itself (cycle) in [_STORAGE].")
     seen2 = union(_seen, Set([name]))
@@ -420,8 +457,9 @@ Expand a path expression: `\$NAME` / `\${NAME}` → the symbol `NAME` (predefine
 function expand_path_expr(expr::AbstractString;
                           project_root::AbstractString="",
                           storage_config::ConfigLike=Dict{String,Any}(),
-                          env=ENV, host::AbstractString=gethostname(),
+                          env=ENV, host::AbstractString="",
                           _seen::Set{String}=Set{String}())::String
+    (env, host) = _snapshot_env_host(storage_config, env, host)
     s = String(expr)
     known = Set{String}(PREDEFINED_SYMBOLS)
     union!(known, user_symbols(storage_config))
@@ -450,6 +488,7 @@ end
 # then expand symbols and resolve a relative result against the project root.
 function _field_dir(field::AbstractString, default::AbstractString;
                     project_root::AbstractString, storage_config::ConfigLike, env, host)::String
+    (env, host) = _snapshot_env_host(storage_config, env, host)
     raw = _ladder_value(field, storage_config, env, host)
     raw === nothing && (raw = default)
     p = expand_path_expr(raw; project_root=project_root, storage_config=storage_config,
@@ -467,7 +506,7 @@ a config-file / `[_STORAGE]` `datasets_dir` (host-composable via `_HOST`) — e.
 `datasets_dir = "datasets"` for the repo-local layout.
 """
 datasets_dir(; project_root::AbstractString="", storage_config::ConfigLike=Dict{String,Any}(),
-             env=ENV, host::AbstractString=gethostname())::String =
+             env=ENV, host::AbstractString="")::String =
     _field_dir("datasets_dir", _DEFAULT_DATASETS_DIR;
                project_root=project_root, storage_config=storage_config, env=env, host=host)
 
@@ -480,7 +519,7 @@ The resolved produced-cache folder (default the per-project
 via `_HOST`) — e.g. `datacache_dir = "cached"` for the repo-local layout.
 """
 datacache_dir(; project_root::AbstractString="", storage_config::ConfigLike=Dict{String,Any}(),
-              env=ENV, host::AbstractString=gethostname())::String =
+              env=ENV, host::AbstractString="")::String =
     _field_dir("datacache_dir", _DEFAULT_DATACACHE_DIR;
                project_root=project_root, storage_config=storage_config, env=env, host=host)
 
@@ -533,6 +572,7 @@ function _pools_raw(field::AbstractString, storage_config::ConfigLike, env, host
 end
 
 function _resolve_pools(field::AbstractString, defaults; project_root, storage_config, env, host)
+    (env, host) = _snapshot_env_host(storage_config, env, host)
     raw = _pools_raw(field, storage_config, env, host)
     # The built-in `$repo/datasets` default needs a project root; skip it when none is known.
     exprs = raw === nothing ?
@@ -561,7 +601,7 @@ config file; host-composable via `_HOST`, or `DATAMANIFEST_DATASETS_POOLS`) give
 Each entry is a path expression.
 """
 datasets_pools(; project_root::AbstractString="", storage_config::ConfigLike=Dict{String,Any}(),
-               env=ENV, host::AbstractString=gethostname())::Vector{String} =
+               env=ENV, host::AbstractString="")::Vector{String} =
     _resolve_pools("datasets_pools", POOL_DEFAULTS; project_root=project_root,
                    storage_config=storage_config, env=env, host=host)
 
@@ -576,7 +616,7 @@ carry no content checksum, only their identity + `config.toml` validation). An e
 likewise none.
 """
 datacache_pools(; project_root::AbstractString="", storage_config::ConfigLike=Dict{String,Any}(),
-                env=ENV, host::AbstractString=gethostname())::Vector{String} =
+                env=ENV, host::AbstractString="")::Vector{String} =
     _resolve_pools("datacache_pools", String[]; project_root=project_root,
                    storage_config=storage_config, env=env, host=host)
 
@@ -596,8 +636,9 @@ user-managed location used verbatim (maintenance never touches it).
 function dataset_storage_path(storage_path::AbstractString, key::AbstractString;
                               project_root::AbstractString="",
                               storage_config::ConfigLike=Dict{String,Any}(),
-                              env=ENV, host::AbstractString=gethostname(),
+                              env=ENV, host::AbstractString="",
                               datasets_folder::AbstractString="")::String
+    (env, host) = _snapshot_env_host(storage_config, env, host)
     expr = isempty(storage_path) ? "\$datasets_dir/\$key" : String(storage_path)
     ddir = isempty(datasets_folder) ?
         datasets_dir(; project_root=project_root, storage_config=storage_config,

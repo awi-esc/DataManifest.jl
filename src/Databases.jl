@@ -7,7 +7,7 @@ using ..Config: info, warn, sha256_path, hash_path, hashable_algo, get_extract_p
     COMPRESSED_FORMATS, HIDE_STRUCT_FIELDS, project_root_from_paths
 using ..Storage: expand_path_expr, dataset_storage_path, datasets_dir, datacache_dir,
     datasets_pools, legacy_data_root, is_complete, config_layers, ConfigLike,
-    canonical_write, _main_checkout_dir
+    ConfigSnapshot, canonical_write, _main_checkout_dir
 
 # ----- Types (DatasetEntry, Database) -----
 Base.@kwdef mutable struct DatasetEntry
@@ -306,6 +306,10 @@ mutable struct Database
     # Parsed copy of `[_STORAGE]` for the path resolver; verbatim copy stays in
     # `extra` for lossless round-trip. Empty when `[_STORAGE]` is absent.
     storage_config::Dict{String,Any}
+    # Frozen configuration snapshot (the full ladder inputs — file layers, env,
+    # host — captured at materialization by `freeze_config!`); `nothing` until
+    # then, frozen lazily on first use for a directly-constructed Database.
+    config::Union{ConfigSnapshot,Nothing}
 
     function Database(datasets::Dict{String,<:DatasetEntry},
             datasets_toml::String,
@@ -320,11 +324,21 @@ mutable struct Database
             extra::Dict{String,Any}=Dict{String,Any}(),
             schema::Union{Int,Nothing}=nothing,
             lang_julia_loaders::Dict{String,Any}=Dict{String,Any}(),
-            storage_config::Dict{String,Any}=Dict{String,Any}())
+            storage_config::Dict{String,Any}=Dict{String,Any}(),
+            config::Union{ConfigSnapshot,Nothing}=nothing)
         new(datasets, datasets_toml, datasets_folder, skip_checksum, skip_checksum_folders,
             loaders, loaders_julia_modules, loaders_julia_includes, loader_cache, loader_context_module,
-            extra, schema, lang_julia_loaders, storage_config)
+            extra, schema, lang_julia_loaders, storage_config, config)
     end
+end
+
+# Mutating a snapshot input (the manifest layer, or the manifest path that
+# anchors the checkout-config lookup) invalidates the frozen config; it is
+# re-frozen lazily on next use (see `freeze_config!`).
+function Base.setproperty!(db::Database, name::Symbol, value)
+    (name === :storage_config || name === :datasets_toml) &&
+        setfield!(db, :config, nothing)
+    return setfield!(db, name, convert(fieldtype(Database, name), value))
 end
 
 function Base.:(==)(db1::Database, db2::Database)
@@ -479,11 +493,7 @@ function write(db::Database, datasets_toml::String; canonical::Union{Bool,Nothin
         error("Failed to convert Database to TOML string.")
     end
     explicit = canonical !== nothing
-    # The configuration is anchored at the write target (its directory is the
-    # project root for the checkout-config lookup), not at db.datasets_toml —
-    # the two coincide on every internal persist path.
-    if explicit ? canonical : canonical_write(storage_config=config_layers(db.storage_config;
-            project_root=project_root_from_paths(datasets_toml, Base.current_project())))
+    if explicit ? canonical : canonical_write(storage_config=storage_layers(db))
         exe = _find_datamanifest_cli(datasets_toml)
         if exe === nothing
             if explicit || !_canonical_cli_missing_warned[]
@@ -581,10 +591,30 @@ function get_dataset_path(entry::DatasetEntry, datasets_folder::String=""; extra
         storage_config=storage_config, datasets_folder=datasets_folder)
 end
 
-# The database's full spec-v5 configuration chain: the checkout config
-# (.datamanifest/config.toml), the manifest's [_STORAGE], and the user-global config.
-storage_layers(db::Database) =
-    config_layers(db.storage_config; project_root=get_project_root(db))
+"""
+    freeze_config!(db) -> db
+
+Capture the database's configuration snapshot: the full resolution-ladder inputs —
+the checkout config (`.datamanifest/config.toml`), the manifest's `[_STORAGE]`, the
+user-global config, **and** the environment and host — frozen together. Runs at
+materialization, so every config variable has one well-defined value for the
+Database's lifetime; call it again to re-read the config files and environment for
+an existing Database.
+"""
+function freeze_config!(db::Database)
+    db.config = ConfigSnapshot(
+        config_layers(db.storage_config; project_root=get_project_root(db)),
+        Dict{String,String}(ENV),
+        gethostname())
+    return db
+end
+
+# The database's frozen configuration snapshot (the spec-v5 chain + env + host),
+# captured at materialization; frozen on first use for a directly-constructed db.
+function storage_layers(db::Database)::ConfigSnapshot
+    db.config === nothing && freeze_config!(db)
+    return db.config
+end
 
 function get_dataset_path(db::Database, entry::DatasetEntry; kwargs...)
     return get_dataset_path(entry, get_datasets_folder(db); project_root=get_project_root(db), storage_config=storage_layers(db), kwargs...)
@@ -1350,7 +1380,7 @@ function register_datasets(db::Database, datasets::Dict; kwargs...)
     end
     storage = get(datasets, "_STORAGE", nothing)
     if storage isa AbstractDict
-        db.storage_config = Dict{String,Any}(storage)
+        db.storage_config = Dict{String,Any}(storage)  # invalidates the frozen config
     end
     meta = get(datasets, "_META", nothing)
     if meta isa AbstractDict && haskey(meta, "schema") && meta["schema"] isa Integer
@@ -1408,6 +1438,7 @@ function Database(; datasets_toml::String="", datasets_folder::String="",
     if isfile(datasets_toml)
         register_datasets(db, datasets_toml; kwargs...)
     end
+    freeze_config!(db)
     return db
 end
 

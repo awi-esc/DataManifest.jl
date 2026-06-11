@@ -153,14 +153,16 @@ try
         headers = [m.captures[1] for m in eachmatch(r"^\[([^\]]+)\]"m, read(ord_toml, String))]
         @test headers == ["_META", "ZZZ", "aaa"]
 
-        # DATAMANIFEST_CANONICAL=1 opts in to the canonical pipe by default;
-        # when the Python CLI is absent it falls back to native output, so the
-        # write must succeed and round-trip either way.
+        # DATAMANIFEST_CANONICAL=1 opts in to the canonical pipe (the ladder is
+        # frozen at materialization, so the Database is built under the env it
+        # should see); when the Python CLI is absent it falls back to native
+        # output, so the write must succeed and round-trip either way.
         env_toml = joinpath(datasets_dir, "test_canonical_env.toml")
         withenv("DATAMANIFEST_CANONICAL" => "1") do
-            write(db, env_toml)
+            db_env = read_dataset(test_toml, datasets_dir; persist=false)
+            write(db_env, env_toml)
+            @test read_dataset(env_toml, datasets_dir; persist=false) == db_env
         end
-        @test read_dataset(env_toml, datasets_dir; persist=false) == db
     end
 
     @testset "canonical directive (config ladder + worktree routing)" begin
@@ -178,6 +180,15 @@ try
         @test !ST.canonical_write(storage_config=layers,
             env=Dict("DATAMANIFEST_CANONICAL" => "0"), host="hpc1")
 
+        # A ConfigSnapshot carries its own env/host: they replace the live
+        # defaults (deterministic resolution), while an explicitly passed
+        # env/host still wins (foreign-context resolution).
+        snap = ST.ConfigSnapshot([Dict{String,Any}()],
+            Dict("DATAMANIFEST_CANONICAL" => "1"), "h")
+        @test ST.canonical_write(storage_config=snap)
+        @test !ST.canonical_write(storage_config=snap, env=Dict())
+        @test ST.canonical_write(storage_config=snap, host="other")
+
         # A fake `datamanifest` CLI that marks its output, so the tests can tell
         # the canonical pipe ran without needing the real Python tool.
         make_fake_cli(dir) = begin
@@ -188,8 +199,12 @@ try
             chmod(exe, 0o755)
             exe
         end
-        new_db(folder) = begin
-            d = Database(datasets_folder=folder; persist=false)
+        # The snapshot freezes at materialization, anchored at the manifest
+        # path — so the Database must know its manifest (and be constructed
+        # under the env it should see).
+        new_db(folder, toml) = begin
+            isfile(toml) && rm(toml)  # fresh manifest each time; write() recreates it
+            d = Database(datasets_toml=toml, datasets_folder=folder)
             register_dataset(d, "https://example.com/a.csv"; name="a",
                 skip_checksum=true, persist=false)
             d
@@ -203,14 +218,33 @@ try
         Base.write(joinpath(proj, ".datamanifest", "config.toml"), "canonical = true\n")
         withenv("DATAMANIFEST_CANONICAL" => nothing, "XDG_CONFIG_HOME" => xdg) do
             target = joinpath(proj, "Datasets.toml")
-            write(new_db(mktempdir()), target)
+            write(new_db(mktempdir(), target), target)
             @test startswith(read(target, String), "# formatted-by-fake")
 
             # The environment beats the config layers: =0 forces native output.
             withenv("DATAMANIFEST_CANONICAL" => "0") do
-                write(new_db(mktempdir()), target)
+                write(new_db(mktempdir(), target), target)
                 @test !startswith(read(target, String), "# formatted-by-fake")
             end
+        end
+
+        # The snapshot is FROZEN at materialization: config-file edits and env
+        # changes after the Database is built do not apply to it;
+        # freeze_config! re-reads both.
+        proj2 = mktempdir()
+        make_fake_cli(proj2)
+        target2 = joinpath(proj2, "Datasets.toml")
+        db2 = withenv("DATAMANIFEST_CANONICAL" => nothing, "XDG_CONFIG_HOME" => xdg) do
+            new_db(mktempdir(), target2)
+        end
+        mkpath(joinpath(proj2, ".datamanifest"))
+        Base.write(joinpath(proj2, ".datamanifest", "config.toml"), "canonical = true\n")
+        withenv("DATAMANIFEST_CANONICAL" => "1", "XDG_CONFIG_HOME" => xdg) do
+            write(db2, target2)
+            @test !startswith(read(target2, String), "# formatted-by-fake")
+            freeze_config!(db2)
+            write(db2, target2)
+            @test startswith(read(target2, String), "# formatted-by-fake")
         end
 
         # A linked git worktree starts without the project's .datamanifest/ and
@@ -227,7 +261,7 @@ try
         withenv("DATAMANIFEST_CANONICAL" => nothing, "XDG_CONFIG_HOME" => xdg,
                 "PATH" => "/usr/bin:/bin") do
             target = joinpath(wt, "Datasets.toml")
-            write(new_db(mktempdir()), target)
+            write(new_db(mktempdir(), target), target)
             @test startswith(read(target, String), "# formatted-by-fake")
         end
         # A config file present in the worktree itself wins over the main checkout's.
@@ -236,7 +270,7 @@ try
         withenv("DATAMANIFEST_CANONICAL" => nothing, "XDG_CONFIG_HOME" => xdg,
                 "PATH" => "/usr/bin:/bin") do
             target = joinpath(wt, "Datasets.toml")
-            write(new_db(mktempdir()), target)
+            write(new_db(mktempdir(), target), target)
             @test !startswith(read(target, String), "# formatted-by-fake")
         end
     end

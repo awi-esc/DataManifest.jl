@@ -36,7 +36,7 @@ using .Databases: Database, DatasetEntry,
     register_dataset, register_datasets, register_loaders, validate_loader, validate_loaders,
     search_datasets, search_dataset,
     repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_keys,
-    verify_checksum, read_dataset, delete_dataset, add, migrate
+    verify_checksum, read_dataset, delete_dataset, add, migrate, freeze_config!
 using .PipeLines: download_dataset, download_datasets, load_dataset, get_project_root
 
 const add_dataset = add
@@ -76,7 +76,7 @@ act with [`delete_object`] / [`move_object`].
 function inspect_store(db::Databases.Database; cache_root::AbstractString="",
                        cached_toml::AbstractString="")::Vector{Cache.CacheObject}
     project_root = PipeLines.get_project_root(db)
-    sc = Storage.config_layers(db.storage_config; project_root=project_root)
+    sc = Databases.storage_layers(db)
     objects = Cache.CacheObject[]
 
     # Produced artifacts under the manifest's `datacache_dir` (spec-v4), tagged referenced via
@@ -123,7 +123,7 @@ export register_dataset, register_datasets, register_loaders, validate_loader, v
 export search_datasets, search_dataset
 export repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_keys
 export verify_checksum
-export read_dataset, delete_dataset
+export read_dataset, delete_dataset, freeze_config!
 export add, add_dataset
 export download_dataset, download_datasets
 export load_dataset
