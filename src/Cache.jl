@@ -1493,19 +1493,26 @@ function _run_cached(body::Function, cachetype::AbstractString, key_table;
         end
     end
     # Miss: register the produced variation in the project's state file (the liveness root for
-    # `inspect`) and stamp the usage log, then materialize with the back-pointer.
+    # `inspect`) and stamp the usage log, then materialize with the back-pointer. Under lock
+    # contention the default is to WAIT for the peer producing this same variation; once the
+    # lock is acquired the artifact is rechecked (spec-v5.2) — a waiter then loads what its
+    # peer just published instead of recomputing it.
     written_index = _register_produced(index_path;
         cachetype=cachetype, hash=h, storage_path=dir, ref=ref, format=ext, version=vstr)
+    artname = "$(basename).$(ext)"
+    hit = d -> is_complete(d) && config_is_valid(d) && isfile(joinpath(d, artname))
     local result
-    materialize(dir) do tmp
+    produced = false
+    materialize(dir; skip_if=hit) do tmp
         mkpath(tmp)
         result = body()
-        _produce_save(result, joinpath(tmp, "$(basename).$(ext)"), ext)
+        _produce_save(result, joinpath(tmp, artname), ext)
         write_config(tmp, key_table, cachetype; version=version, hash=h)
         write_metadata(tmp; cachetype=cachetype, extras=extras, project_root=ctx.project_root,
                        state_file=written_index)
+        produced = true
     end
-    return result
+    return produced ? result : _produce_load(joinpath(dir, artname), ext)
 end
 
 # ── @cached macro (non-normative ergonomic surface; ported from LGMIO) ─────────
@@ -1573,6 +1580,12 @@ and `format`; that index path is stamped into the depot usage log and the `metad
 
 **Produced datasets are keyword-only** — a function with positional arguments is rejected
 (a positional list has no stable name→value identity to hash).
+
+**Concurrency (spec-v5.2).** Concurrent processes producing the same variation serialize on
+a heartbeat-refreshed `.lock` pidfile: a contender **waits** for the holder, then re-checks
+the artifact and loads what the holder just published instead of recomputing — N workers
+hitting the same variation compute it once. See [`DataManifest.PipeLines.materialize`] for
+the lock/staleness rules.
 
 > **Note (spec-v3.7 conflict guard).** The spec's same-process `(cachetype, version)`
 > conflict guard is a SHOULD and is **intentionally omitted here**: Julia's top-level
