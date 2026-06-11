@@ -138,6 +138,29 @@ try
         write(db, canon_toml; canonical=true)
         @test isfile(canon_toml)
         @test read_dataset(canon_toml, datasets_dir; persist=false) == db
+
+        # Native key order matches the Python tool: structural `_*` tables
+        # first, then datasets, both alphabetical. A plain code-point sort
+        # would drop `_META` between upper- and lower-cased dataset names.
+        db_ord = Database(datasets_folder=datasets_dir; persist=false)
+        register_dataset(db_ord, "https://example.com/z.csv"; name="ZZZ",
+            skip_checksum=true, persist=false)
+        register_dataset(db_ord, "https://example.com/a.csv"; name="aaa",
+            skip_checksum=true, persist=false)
+        db_ord.extra["_META"] = Dict{String,Any}("schema" => 1)
+        ord_toml = joinpath(datasets_dir, "test_order.toml")
+        write(db_ord, ord_toml)
+        headers = [m.captures[1] for m in eachmatch(r"^\[([^\]]+)\]"m, read(ord_toml, String))]
+        @test headers == ["_META", "ZZZ", "aaa"]
+
+        # DATAMANIFEST_CANONICAL=1 opts in to the canonical pipe by default;
+        # when the Python CLI is absent it falls back to native output, so the
+        # write must succeed and round-trip either way.
+        env_toml = joinpath(datasets_dir, "test_canonical_env.toml")
+        withenv("DATAMANIFEST_CANONICAL" => "1") do
+            write(db, env_toml)
+        end
+        @test read_dataset(env_toml, datasets_dir; persist=false) == db
     end
 
     @testset "read pools (datasets_pools)" begin

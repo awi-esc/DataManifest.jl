@@ -1,6 +1,28 @@
 # Changelog
 
-## [0.28.1] - 2026-06-11 — git worktrees share the main checkout's state file
+## [Unreleased]
+
+### Changed
+
+- **Native manifest output orders `_*` tables first.** The Julia TOML
+  serialization now sorts top-level keys the same way the Python tool does —
+  structural `_*` tables (`_META`, `_LANG`, `_LOADERS`, `_STORAGE`) first,
+  then datasets, both alphabetical. Previously a plain code-point sort dropped
+  `_META` between the upper-cased and lower-cased dataset names, so rewriting
+  a Python-written manifest moved it to the middle of the file. Remaining
+  native-format differences (inline vs. multi-line arrays, indentation of
+  nested tables) are TOML-library formatting with no stdlib knobs; use the
+  canonical pipe below for byte-identical output.
+
+- **`DATAMANIFEST_CANONICAL=1` pipes every persisted manifest through the
+  Python CLI.** With the environment variable set (opt-in; `1`/`true`/`yes`/`on`,
+  case-insensitive), `write` defaults to the `canonical=true` behavior from
+  0.16.0: the manifest is piped through `datamanifest format` so Julia and
+  Python emit byte-identical files. The CLI is looked up next to the manifest
+  first (`<manifest dir>/.venv/bin/datamanifest`), then on `PATH`; when absent,
+  the native TOML is written and a warning is emitted once per session. An
+  explicit `write(db, path; canonical=true|false)` overrides the environment
+  either way.
 
 ### Fixed
 

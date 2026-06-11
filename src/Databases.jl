@@ -416,28 +416,51 @@ function Base.show(io::IO, ::MIME"text/plain", db::Database)
     end
 end
 
-function TOML.print(io::IO, db::Database; sorted=true, kwargs...)
-    return TOML.print(io, to_dict(db); sorted=sorted, kwargs...)
+# Canonical key order (matches the Python tool's `Database.write`): structural
+# `_*` tables (`_META`, `_LANG`, `_LOADERS`, `_STORAGE`) first, then datasets —
+# both alphabetical. A plain code-point sort would drop `_` (0x5F) *between*
+# the upper-cased / digit-named datasets and the lower-cased ones.
+_toml_sort_key(k) = (startswith(String(k), "_") ? 0 : 1, String(k))
+
+function TOML.print(io::IO, db::Database; sorted=true, by=_toml_sort_key, kwargs...)
+    return TOML.print(io, to_dict(db); sorted=sorted, by=by, kwargs...)
 end
 
-function TOML.print(db::Database; sorted=true, kwargs...)
-    return TOML.print(to_dict(db); sorted=sorted, kwargs...)
+function TOML.print(db::Database; sorted=true, by=_toml_sort_key, kwargs...)
+    return TOML.print(to_dict(db); sorted=sorted, by=by, kwargs...)
 end
+
+# Locate the Python `datamanifest` CLI: the project-local venv next to the
+# manifest first (`<dir>/.venv/bin/datamanifest`), then PATH.
+function _find_datamanifest_cli(datasets_toml::String)
+    if datasets_toml != ""
+        bindir = Sys.iswindows() ? "Scripts" : "bin"
+        exename = Sys.iswindows() ? "datamanifest.exe" : "datamanifest"
+        venv_exe = joinpath(dirname(abspath(datasets_toml)), ".venv", bindir, exename)
+        isfile(venv_exe) && return venv_exe
+    end
+    return Sys.which("datamanifest")
+end
+
+# Default `canonical` write mode from the environment (opt-in):
+# `DATAMANIFEST_CANONICAL=1` (or "true"/"yes"/"on", case-insensitive) pipes
+# every persisted manifest through the Python CLI; unset or anything else
+# keeps native output. An explicit `canonical=` keyword always wins.
+function _canonical_default()::Bool
+    return lowercase(get(ENV, "DATAMANIFEST_CANONICAL", "")) in ("1", "true", "yes", "on")
+end
+
+# Warn only once per session when DATAMANIFEST_CANONICAL is set but the CLI is
+# missing — persisting happens after every registration and would spam otherwise.
+const _canonical_cli_missing_warned = Ref(false)
 
 # Pipe a TOML string through the Python `datamanifest format` CLI to obtain the
 # canonical, cross-tool byte-identical serialization (the same recursive-sorted
-# `tomli_w` output the Python tool writes). Optional and graceful: if the peer
-# CLI is not on PATH, or the call fails, fall back to the native string — which
-# is *semantically* identical (same keys, same canonical order), differing only
-# in TOML-library formatting (indentation, blank lines, inline-vs-multiline
-# arrays) — with a warning.
-function _canonicalize_toml(toml_string::String)::String
-    exe = Sys.which("datamanifest")
-    if exe === nothing
-        warn("write(...; canonical=true): the `datamanifest` (Python) CLI was not found on PATH; " *
-             "writing native TOML (semantically identical; cross-tool byte-identity needs the peer CLI).")
-        return toml_string
-    end
+# `tomli_w` output the Python tool writes). Graceful: if the call fails, fall
+# back to the native string — which is *semantically* identical (same keys,
+# same canonical order), differing only in TOML-library formatting
+# (indentation, blank lines, inline-vs-multiline arrays) — with a warning.
+function _canonicalize_toml(toml_string::String, exe::String)::String
     try
         out = IOBuffer()
         run(pipeline(`$exe format`; stdin=IOBuffer(toml_string), stdout=out))
@@ -448,13 +471,24 @@ function _canonicalize_toml(toml_string::String)::String
     end
 end
 
-function write(db::Database, datasets_toml::String; canonical::Bool=false, kwargs...)
+function write(db::Database, datasets_toml::String; canonical::Union{Bool,Nothing}=nothing, kwargs...)
     toml_string = sprint(TOML.print, db; kwargs...)
     if (toml_string === nothing)
         error("Failed to convert Database to TOML string.")
     end
-    if canonical
-        toml_string = _canonicalize_toml(toml_string)
+    explicit = canonical !== nothing
+    if explicit ? canonical : _canonical_default()
+        exe = _find_datamanifest_cli(datasets_toml)
+        if exe === nothing
+            if explicit || !_canonical_cli_missing_warned[]
+                _canonical_cli_missing_warned[] = true
+                warn("canonical TOML output: the `datamanifest` (Python) CLI was found neither " *
+                     "next to the manifest (.venv) nor on PATH; writing native TOML " *
+                     "(semantically identical; cross-tool byte-identity needs the peer CLI).")
+            end
+        else
+            toml_string = _canonicalize_toml(toml_string, exe)
+        end
     end
     open(datasets_toml, "w") do io
         Base.write(io, toml_string)
@@ -1512,7 +1546,7 @@ function migrate(path::String)
     config["_META"] = meta_dict
 
     open(path, "w") do io
-        TOML.print(io, config; sorted=true)
+        TOML.print(io, config; sorted=true, by=_toml_sort_key)
     end
     info("migrate: wrote v1 manifest to $path")
     return nothing

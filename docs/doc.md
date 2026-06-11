@@ -172,6 +172,16 @@ When the database exists only in memory, it can nonetheless be written explicitl
 write(db, "Datasets.toml")
 ```
 
+The output is sorted: structural `_*` tables (`_META`, `_LANG`, `_LOADERS`,
+`_STORAGE`) first, then datasets, both alphabetical — the same top-level order
+the Python tool writes. Formatting details (multi-line vs. inline arrays,
+indentation of nested tables) still differ between the two TOML libraries. For
+byte-identical files, pass `write(db, path; canonical=true)` or set
+`DATAMANIFEST_CANONICAL=1` to pipe every persisted manifest through the Python
+`datamanifest format` CLI; the CLI is looked up next to the manifest
+(`<manifest dir>/.venv/bin/datamanifest`) and then on `PATH`, and when it is
+absent the native TOML is written instead (with a warning).
+
 ## Checksum
 
 By default, the sha-256 checksum is computed upon download, unless `Database.skip_checksum === false` or `DatasetEntry.skip_checksum === false`. If the checksum turns out to be
