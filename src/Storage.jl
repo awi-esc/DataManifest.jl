@@ -47,7 +47,8 @@ using SHA
 export expand_path_expr, resolve_symbol, datasets_dir, datacache_dir, dataset_storage_path,
     datasets_pools, datacache_pools, user_state_dir, user_symbols, PREDEFINED_SYMBOLS,
     RESERVED_STORAGE_KEYS, POOL_DEFAULTS, legacy_data_root,
-    config_layers, local_config_path, user_config_path
+    config_layers, local_config_path, user_config_path,
+    lock_stale_age, DEFAULT_LOCK_STALE_AGE
 
 """Predefined `\$`-symbols (platform/project-resolved; never user-redefinable shadows)."""
 const PREDEFINED_SYMBOLS = ("user_data_dir", "user_cache_dir", "repo", "project")
@@ -267,6 +268,47 @@ function _ladder_value(name::AbstractString, storage_config::ConfigLike, env, ho
             return String(layer[name])
     end
     return nothing
+end
+
+# The raw, uncoerced ladder value for a scalar config field (env string first, then per
+# layer: `_HOST` glob → base, whatever TOML type the layer holds); `nothing` when
+# undefined. The scalar sibling of `_ladder_value`, whose String-coercing contract fits
+# path expressions only (a TOML number would not survive it).
+function _ladder_raw(name::AbstractString, storage_config::ConfigLike, env, host)
+    envkey = "DATAMANIFEST_$(uppercase(name))"
+    haskey(env, envkey) && !isempty(env[envkey]) && return String(env[envkey])
+    for layer in _layers(storage_config)
+        hosts = get(layer, "_HOST", nothing)
+        if hosts isa AbstractDict
+            for pat in sort(collect(keys(hosts)))  # deterministic
+                entry = hosts[pat]
+                (_glob_match(pat, host) && entry isa AbstractDict && haskey(entry, name)) &&
+                    return entry[name]
+            end
+        end
+        haskey(layer, name) && return layer[name]
+    end
+    return nothing
+end
+
+"""Built-in lock staleness age in seconds (the `lock_stale_age` field default, spec-v5.3)."""
+const DEFAULT_LOCK_STALE_AGE = 30.0
+
+"""
+    lock_stale_age(; storage_config=Dict(), env=ENV, host=gethostname()) -> Float64
+
+The materialization-lock staleness age in seconds — the spec-v5.3 config field
+`lock_stale_age` (default 30), resolved on the ordinary ladder:
+`DATAMANIFEST_LOCK_STALE_AGE` env → config layers (per layer: `_HOST` glob → base). The
+value may be a TOML number or a numeric string; an unparsable or non-positive value falls
+back to the default. See `PipeLines.materialize` for what the staleness age governs.
+"""
+function lock_stale_age(; storage_config::ConfigLike=Dict{String,Any}(), env=ENV,
+                        host::AbstractString=gethostname())::Float64
+    raw = _ladder_raw("lock_stale_age", storage_config, env, host)
+    raw === nothing && return DEFAULT_LOCK_STALE_AGE
+    v = raw isa Real ? Float64(raw) : tryparse(Float64, strip(string(raw)))
+    return (v === nothing || !isfinite(v) || v <= 0) ? DEFAULT_LOCK_STALE_AGE : v
 end
 
 """

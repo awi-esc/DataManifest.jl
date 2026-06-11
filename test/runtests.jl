@@ -1200,6 +1200,21 @@ try
         M = DataManifest.PipeLines
         S = DataManifest.Storage
 
+        # spec-v5.3: the staleness age is the config field `lock_stale_age`, resolved on
+        # the ordinary ladder (env → config layers, `_HOST`-composable); TOML number or
+        # numeric string; unparsable / non-positive falls back to the default.
+        @test S.lock_stale_age(storage_config=Dict{String,Any}()) == 30.0
+        @test S.lock_stale_age(storage_config=Dict{String,Any}("lock_stale_age" => 7)) == 7.0
+        @test S.lock_stale_age(storage_config=Dict{String,Any}("lock_stale_age" => "8.5")) == 8.5
+        @test S.lock_stale_age(storage_config=Dict{String,Any}("lock_stale_age" => -5)) == 30.0
+        @test S.lock_stale_age(storage_config=Dict{String,Any}("lock_stale_age" => "junk")) == 30.0
+        @test S.lock_stale_age(storage_config=Dict{String,Any}(
+            "_HOST" => Dict{String,Any}(gethostname() => Dict{String,Any}("lock_stale_age" => 9)),
+            "lock_stale_age" => 7)) == 9.0   # _HOST glob beats the layer base
+        withenv("DATAMANIFEST_LOCK_STALE_AGE" => "3") do
+            @test S.lock_stale_age(storage_config=Dict{String,Any}("lock_stale_age" => 7)) == 3.0
+        end
+
         d = mktempdir()
 
         # Baseline publish + skip_if: the recheck under the lock skips the write entirely.

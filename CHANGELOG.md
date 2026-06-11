@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.29.2] - 2026-06-11 — spec-v5.3: `lock_stale_age` config field
+
+### Added
+
+- **The lock staleness age is the config field `lock_stale_age`** (seconds,
+  default 30), resolved on the ordinary scoped ladder —
+  `DATAMANIFEST_LOCK_STALE_AGE` env → `.datamanifest/config.toml` → manifest
+  `[_STORAGE]` → user config (`_HOST`-composable like any field; TOML number or
+  numeric string). `Storage.lock_stale_age` is the resolver; the produce
+  (`@cached`) and fetch paths resolve it with their full project config, and a
+  bare `materialize` call falls back to env + config files.
+
+### Fixed
+
+- **State-file staging name is task-unique.** `write_index` staged under
+  `state.toml.<pid>.tmp`, so two tasks of one process registering concurrently
+  (now a normal occurrence under wait-on-contention) could rename each other's
+  staging file away mid-write; the name now carries the task identity.
+
 ## [0.29.1] - 2026-06-11 — instant reclaim of long-stale locks
 
 ### Fixed

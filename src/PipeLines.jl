@@ -7,8 +7,10 @@ using FileWatching.Pidfile: mkpidlock, trymkpidlock
 using ..Config: info, COMPRESSED_FORMATS
 using ..Databases: DatasetEntry, Database, get_datasets, get_dataset_path, resolve_existing_path,
     resolve_from_pools, search_dataset, verify_checksum, record_dataset_state,
-    extract_file, get_project_root, get_default_database, parse_uri_metadata, _parse_binding
-using ..Storage: tmp_path, lock_path, marker_path, is_complete
+    extract_file, get_project_root, get_default_database, parse_uri_metadata, _parse_binding,
+    storage_layers
+using ..Storage: tmp_path, lock_path, marker_path, is_complete, config_layers,
+    lock_stale_age, DEFAULT_LOCK_STALE_AGE
 using ..DefaultLoaders: default_loader as builtin_default_loader
 
 _sanitize_ref(ref::String) = replace(replace(ref, '/' => '_'), '.' => '_')
@@ -433,24 +435,21 @@ end
 
 # --- safe materialization -----------------------------------------------------
 
-# Default lock staleness age (seconds), spec-v5.2. The lock holder refreshes the pidfile's
-# mtime every `stale_age/2` (the stdlib Pidfile heartbeat), so a live holder's lock age
-# stays near zero however long the write takes. A lock is reclaimed as stale once its age
-# exceeds `stale_age` AND (its PID is dead on this host, or the age exceeds 5×`stale_age`
-# — a holder that missed many consecutive heartbeats on another node). With 30s: a crashed
-# same-host holder is picked up within ~30s, a cross-host frozen holder after ~2.5min.
-# Reclaiming a live holder's lock is safe by construction (staging + atomic rename +
-# completion marker): worst case is duplicate work, never a partial entry.
-const LOCK_STALE_AGE = 30.0
-
-# `$DATAMANIFEST_LOCK_STALE_AGE` overrides the default staleness age (cluster tuning).
-function _lock_stale_age(env=ENV)::Float64
-    v = tryparse(Float64, get(env, "DATAMANIFEST_LOCK_STALE_AGE", ""))
-    (v === nothing || v <= 0) ? LOCK_STALE_AGE : v
-end
+# Lock staleness (spec-v5.2/v5.3). The lock holder refreshes the pidfile's mtime every
+# `stale_age/2` (the stdlib Pidfile heartbeat), so a live holder's lock age stays near
+# zero however long the write takes. A lock is reclaimed as stale once its age exceeds
+# `stale_age` AND (its PID is dead on this host, or the age exceeds 5×`stale_age` — a
+# holder that missed many consecutive heartbeats on another node). With the default 30s: a
+# crashed same-host holder is picked up within ~30s, a cross-host frozen holder after
+# ~2.5min. Reclaiming a live holder's lock is safe by construction (staging + atomic
+# rename + completion marker): worst case is duplicate work, never a partial entry.
+# The age is the config field `lock_stale_age`, resolved on the ordinary ladder
+# (`Storage.lock_stale_age`): the composition roots (fetch / produce) resolve it with
+# their full project config; the bare default here covers direct `materialize` calls
+# (env + cwd-checkout + user config, no manifest layer).
 
 """
-    materialize(write_fn, target; on_locked=:wait, stale_age=_lock_stale_age(),
+    materialize(write_fn, target; on_locked=:wait, stale_age=lock_stale_age(...),
                 skip_if=nothing) -> target
 
 Safely publish a dataset at `target`. `write_fn(tmp)` populates the staging path
@@ -463,7 +462,9 @@ for the duration and removed afterwards.
 When the lock is already held, `on_locked` decides (spec-v5.2):
 
 - `:wait` (default) — block until the holder releases it (or its lock goes
-  stale, see [`LOCK_STALE_AGE`](@ref)), then proceed.
+  stale: age beyond `stale_age` with a dead local PID, or beyond 5×`stale_age`
+  of missed heartbeats), then proceed. `stale_age` defaults to the spec-v5.3
+  config field `lock_stale_age` ([`Storage.lock_stale_age`], default 30s).
 - `:fail` — raise immediately (the pre-0.29 behavior).
 - `:proceed` — go ahead without exclusivity, staging under a process-private
   `<target>.tmp.<pid>` so concurrent writers never clobber each other's staging;
@@ -483,7 +484,7 @@ a `write_fn` that produced `target` directly (and no `tmp`) is accepted as-is.
 """
 function materialize(write_fn, target::AbstractString;
                      on_locked::Symbol=:wait,
-                     stale_age::Real=_lock_stale_age(),
+                     stale_age::Real=lock_stale_age(storage_config=config_layers()),
                      skip_if=nothing)
     on_locked in (:wait, :fail, :proceed) ||
         throw(ArgumentError("materialize: on_locked must be :wait, :fail, or :proceed; got :$on_locked"))
@@ -784,7 +785,8 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
         end
         # On lock contention, wait for the peer fetching this same target; unless an
         # explicit overwrite was requested, adopt what it published instead of re-fetching.
-        materialize(download_path; skip_if=(t -> !overwrite && is_complete(t))) do tmp
+        materialize(download_path; skip_if=(t -> !overwrite && is_complete(t)),
+                    stale_age=lock_stale_age(storage_config=storage_layers(db))) do tmp
             _download_dataset(dataset, tmp; project_root=project_root, overwrite=overwrite,
                              required_paths_by_ref=req_paths_by_ref, required_paths_ordered=req_paths_ordered,
                              loaders_julia_modules=db.loaders_julia_modules, db=db)
