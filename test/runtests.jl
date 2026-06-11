@@ -412,6 +412,65 @@ try
         end
     end
 
+    @testset "git worktree shared state file" begin
+        C = DataManifest.Cache
+        gitok = try success(pipeline(`git --version`; stdout=devnull, stderr=devnull))
+        catch; false end
+        if !gitok
+            @warn "git not available, skipping worktree state-file tests"
+        else
+            mktempdir() do tmp
+                git(args...) = run(pipeline(`git $(collect(args))`;
+                                            stdout=devnull, stderr=devnull))
+                main = joinpath(tmp, "main")
+                mkpath(joinpath(main, "sub"))
+                write(joinpath(main, "README"), "x\n")
+                write(joinpath(main, "sub", "file"), "x\n")
+                git("-C", main, "init", "-q")
+                git("-C", main, "add", "-A")
+                git("-C", main, "-c", "user.name=t", "-c", "user.email=t@t",
+                    "commit", "-q", "-m", "init")
+                wt = joinpath(tmp, "wt")
+                git("-C", main, "worktree", "add", "-q", wt)
+
+                # The main checkout is never redirected; the worktree maps onto it
+                # (subdirectories included).
+                @test C._main_checkout_dir(main) == ""
+                @test realpath(C._main_checkout_dir(wt)) == realpath(main)
+                @test realpath(C._main_checkout_dir(joinpath(wt, "sub"))) ==
+                      realpath(joinpath(main, "sub"))
+
+                # No state file anywhere: lookups in the worktree bind to the MAIN
+                # checkout's canonical path, so the first write lands in the shared
+                # inventory.
+                main_state = joinpath(C._main_checkout_dir(wt), C.STATE_FILE_NAME)
+                @test C.locate_state(wt) == main_state
+                idx = read_index_or_empty(wt)
+                @test idx.path == main_state
+                target = write_index(idx)
+                @test realpath(target) == realpath(joinpath(main, C.STATE_FILE_NAME))
+                @test !ispath(joinpath(wt, ".datamanifest"))
+
+                # The shared inventory is read back from the worktree.
+                write(joinpath(main, ".datamanifest", "state.toml"), """
+                [_META]
+                schema = 5
+                [datasets."ex.com/foo.nc"]
+                storage_path = "datasets/ex.com/foo.nc"
+                sha256 = "abc"
+                """)
+                idx = read_index_or_empty(wt)
+                @test C.dataset_path_of(idx, "ex.com/foo.nc") == "datasets/ex.com/foo.nc"
+
+                # A state file in the worktree itself always wins.
+                mkpath(joinpath(wt, ".datamanifest"))
+                local_state = joinpath(wt, ".datamanifest", "state.toml")
+                write(local_state, "[_META]\nschema = 5\n")
+                @test C.locate_state(wt) == local_state
+            end
+        end
+    end
+
     @testset "description roundtrip" begin
         db_d = Database(datasets_folder=datasets_dir; persist=false)
         descr = "Coretop-paired d18oc reference (Malevich 2019), reformatted to the Tierney LH schema."

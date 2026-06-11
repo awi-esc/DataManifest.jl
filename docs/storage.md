@@ -146,6 +146,15 @@ sibling) and `cached.toml` paths and the schema 1–4 forms are still read; the 
 relocates the file to the canonical `.datamanifest/state.toml` and migrates the shape
 forward.
 
+**Linked `git worktree`s share the main checkout's state file.** A worktree starts without
+the git-ignored `.datamanifest/` directory. When the project directory has no state file of
+its own and sits inside a linked worktree (`git worktree add`), lookups fall through to the
+corresponding directory in the main checkout — reads consult its inventory and writes update
+it, so all worktrees of a repository maintain one shared inventory. A state file present in
+the worktree itself always takes precedence (create one there to opt a worktree out). The
+main checkout is resolved by asking the `git` executable; when `git` is not installed, the
+main repository is bare, or the directory is not inside a worktree, lookups stay local.
+
 **Read-first resolution:** resolving where a fetched dataset lives consults the recorded
 `storage_path` first — if those bytes are present, a *moved* dataset is found where it really
 lives, ahead of the derived `$datasets_dir/$key` rule (a re-download still writes to the

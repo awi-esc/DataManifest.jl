@@ -483,25 +483,73 @@ function _state_project_dir(b::AbstractString)::String
 end
 
 """
+    _main_checkout_dir(dir) -> String
+
+The directory in the **main checkout** corresponding to `dir` when `dir` lives inside a
+linked `git worktree`; `""` when `dir` is the main checkout itself, is not in a git
+repository, the main repository is bare, the mapped directory does not exist, or `git` is
+unavailable. Resolved by asking the `git` executable (the on-disk worktree layout is git
+internal), so any failure simply disables the fallback.
+"""
+function _main_checkout_dir(dir::AbstractString)::String
+    d = abspath(String(dir))
+    isdir(d) || return ""
+    out = try
+        read(pipeline(`git -C $d rev-parse --git-dir --git-common-dir --show-toplevel`;
+                      stderr=devnull), String)
+    catch e
+        e isa Union{Base.IOError,Base.ProcessFailedException,SystemError} || rethrow()
+        return ""
+    end
+    lines = split(strip(out), '\n')
+    length(lines) == 3 || return ""
+    # Relative outputs are relative to `d` (the `git -C` working directory).
+    gitdir, commondir, toplevel =
+        [normpath(isabspath(String(l)) ? String(l) : joinpath(d, String(l))) for l in lines]
+    gitdir == commondir && return ""            # main checkout (not a linked worktree)
+    basename(commondir) == ".git" || return ""  # bare main repository: no main checkout
+    mapped = normpath(joinpath(dirname(commondir), relpath(d, toplevel)))
+    return isdir(mapped) ? mapped : ""
+end
+
+# The existing state file under `dir` (canonical or a legacy name), or `nothing`.
+function _existing_state_in(dir::AbstractString)::Union{String,Nothing}
+    canonical = joinpath(dir, STATE_FILE_NAME)
+    isfile(canonical) && return canonical
+    for legacy in _LEGACY_INDEX_NAMES
+        p = joinpath(dir, legacy)
+        isfile(p) && return p
+    end
+    return nothing
+end
+
+"""
     locate_state(base) -> String
 
 The state file to **read** at `base` (a directory or file path): the canonical
 `.datamanifest/state.toml` when present, else a legacy `.datamanifest-state.toml` /
 `cached.toml` sibling, else the canonical path (which may not exist). Lets callers find an
 inventory under any recognized name.
+
+Linked `git worktree`s share one inventory: a worktree starts without the (git-ignored)
+`.datamanifest/` directory, so when the project directory has no state file of its own and
+sits inside a linked worktree, the lookup falls through to the corresponding directory in the
+**main checkout** — both for reading and (via [`read_index_or_empty`] / [`write_index`]) as
+the write target. A state file present in the worktree itself always wins.
 """
 function locate_state(base::AbstractString)::String
     b = String(base)
     isfile(b) && return b
     d = _state_project_dir(b)
     isempty(d) && (d = ".")
-    canonical = joinpath(d, STATE_FILE_NAME)
-    isfile(canonical) && return canonical
-    for legacy in _LEGACY_INDEX_NAMES
-        p = joinpath(d, legacy)
-        isfile(p) && return p
+    found = _existing_state_in(d)
+    found === nothing || return found
+    main = _main_checkout_dir(d)
+    if !isempty(main)
+        found = _existing_state_in(main)
+        return found === nothing ? joinpath(main, STATE_FILE_NAME) : found
     end
-    return canonical
+    return joinpath(d, STATE_FILE_NAME)
 end
 
 # Populate `recipes` from a `datacache` namespace (schema 5) or top-level recipe tables
@@ -610,12 +658,19 @@ end
 Read the state file at `path` (canonical or legacy name), or an empty one bound to the
 canonical path when none exists. The index keeps the path it was actually read from, so the
 next [`write_index`] relocates a legacy-named file to the canonical
-`.datamanifest/state.toml`.
+`.datamanifest/state.toml`. In a linked `git worktree` without a state file of its own,
+[`locate_state`] redirects to the main checkout — the empty index is then bound there, so
+the first write also lands in the shared inventory.
 """
 function read_index_or_empty(path::AbstractString)::CachedIndex
     target = locate_state(path)
     isfile(target) && return read_index(target)
-    return CachedIndex(path=_index_canonical_path(path))
+    canonical = _index_canonical_path(path)
+    # A redirected target (linked worktree) belongs to a different project directory than
+    # `path` — bind the empty index there rather than to the local canonical path.
+    abspath(_state_project_dir(canonical)) == abspath(_state_project_dir(target)) ||
+        (canonical = target)
+    return CachedIndex(path=canonical)
 end
 
 # ----- produced recipes -----

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.28.1] - 2026-06-11 — git worktrees share the main checkout's state file
+
+### Fixed
+
+- **Linked `git worktree`s find the project's state file.** A worktree starts
+  without the git-ignored `.datamanifest/` directory, so state lookups used to come
+  up empty there. When the project directory has no state file of its own and sits
+  inside a linked worktree, `locate_state` now falls through to the corresponding
+  directory in the **main checkout** — both for reading and as the write target, so
+  all worktrees share one inventory. Detection asks the `git` executable
+  (`git rev-parse`); when `git` is unavailable, the repository is bare, or the
+  directory is not in a worktree, behavior is unchanged. A state file present in
+  the worktree itself always wins.
+
 ## [0.28.0] - 2026-06-10 — spec-v5: global defaults, scoped config, `.datamanifest/`
 
 Tracks datamanifest.toml **`spec-v5`** (storage v5, phase 1 — the spec-normative
