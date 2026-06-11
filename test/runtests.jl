@@ -1235,6 +1235,17 @@ try
         M.materialize(tmp -> write(tmp, "y"), t3; on_locked=:fail, stale_age=0.5)
         @test read(t3, String) == "y"
 
+        # Under the default :wait, an ALREADY-stale lock is reclaimed immediately —
+        # a contender arriving long after a crash must not wait another stale_age
+        # (the stdlib's blocking path alone would; the upfront non-blocking attempt
+        # short-circuits it).
+        t3b = joinpath(d, "obj3b.bin")
+        write(S.lock_path(t3b), "999999999 $(gethostname())")
+        sleep(1.2)                     # lock age is now well past stale_age=1.0
+        reclaim = @elapsed M.materialize(tmp -> write(tmp, "y2"), t3b; stale_age=1.0)
+        @test read(t3b, String) == "y2"
+        @test reclaim < 0.9            # reclaimed up front, not after a stale_age wait
+
         # on_locked=:proceed publishes via process-private staging under a live holder.
         t4 = joinpath(d, "obj4.bin")
         write(S.lock_path(t4), "1 $(gethostname())")

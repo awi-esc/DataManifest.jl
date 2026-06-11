@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.29.1] - 2026-06-11 — instant reclaim of long-stale locks
+
+### Fixed
+
+- **A lock already stale on arrival is reclaimed immediately under `:wait`.**
+  The stdlib `mkpidlock` blocking path runs its first staleness check only after
+  one full `stale_age` of waiting, so a contender arriving hours or days after a
+  holder crashed would still have waited 30s. `materialize` now makes a
+  non-blocking attempt first (which checks and reclaims stale locks up front)
+  and only falls back to the blocking wait on a fresh lock — i.e. a live holder,
+  or a crash within the last `stale_age` seconds (indistinguishable until the
+  heartbeat is missed).
+
 ## [0.29.0] - 2026-06-11 — spec-v5.2: wait on lock contention (compute-once)
 
 Tracks datamanifest.toml **`spec-v5.2`** (lock contention: wait, heartbeat,

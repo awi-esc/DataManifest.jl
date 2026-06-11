@@ -494,7 +494,15 @@ function materialize(write_fn, target::AbstractString;
     !isempty(dir) && mkpath(dir)
     monitor = nothing
     if on_locked === :wait
-        monitor = mkpidlock(lock; stale_age=stale_age)
+        # An already-stale lock (a holder that crashed long ago) is reclaimed
+        # IMMEDIATELY: the stdlib's blocking path only runs its first staleness check
+        # after one full `stale_age` of waiting, so try the non-blocking acquire (which
+        # checks and reclaims stale locks up front) before falling back to the wait.
+        # Only a lock fresher than `stale_age` — a live holder, or a crash within the
+        # last `stale_age` seconds (indistinguishable until the heartbeat is missed) —
+        # is actually waited on.
+        got = trymkpidlock(lock; stale_age=stale_age)
+        monitor = got === false ? mkpidlock(lock; stale_age=stale_age) : got
     else
         got = trymkpidlock(lock; stale_age=stale_age)
         if got === false
