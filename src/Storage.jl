@@ -48,7 +48,7 @@ export expand_path_expr, resolve_symbol, datasets_dir, datacache_dir, dataset_st
     datasets_pools, datacache_pools, user_state_dir, user_symbols, PREDEFINED_SYMBOLS,
     RESERVED_STORAGE_KEYS, POOL_DEFAULTS, legacy_data_root,
     config_layers, local_config_path, user_config_path,
-    canonical_write
+    canonical_write, lock_stale_age, DEFAULT_LOCK_STALE_AGE
 
 """Predefined `\$`-symbols (platform/project-resolved; never user-redefinable shadows)."""
 const PREDEFINED_SYMBOLS = ("user_data_dir", "user_cache_dir", "repo", "project")
@@ -352,6 +352,26 @@ function canonical_write(; storage_config::ConfigLike=Dict{String,Any}(), env=EN
     raw === nothing && return false
     raw isa Bool && return raw
     return lowercase(strip(string(raw))) in ("1", "true", "yes", "on")
+end
+
+"""Built-in lock staleness age in seconds (the `lock_stale_age` field default, spec-v5.3)."""
+const DEFAULT_LOCK_STALE_AGE = 30.0
+
+"""
+    lock_stale_age(; storage_config=Dict(), env=ENV, host=gethostname()) -> Float64
+
+The materialization-lock staleness age in seconds — the spec-v5.3 config field
+`lock_stale_age` (default 30), resolved on the ordinary ladder:
+`DATAMANIFEST_LOCK_STALE_AGE` env → config layers (per layer: `_HOST` glob → base). The
+value may be a TOML number or a numeric string; an unparsable or non-positive value falls
+back to the default. See `PipeLines.materialize` for what the staleness age governs.
+"""
+function lock_stale_age(; storage_config::ConfigLike=Dict{String,Any}(), env=ENV,
+                        host::AbstractString=gethostname())::Float64
+    raw = _ladder_raw("lock_stale_age", storage_config, env, host)
+    raw === nothing && return DEFAULT_LOCK_STALE_AGE
+    v = raw isa Real ? Float64(raw) : tryparse(Float64, strip(string(raw)))
+    return (v === nothing || !isfinite(v) || v <= 0) ? DEFAULT_LOCK_STALE_AGE : v
 end
 
 """

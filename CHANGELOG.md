@@ -1,6 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [0.30.0] - 2026-06-11 — spec-v5.4: `_*`-tables first, the `canonical` directive
+
+Tracks datamanifest.toml **`spec-v5.4`** (canonical ordering with structural
+`_*` tables first, the `canonical` config field, worktree config fallback).
 
 ### Changed
 
@@ -37,6 +40,38 @@
   corresponding file in the main checkout. A config file present in the
   worktree itself always wins. (`Cache._main_checkout_dir` moved to
   `Storage._main_checkout_dir`; the state-file behavior is unchanged.)
+
+## [0.29.2] - 2026-06-11 — spec-v5.3: `lock_stale_age` config field
+
+### Added
+
+- **The lock staleness age is the config field `lock_stale_age`** (seconds,
+  default 30), resolved on the ordinary scoped ladder —
+  `DATAMANIFEST_LOCK_STALE_AGE` env → `.datamanifest/config.toml` → manifest
+  `[_STORAGE]` → user config (`_HOST`-composable like any field; TOML number or
+  numeric string). `Storage.lock_stale_age` is the resolver; the produce
+  (`@cached`) and fetch paths resolve it with their full project config, and a
+  bare `materialize` call falls back to env + config files.
+
+### Fixed
+
+- **State-file staging name is task-unique.** `write_index` staged under
+  `state.toml.<pid>.tmp`, so two tasks of one process registering concurrently
+  (now a normal occurrence under wait-on-contention) could rename each other's
+  staging file away mid-write; the name now carries the task identity.
+
+## [0.29.1] - 2026-06-11 — instant reclaim of long-stale locks
+
+### Fixed
+
+- **A lock already stale on arrival is reclaimed immediately under `:wait`.**
+  The stdlib `mkpidlock` blocking path runs its first staleness check only after
+  one full `stale_age` of waiting, so a contender arriving hours or days after a
+  holder crashed would still have waited 30s. `materialize` now makes a
+  non-blocking attempt first (which checks and reclaims stale locks up front)
+  and only falls back to the blocking wait on a fresh lock — i.e. a live holder,
+  or a crash within the last `stale_age` seconds (indistinguishable until the
+  heartbeat is missed).
 
 ## [0.29.0] - 2026-06-11 — spec-v5.2: wait on lock contention (compute-once)
 

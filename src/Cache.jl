@@ -26,8 +26,8 @@ using TOML
 using SHA
 using Dates
 using Serialization
-using ..Storage: datacache_dir, datacache_pools, config_layers, ConfigLike, is_complete, marker_path, _main_checkout_dir,
-    lock_path, tmp_path, user_state_dir
+using ..Storage: datacache_dir, datacache_pools, config_layers, ConfigLike, is_complete, marker_path,
+    lock_path, tmp_path, user_state_dir, lock_stale_age, _main_checkout_dir
 using ..PipeLines: materialize
 
 export @cached, param_hash, cache_key, cached_dir,
@@ -883,7 +883,10 @@ function write_index(index::CachedIndex, path::AbstractString="")::String
             end
         end
     end
-    tmp = "$(target).$(getpid()).tmp"
+    # The staging name carries pid AND task identity: concurrent same-process writers
+    # (tasks racing on the same variation) must not share it — one's rename would take
+    # the other's staging file out from under it mid-write.
+    tmp = "$(target).$(getpid())-$(objectid(current_task())).tmp"
     open(tmp, "w") do io
         TOML.print(io, _index_to_dict(index); sorted=true)
     end
@@ -1372,7 +1375,7 @@ function save_cache(data, cachetype::AbstractString, key_table;
         _locate_cached_toml(cached_toml, ctx.project_root);
         cachetype=cachetype, hash=h, storage_path=dir, ref=ref, format=ext,
         version=(version === nothing ? "" : String(version)))
-    materialize(dir) do tmp
+    materialize(dir; stale_age=lock_stale_age(storage_config=ctx.storage_config)) do tmp
         mkpath(tmp)
         _produce_save(data, joinpath(tmp, "$(basename).$(ext)"), ext)
         write_config(tmp, key_table, cachetype; version=version, hash=h)
@@ -1473,7 +1476,8 @@ function _run_cached(body::Function, cachetype::AbstractString, key_table;
     hit = d -> is_complete(d) && config_is_valid(d) && isfile(joinpath(d, artname))
     local result
     produced = false
-    materialize(dir; skip_if=hit) do tmp
+    materialize(dir; skip_if=hit,
+                stale_age=lock_stale_age(storage_config=ctx.storage_config)) do tmp
         mkpath(tmp)
         result = body()
         _produce_save(result, joinpath(tmp, artname), ext)

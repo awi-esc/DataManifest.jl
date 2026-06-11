@@ -1301,6 +1301,21 @@ try
         M = DataManifest.PipeLines
         S = DataManifest.Storage
 
+        # spec-v5.3: the staleness age is the config field `lock_stale_age`, resolved on
+        # the ordinary ladder (env → config layers, `_HOST`-composable); TOML number or
+        # numeric string; unparsable / non-positive falls back to the default.
+        @test S.lock_stale_age(storage_config=Dict{String,Any}()) == 30.0
+        @test S.lock_stale_age(storage_config=Dict{String,Any}("lock_stale_age" => 7)) == 7.0
+        @test S.lock_stale_age(storage_config=Dict{String,Any}("lock_stale_age" => "8.5")) == 8.5
+        @test S.lock_stale_age(storage_config=Dict{String,Any}("lock_stale_age" => -5)) == 30.0
+        @test S.lock_stale_age(storage_config=Dict{String,Any}("lock_stale_age" => "junk")) == 30.0
+        @test S.lock_stale_age(storage_config=Dict{String,Any}(
+            "_HOST" => Dict{String,Any}(gethostname() => Dict{String,Any}("lock_stale_age" => 9)),
+            "lock_stale_age" => 7)) == 9.0   # _HOST glob beats the layer base
+        withenv("DATAMANIFEST_LOCK_STALE_AGE" => "3") do
+            @test S.lock_stale_age(storage_config=Dict{String,Any}("lock_stale_age" => 7)) == 3.0
+        end
+
         d = mktempdir()
 
         # Baseline publish + skip_if: the recheck under the lock skips the write entirely.
@@ -1335,6 +1350,17 @@ try
         sleep(0.8)
         M.materialize(tmp -> write(tmp, "y"), t3; on_locked=:fail, stale_age=0.5)
         @test read(t3, String) == "y"
+
+        # Under the default :wait, an ALREADY-stale lock is reclaimed immediately —
+        # a contender arriving long after a crash must not wait another stale_age
+        # (the stdlib's blocking path alone would; the upfront non-blocking attempt
+        # short-circuits it).
+        t3b = joinpath(d, "obj3b.bin")
+        write(S.lock_path(t3b), "999999999 $(gethostname())")
+        sleep(1.2)                     # lock age is now well past stale_age=1.0
+        reclaim = @elapsed M.materialize(tmp -> write(tmp, "y2"), t3b; stale_age=1.0)
+        @test read(t3b, String) == "y2"
+        @test reclaim < 0.9            # reclaimed up front, not after a stale_age wait
 
         # on_locked=:proceed publishes via process-private staging under a live holder.
         t4 = joinpath(d, "obj4.bin")
