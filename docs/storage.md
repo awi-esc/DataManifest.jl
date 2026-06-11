@@ -68,9 +68,22 @@ match wins; within each file a `_HOST` glob match beats the base value):
 > `[_STORAGE._HOST.<glob>]` → manifest `[_STORAGE]` →
 > `~/.config/datamanifest/config.toml` → the built-in default.
 
-In the API, `Storage.config_layers(db.storage_config; project_root=…)` builds the chain;
-every resolver (`datasets_dir`, `datacache_dir`, `resolve_symbol`, the pools) accepts either
-a single `[_STORAGE]` dict or that vector of layers as `storage_config`.
+In a linked `git worktree` without a `.datamanifest/config.toml` of its own, the checkout
+rung reads the **main checkout's** file (the same fallback, for the same reason, as the
+state file); a worktree-local config file always wins. Besides paths and symbols, scalar
+**directives** ride the same ladder: `canonical` (boolean — byte-identical manifest output,
+see [the main page](doc.md)) and `lock_stale_age` (seconds).
+
+In the API, the ladder is **frozen at Database materialization**: the `Database` captures a
+`Storage.ConfigSnapshot` — the three file-backed layers *together with* the environment and
+host — so every config variable has one well-defined value for the Database's lifetime.
+`freeze_config!(db)` re-reads the files and environment deliberately; assigning
+`db.storage_config` or `db.datasets_toml` invalidates the snapshot (re-frozen on next use).
+Every resolver (`datasets_dir`, `datacache_dir`, `resolve_symbol`, the pools) accepts a
+single `[_STORAGE]` dict, a vector of layers (`Storage.config_layers`), or a frozen
+snapshot as `storage_config`. A snapshot is authoritative — its captured env/host replace
+the resolver's inputs; resolving in another context (e.g. a remote machine) means building
+that context's own snapshot.
 
 **Per-dataset `storage_path`.** A dataset's `storage_path` is a path expression (default
 `$datasets_dir/$key`) that **replaces both the old `store` selector and `local_path`**:

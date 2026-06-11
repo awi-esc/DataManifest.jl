@@ -1,0 +1,1731 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Keep track of the datasets used in a scientific project — declare, download, verify, cache, share">
+      
+      
+      
+        <link rel="canonical" href="https://awi-esc.github.io/DataManifest.jl/doc/">
+      
+      
+        <link rel="prev" href="../quickstart/">
+      
+      
+        <link rel="next" href="../caching/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Walkthrough - DataManifest.jl</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#documentation" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="DataManifest.jl" class="md-header__button md-logo" aria-label="DataManifest.jl" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            DataManifest.jl
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Walkthrough
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/awi-esc/DataManifest.jl" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    awi-esc/DataManifest.jl
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="DataManifest.jl" class="md-nav__button md-logo" aria-label="DataManifest.jl" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    DataManifest.jl
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/awi-esc/DataManifest.jl" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    awi-esc/DataManifest.jl
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quick start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Walkthrough
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Walkthrough
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#working-from-an-existing-data-manifest-datasetstoml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Working from an existing data "manifest" Datasets.toml:
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#downloading-the-data-and-accessing-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Downloading the data and accessing files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-naming-on-disk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data naming on disk
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#storage-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Storage model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#produce-or-load-caching-cached" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Produce-or-load caching (@cached)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#maintaining-a-local-datasetstoml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maintaining a local Datasets.toml
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checksum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checksum
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#archives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Archives
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#uri" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        URI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multiple-uris-uris" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multiple URIs (uris)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user-managed-local-files-local_path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User-managed local files (local_path)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-v1-and-the-_lang-namespace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schema v1 and the _LANG namespace
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema v1 and the _LANG namespace">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#resolution-ladders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resolution ladders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#v0-v1-split-for-inline-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v0 / v1 split for inline code
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-language-round-trip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-language round-trip
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migrating-a-v0-manifest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Migrating a v0 manifest
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parameterized-bindings-ref-args-kwargs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameterized bindings ({ ref, args, kwargs })
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verify-once-integrity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verify-once integrity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shell-julia-download-commands-v0-legacy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shell / Julia download commands (v0 / legacy)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#loading-datasets-load_dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Loading datasets (load_dataset)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#database-level-loaders-_loaders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Database-level loaders ([_LOADERS])
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#low-level-declarative-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Low-level declarative syntax
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Structure
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../caching/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Produce-or-load caching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../language-bindings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Per-language bindings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Manage your data from the shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#working-from-an-existing-data-manifest-datasetstoml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Working from an existing data "manifest" Datasets.toml:
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#downloading-the-data-and-accessing-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Downloading the data and accessing files
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-naming-on-disk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data naming on disk
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#storage-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Storage model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#produce-or-load-caching-cached" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Produce-or-load caching (@cached)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#maintaining-a-local-datasetstoml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maintaining a local Datasets.toml
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checksum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checksum
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#archives" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Archives
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#uri" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        URI
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multiple-uris-uris" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multiple URIs (uris)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user-managed-local-files-local_path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User-managed local files (local_path)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-v1-and-the-_lang-namespace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schema v1 and the _LANG namespace
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema v1 and the _LANG namespace">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#resolution-ladders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resolution ladders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#v0-v1-split-for-inline-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v0 / v1 split for inline code
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-language-round-trip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-language round-trip
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#migrating-a-v0-manifest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Migrating a v0 manifest
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parameterized-bindings-ref-args-kwargs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parameterized bindings ({ ref, args, kwargs })
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verify-once-integrity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verify-once integrity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shell-julia-download-commands-v0-legacy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shell / Julia download commands (v0 / legacy)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#loading-datasets-load_dataset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Loading datasets (load_dataset)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#database-level-loaders-_loaders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Database-level loaders ([_LOADERS])
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#low-level-declarative-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Low-level declarative syntax
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Structure
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/awi-esc/DataManifest.jl/edit/main/doc.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h1>
+<p>Be sure you checked the <a href="https://github.com/awi-esc/DataManifest.jl/blob/main/README.md">README</a> first.</p>
+<h2 id="working-from-an-existing-data-manifest-datasetstoml">Working from an existing data "manifest" <code>Datasets.toml</code>:<a class="headerlink" href="#working-from-an-existing-data-manifest-datasetstoml" title="Permanent link">&para;</a></h2>
+<p>Here is the most straightforward use. Have a <code>Datasets.toml</code> file with the following content:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[herzschuh2023]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">doi</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;10.1594/PANGAEA.930512&quot;</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">uri</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip&quot;</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">extract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="k">[jonkers2024]</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">doi</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;10.1594/PANGAEA.962852&quot;</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">uri</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv&quot;</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="k">[jesstierney</span><span class="err">/</span><span class="k">lgmDA]</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="n">uri</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip&quot;</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">extract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="k">[CMIP6_lgm_tos]</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="n">uri</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;ssh://albedo1.dmawi.de:/albedo/work/projects/p_pool_clim_data/Paleodata/Tierney2020/LGM/recipe_cmip6_lgm_tos_20241114_151009/preproc/lgm/tos_CLIM&quot;</span>
+</code></pre></div>
+<p>just read via the <code>DataManifest.Database</code> class (or alias <code>DataManifest.read</code>), download via <code>download_dataset</code> or <code>download_datasets</code></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">using</span><span class="w"> </span><span class="n">DataManifest</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">db</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Database</span><span class="p">(</span><span class="s">&quot;Datasets.toml&quot;</span><span class="p">)</span><span class="w"> </span><span class="c"># or Database(&quot;Datasets.toml&quot;, expanduser(&quot;~/datasets&quot;))</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Database(
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  datasets=Dict(
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    CMIP6_lgm_tos =&gt; DatasetEntry(uri=&quot;ssh:/albedo1.dmawi.de:/albedo/work/projects...),
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    herzschuh2023 =&gt; DatasetEntry(uri=&quot;https:/doi.pangaea.de/10.1594...),
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    jonkers2024 =&gt; DatasetEntry(uri=&quot;https:/download.pangaea.de/dataset/962852/files...),
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    tierney2020 =&gt; DatasetEntry(uri=&quot;https:/github.com/jesstierney/lgmDA/archive/refs...),
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>  ),
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>  datasets_folder=&quot;/home/perrette/.cache/Datasets&quot;
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>  datasets_toml=&quot;/abs/path/to/Datasets.toml&quot;
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>)
+</code></pre></div>
+<p>If you're working in a julia's environment with a <code>Project.toml</code> properly activated (via <code>julia --project</code> or <code>Pkg.activate(...)</code>), the default behaviour is to assume a <code>Datasets.toml</code> exists next to <code>Project.toml</code>. Note that <code>datasets.toml</code> and <code>DataManifest.toml</code> are also supported, if they exist.</p>
+<h2 id="downloading-the-data-and-accessing-files">Downloading the data and accessing files<a class="headerlink" href="#downloading-the-data-and-accessing-files" title="Permanent link">&para;</a></h2>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">download_dataset</span><span class="p">(</span><span class="n">db</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;jonkers2024&quot;</span><span class="p">)</span><span class="w"> </span><span class="c"># will download only if not present</span>
+</code></pre></div>
+which may return something like:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>/home/perrette/.cache/Datasets/LGM_foraminifera_assemblages_20240110.csv
+</code></pre></div></p>
+<p>Or more explicitly
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">local_path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">get_dataset_path</span><span class="p">(</span><span class="n">db</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;jonkers2024&quot;</span><span class="p">)</span>
+</code></pre></div></p>
+<p>All datasets can be downloaded at once:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">download_datasets</span><span class="p">(</span><span class="n">db</span><span class="p">)</span><span class="w"> </span><span class="c"># will download all datasets that are not not present yet</span>
+</code></pre></div></p>
+<p>At present the datasets on disk must be cleaned manually. I.e. in that case from the shell:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>rm<span class="w"> </span>/home/perrette/.cache/Datasets/LGM_foraminifera_assemblages_20240110.csv
+</code></pre></div></p>
+<h2 id="data-naming-on-disk">Data naming on disk<a class="headerlink" href="#data-naming-on-disk" title="Permanent link">&para;</a></h2>
+<p>The default folder for the <code>data</code> store is <code>$XDG_DATA_HOME/datamanifest/Datasets</code> (Linux), matching Python's <code>platformdirs.user_data_dir("datamanifest")</code>. If <code>XDG_DATA_HOME</code> is not set the fallback is <code>~/.local/share/datamanifest/Datasets</code>. For the <code>cache</code> store the default is <code>$XDG_CACHE_HOME/datamanifest/Datasets</code> (<code>~/.cache/datamanifest/Datasets</code> if unset).</p>
+<blockquote>
+<p><strong>Note (v0.16.0 behavior change)</strong>: the default download location moved from
+<code>$XDG_CACHE_HOME/Datasets</code> to <code>$XDG_DATA_HOME/datamanifest/Datasets</code>.
+If you have existing downloads in the old location, set
+<code>DATAMANIFEST_DATA_DIR=~/.cache/Datasets</code> (or wherever your files live) so
+DataManifest finds them without re-downloading.</p>
+</blockquote>
+<p>Any other folder can be provided by passing <code>datasets_folder=</code> when initializing the <code>Database</code> — this overrides the <code>data</code>-store root.</p>
+<p>When <code>version=0.2.5</code> parameter is provided, the name on disk will be appended with <code>...#0.2.5</code>.</p>
+<p>It is also possible to provide a preferred name on disk via <code>key=...</code> to add. The local path will then be provided by <code>joinpath(store_root, key)</code> (absolute paths also supported). If <code>extract=true</code> is specified, the dataset path for the extracted archive will be either stripped from the archive extension, if the local path ends with the matching archive extension (e.g. ".zip" for the "zip" format), or appended with <code>.d</code> in non-obivous case (e.g. no extension, version string <code>#...</code>).</p>
+<h2 id="storage-model">Storage model<a class="headerlink" href="#storage-model" title="Permanent link">&para;</a></h2>
+<p>A dataset is materialized under a <strong>folder</strong>, referenced as a <code>$</code>-variable that resolves to
+a <strong>bare top-level root</strong>. The consuming layer composes the rest of the path: a <code>datasets/</code>
+content prefix (fetch) and an optional <code>scope</code> partition. Three folders are built-in; any
+other <code>[_STORAGE]</code> key defines a user folder:</p>
+<table>
+<thead>
+<tr>
+<th>Folder</th>
+<th>Meaning</th>
+<th>Bare root (Linux)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>$data</code></td>
+<td>persistent user data (default)</td>
+<td><code>$DATAMANIFEST_DIR</code> or <code>$XDG_DATA_HOME/datamanifest</code></td>
+</tr>
+<tr>
+<td><code>$cache</code></td>
+<td>OS-reclaimable cache <em>location</em></td>
+<td><code>$DATAMANIFEST_DIR</code> or <code>$XDG_CACHE_HOME/datamanifest</code></td>
+</tr>
+<tr>
+<td><code>$repo</code></td>
+<td>committed inside the project repository</td>
+<td><code>&lt;project_root&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<p>A fetched dataset lands at <code>&lt;root&gt;/datasets/[&lt;scope&gt;/]&lt;key&gt;</code>. (The <code>mount</code> store of
+spec-v1.1 was removed in spec-v2.) Declare a dataset's folder with a <code>$</code>-<strong>selector</strong>,
+optionally with a sub-path:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">[my_dataset]</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">store</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;$cache&quot;</span><span class="w">                </span><span class="c1"># or &quot;$cache/derived&quot; to key under &lt;cache&gt;/derived/datasets/&lt;key&gt;</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">uri</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;https://example.com/big_file.nc&quot;</span>
+</code></pre></div>
+<p><code>store</code> defaults to the project-wide <code>[_STORAGE].default</code> selector, which itself
+defaults to <code>$data</code>. Define folders / overrides in <code>[_STORAGE]</code> (keys are bare
+<em>definitions</em>; references use <code>$</code>):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">[_STORAGE]</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">default</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;$data&quot;</span><span class="w">                               </span><span class="c1"># project-wide default selector</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">scratch</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;$TMPDIR&quot;</span><span class="w">                             </span><span class="c1"># user folder -&gt; $scratch (a bare root)</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">_HOST</span><span class="p">.</span><span class="s2">&quot;login*&quot;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">scratch</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;/scratch/$USER&quot;</span><span class="w"> </span><span class="p">}</span><span class="w">  </span><span class="c1"># host-glob override</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="n">_PREFIX</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">datasets</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;datasets&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">cached</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;cached&quot;</span><span class="w"> </span><span class="p">}</span><span class="w">   </span><span class="c1"># rename the per-layer subfolders</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="n">_SCOPE</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">datasets</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;shared-pool&quot;</span><span class="w"> </span><span class="p">}</span><span class="w">          </span><span class="c1"># share fetched downloads within a group</span>
+</code></pre></div>
+<p>Every folder variable resolves through one ladder: <code>DATAMANIFEST_&lt;NAME&gt;_DIR</code>
+env-var → first matching <code>_HOST.&lt;glob&gt;</code> → <code>[_STORAGE]</code> base → built-in default.
+(<code>_PROFILE</code> is shelved in spec-v3 — reserved/preserved, not resolved.) Prefixes and scopes
+resolve through <code>DATAMANIFEST_PREFIX_&lt;KIND&gt;</code> / <code>DATAMANIFEST_SCOPE_&lt;KIND&gt;</code> →
+<code>[_STORAGE._PREFIX | _SCOPE].&lt;kind&gt;</code> → default. Path expressions (<code>[_STORAGE]</code> values and
+<code>local_path</code>) interpolate <code>$</code>-folder variables, <code>$USER</code>/env, and <code>~</code>.</p>
+<p>When loading, DataManifest resolves the dataset's selected folder, then also
+probes the built-in folders <code>repo → data → cache</code> (each under its <code>datasets/</code> prefix),
+returning the first where the dataset exists and has a <code>.complete</code> marker. Existing v0.17.0
+downloads under <code>…/datamanifest/Datasets</code> are probed read-only for back-compat.</p>
+<h2 id="produce-or-load-caching-cached">Produce-or-load caching (<code>@cached</code>)<a class="headerlink" href="#produce-or-load-caching-cached" title="Permanent link">&para;</a></h2>
+<p><code>DataManifest.Cache</code> adds the produce-or-load layer (spec-v3 <code>cache-produce</code>): cache a
+function's result on disk, keyed by its parameters rather than a <code>uri</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nd">@cached</span><span class="w"> </span><span class="n">cachetype</span><span class="o">=</span><span class="s">&quot;anomaly&quot;</span><span class="w"> </span><span class="n">ext</span><span class="o">=</span><span class="s">&quot;jls&quot;</span><span class="w"> </span><span class="n">key</span><span class="o">=</span><span class="p">(</span><span class="n">a</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="p">(;</span><span class="w"> </span><span class="n">a</span><span class="o">.</span><span class="n">grid</span><span class="p">))</span><span class="w"> </span><span class="k">function</span><span class="w"> </span><span class="n">load_anomaly</span><span class="p">(;</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">        </span><span class="n">grid</span><span class="o">::</span><span class="kt">String</span><span class="o">=</span><span class="s">&quot;5x5&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">_verbose</span><span class="o">::</span><span class="kt">Bool</span><span class="o">=</span><span class="nb">false</span><span class="p">)</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="c"># … expensive work …</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="k">end</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">load_anomaly</span><span class="p">(;</span><span class="w"> </span><span class="n">grid</span><span class="o">=</span><span class="s">&quot;5x5&quot;</span><span class="p">)</span><span class="w">               </span><span class="c"># computes once; subsequent calls load from disk</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="n">load_anomaly</span><span class="p">(;</span><span class="w"> </span><span class="n">grid</span><span class="o">=</span><span class="s">&quot;5x5&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">cached</span><span class="o">=</span><span class="nb">false</span><span class="p">)</span><span class="w"> </span><span class="c"># escape hatch: run the body, no disk I/O</span>
+</code></pre></div>
+<p>The key is the SHA-256 of the <strong>canonical JSON</strong> of the hash-affecting keyword parameters
+(<code>_</code>-prefixed kwargs are runtime knobs, excluded). Produced datasets are <strong>keyword-only</strong>,
+and hash inputs are strings/integers/booleans/<strong>finite floats</strong>/arrays/objects of those
+(finite floats use the normative Python <code>json.dumps</code> form; <code>NaN</code>/<code>±Inf</code> and nulls raise).
+Each artifact is self-describing: <code>config.toml</code> (re-hashable key table) and
+<code>metadata.toml</code> (provenance) sit alongside it at
+<code>&lt;$cache&gt;/cached/&lt;project&gt;/&lt;cachetype&gt;/[&lt;version&gt;/]&lt;hash&gt;/</code>, default <code>store = "$cache"</code>.
+<code>jls</code> is built in; register other formats with <code>DataManifest.Cache.register_format!</code>.</p>
+<p>On a produce, the artifact is registered in the project's <strong><code>cached.toml</code></strong> (the
+produced-dataset registry, sibling to <code>datasets.toml</code>) by its portable <code>cachetype</code> + <code>hash</code>
+key, with <code>ref = "&lt;module&gt;:&lt;function&gt;"</code>. Use <code>CachedIndex</code> / <code>read_index</code> / <code>register!</code> /
+<code>write_index</code> to read or build one. The index defaults to <code>&lt;project_root&gt;/cached.toml</code>; pass
+a <code>cached_toml</code> kwarg (declared on the wrapped function) to override it, or <code>name=</code> to set the
+registry name.</p>
+<p><code>inspect_store(db)</code> (capability <code>inspect</code>) enumerates produced artifacts and present fetched
+datasets as field-bearing <code>CacheObject</code>s (<code>kind</code>, <code>key</code>/<code>hash</code>, <code>scope</code>, <code>format</code>, <code>size</code>,
+<code>created</code>, <code>last_access</code>, <code>referenced</code>); <code>referenced</code> is resolved from <code>cached.toml</code>. Act on a
+filtered selection with <code>delete_object</code> / <code>move_object</code> (produced artifacts only; no automatic
+GC). <code>last_access</code> is read purely from the filesystem at inspect time (the directory's access
+time, falling back to mtime) and is <strong>never written on read</strong> (spec-v3.2) — coarse and
+possibly stale; <code>created</code> (stamped once at produce time) is the always-available age signal.</p>
+<h2 id="maintaining-a-local-datasetstoml">Maintaining a local <code>Datasets.toml</code><a class="headerlink" href="#maintaining-a-local-datasetstoml" title="Permanent link">&para;</a></h2>
+<p>The <code>Database</code> instance <code>db</code> is tied to a <code>Datasets.toml</code> definition file by default, provided the <code>datasets_toml=</code> is passed as initialization or you work in an active project, unless <code>persist=false</code>.</p>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">db</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Database</span><span class="p">(</span><span class="n">persist</span><span class="o">=</span><span class="nb">false</span><span class="p">)</span>
+</code></pre></div>
+will result in:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>Database(
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>  datasets=Dict(
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>  ),
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>  datasets_folder=&quot;/home/perrette/.cache/Datasets&quot;
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>  datasets_toml=&quot;&quot; (in-memory database)
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>)
+</code></pre></div></p>
+<p>When the database exists only in memory, it can nonetheless be written explicitly to disk:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">write</span><span class="p">(</span><span class="n">db</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;Datasets.toml&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="checksum">Checksum<a class="headerlink" href="#checksum" title="Permanent link">&para;</a></h2>
+<p>By default, the sha-256 checksum is computed upon download, unless <code>Database.skip_checksum === false</code> or <code>DatasetEntry.skip_checksum === false</code>. If the checksum turns out to be
+different from the datasets's definition file, an error is raised.</p>
+<h2 id="archives">Archives<a class="headerlink" href="#archives" title="Permanent link">&para;</a></h2>
+<p>A few archive format (currently <code>zip</code> and <code>tar</code> and <code>tar.gz</code>) can be automatically extracted upon download.
+Just set <code>extract=true</code> to the <code>register_dataset()</code> or <code>add()</code> command, or add it to your toml definition file.
+Note when <code>extract=true</code>, the method <code>get_dataset_path</code> returns the path to the extracted folder, and the checksum will also be performed on the extracted folder.</p>
+<h2 id="uri">URI<a class="headerlink" href="#uri" title="Permanent link">&para;</a></h2>
+<p><code>DataManifest</code> currently stores most information via the <code>uri</code> field. The URI can refer to an http(s) path, a github repository (https or git@) or an <code>ssh</code> address (up to the user to have an up-to-date <code>.ssh/config</code> to specify passwords etc).
+Note <code>ssh</code> files are passed on to the shell's <code>rsync</code> command, git repositories to the shell's <code>git</code>, and all other uri schemes are passed to julia's <code>Downloads.download</code>. To have platform-independent dataset available on github, it is recommended to indicate a tarball archive so that <code>Downloads.download</code> is used instead of git.</p>
+<p>DataManifest does not enforce URI strictness — the URI's role can be purely informative when the download is performed by custom <code>shell</code>/<code>julia</code> code, or when the file is provided via <code>local_path</code> or <code>skip_download = true</code>. A URI pointing to a dataset's documentation page, for example, is a valid use even though DataManifest cannot fetch from it directly.</p>
+<p>e.g. instead of git-mediated</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">[tierney2020]</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="n">uri</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;git@github.com:jesstierney/lgmDA.git&quot;</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;v2.1&quot;</span>
+</code></pre></div>
+<p>prefer Download.downloads mediated:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="k">[tierney2020]</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="n">uri</span><span class="o">=</span><span class="s2">&quot;https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip&quot;</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="n">extract</span><span class="o">=</span><span class="kc">true</span>
+</code></pre></div></p>
+<h2 id="multiple-uris-uris">Multiple URIs (<code>uris</code>)<a class="headerlink" href="#multiple-uris-uris" title="Permanent link">&para;</a></h2>
+<p>When a dataset consists of several files, use the <code>uris</code> field (a list) instead of <code>uri</code>. Each URI is downloaded individually into a shared folder. The on-disk path for each file preserves enough directory structure to avoid name collisions — the common leading path segments are stripped, so two files at different sub-paths remain distinguishable.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="k">[my_collection]</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">uris</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">  </span><span class="s2">&quot;https://example.com/dataset/v1/file_a.nc&quot;</span><span class="p">,</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">  </span><span class="s2">&quot;https://example.com/dataset/v1/file_b.nc&quot;</span><span class="p">,</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="p">]</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="c1"># key is auto-derived as &quot;example.com/dataset/v1&quot;</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="c1"># files land at &lt;datasets_folder&gt;/example.com/dataset/v1/file_a.nc</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="c1">#                                                          file_b.nc</span>
+</code></pre></div>
+<p>If the files share no common directory (e.g. <code>data1/file.nc</code> vs <code>data2/file.nc</code>), the key becomes just the hostname and both sub-paths are preserved:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="k">[my_collection]</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">uris</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">  </span><span class="s2">&quot;https://example.com/data1/file.nc&quot;</span><span class="p">,</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">  </span><span class="s2">&quot;https://example.com/data2/file.nc&quot;</span><span class="p">,</span>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="p">]</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="c1"># key = &quot;example.com&quot;</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="c1"># files land at &lt;datasets_folder&gt;/example.com/data1/file.nc</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="c1">#                                              data2/file.nc</span>
+</code></pre></div>
+<p>You can always override the key explicitly:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="k">[my_collection]</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="n">key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;my/preferred/folder&quot;</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="n">uris</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">  </span><span class="s2">&quot;https://example.com/data1/file.nc&quot;</span><span class="p">,</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="w">  </span><span class="s2">&quot;https://example.com/data2/file.nc&quot;</span><span class="p">,</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="p">]</span>
+</code></pre></div>
+<p>From Julia, <code>uri</code> as a list is also accepted as an alias for <code>uris</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">register_dataset</span><span class="p">(</span><span class="n">db</span><span class="p">,</span><span class="w"> </span><span class="p">[</span><span class="s">&quot;https://example.com/data1/file.nc&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;https://example.com/data2/file.nc&quot;</span><span class="p">];</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">    </span><span class="n">name</span><span class="o">=</span><span class="s">&quot;my_collection&quot;</span><span class="p">)</span>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="c"># or equivalently:</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="n">register_dataset</span><span class="p">(</span><span class="n">db</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;&quot;</span><span class="p">;</span><span class="w"> </span><span class="n">name</span><span class="o">=</span><span class="s">&quot;my_collection&quot;</span><span class="p">,</span>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="w">    </span><span class="n">uris</span><span class="o">=</span><span class="p">[</span><span class="s">&quot;https://example.com/data1/file.nc&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;https://example.com/data2/file.nc&quot;</span><span class="p">])</span>
+</code></pre></div>
+<h2 id="user-managed-local-files-local_path">User-managed local files (<code>local_path</code>)<a class="headerlink" href="#user-managed-local-files-local_path" title="Permanent link">&para;</a></h2>
+<p><code>local_path</code> overrides the location DataManifest uses for a dataset's local file — replacing the usual <code>joinpath(datasets_folder, key)</code> slot with a path the user controls. It is purely a <em>location override</em>: the rest of the pipeline (cache-hit, download, checksum, extraction) is unchanged.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="k">[in_repo_dataset]</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="n">uri</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;https://example.com/dataset.csv&quot;</span><span class="w">   </span><span class="c1"># canonical source</span>
+<a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="n">local_path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;data/dataset.csv&quot;</span><span class="w">            </span><span class="c1"># relative → resolved against the Datasets.toml directory</span>
+<a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="n">sha256</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="w">                             </span><span class="c1"># still verified</span>
+</code></pre></div>
+<p>Semantics:</p>
+<ul>
+<li><strong>Resolution.</strong> A relative <code>local_path</code> is resolved against the directory of <code>Datasets.toml</code> (i.e., your project root) — convenient for committing small data files alongside your code. An absolute <code>local_path</code> is used as-is, which is handy for files on a NAS, an external drive, or a scratch volume.</li>
+<li><strong>No copy into the cache.</strong> The dataset is <em>not</em> placed under <code>datasets_folder</code> / <code>key</code>; <code>get_dataset_path</code> returns the resolved <code>local_path</code> directly.</li>
+<li><strong>Cache-hit logic is unchanged.</strong> If the file is already at <code>local_path</code>, DataManifest returns it without invoking the URI — exactly the behavior for files that are committed to the repository.</li>
+<li><strong>Cache miss → normal download.</strong> If the file is missing, DataManifest proceeds with the usual download from <code>uri</code> and writes the result to <code>local_path</code>. This lets you redirect a fetched dataset into the repo instead of the user's cache directory.</li>
+<li><strong>Checksum still applies.</strong> If <code>sha256</code> is set, it is verified against the file at <code>local_path</code>.</li>
+<li><strong>No deletion.</strong> DataManifest will not remove a <code>local_path</code> entry from disk; it never owned the file.</li>
+</ul>
+<p>For sources that cannot be fetched automatically (Cloudflare, click-through agreements, manual logins), <code>local_path</code> can be combined with <code>skip_download = true</code> — the location comes from <code>local_path</code>, while <code>skip_download = true</code> makes the user-managed nature of the file explicit and prevents any download attempt. For files committed to the repository alongside <code>Datasets.toml</code>, this pairing is usually unnecessary: the file is always present, so cache-hit wins and <code>uri</code> is never consulted.</p>
+<p>Compared with <code>skip_download = true</code> used <em>alone</em>: the older mechanism overloads <code>uri</code> as a path (the URI value is returned verbatim as the local path). <code>local_path</code> keeps the two roles distinct — <code>uri</code> stays as the source identifier, <code>local_path</code> is the on-disk location.</p>
+<h2 id="schema-v1-and-the-_lang-namespace">Schema v1 and the <code>_LANG</code> namespace<a class="headerlink" href="#schema-v1-and-the-_lang-namespace" title="Permanent link">&para;</a></h2>
+<p>Schema v1 (<code>_META.schema = 1</code>) expresses custom fetch and load logic as <code>module:function</code> references stored in <code>_LANG.julia</code> subtables rather than as inline Julia code.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="k">[_META]</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="n">schema</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="k">[_LANG.julia.loaders]</span>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="n">nc</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;MyProject:load_netcdf&quot;</span><span class="w">        </span><span class="c1"># format-level default loader</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>
+<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="k">[my_dataset._LANG.julia]</span>
+<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="n">fetcher</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;MyFetchers:fetch_data&quot;</span><span class="w">   </span><span class="c1"># custom fetcher ref</span>
+<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a><span class="n">loader</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;MyLoaders:load_data&quot;</span><span class="w">     </span><span class="c1"># custom loader ref</span>
+</code></pre></div>
+<p>A ref <code>"Module:function"</code> resolves at runtime via <code>using Module</code> + <code>getfield(Module, :function)</code> — no <code>eval</code> or <code>include_string</code>.</p>
+<h3 id="resolution-ladders">Resolution ladders<a class="headerlink" href="#resolution-ladders" title="Permanent link">&para;</a></h3>
+<p><strong>Load</strong> (own <code>_LANG.julia.loader</code> → manifest <code>[_LANG.julia.loaders][format]</code> → built-in default → error): loaders never spawn a subprocess.</p>
+<p><strong>Fetch</strong> (own <code>_LANG.julia.fetcher</code> → <code>_LANG.shell.fetcher</code> → <code>uri</code>/<code>uris</code> → error): delegation to peer CLIs is not yet implemented.</p>
+<h3 id="v0-v1-split-for-inline-code">v0 / v1 split for inline code<a class="headerlink" href="#v0-v1-split-for-inline-code" title="Permanent link">&para;</a></h3>
+<p>Legacy (v0) manifests without <code>_META.schema</code> continue to work: inline <code>julia=</code>/<code>loader=</code> and <code>[_LOADERS]</code> are read and executed as before. Under v1 (<code>schema = 1</code>) these inline execution paths are skipped — bindings resolve only via <code>module:function</code> refs.</p>
+<h3 id="multi-language-round-trip">Multi-language round-trip<a class="headerlink" href="#multi-language-round-trip" title="Permanent link">&para;</a></h3>
+<p>Foreign <code>_LANG.&lt;other&gt;</code> subtrees (e.g. <code>[bar._LANG.python]</code>) and unknown <code>_*</code> top-level tables are preserved verbatim on every read→write cycle. Only <code>_LANG.julia</code> is regenerated from the model.</p>
+<h3 id="migrating-a-v0-manifest">Migrating a v0 manifest<a class="headerlink" href="#migrating-a-v0-manifest" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="n">DataManifest</span><span class="o">.</span><span class="n">migrate</span><span class="p">(</span><span class="s">&quot;Datasets.toml&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Moves ref-shaped <code>julia=</code>/<code>loader=</code> per-dataset fields and <code>[_LOADERS]</code> ref entries into <code>[&lt;ds&gt;._LANG.julia]</code> / <code>[_LANG.julia.loaders]</code>, then sets <code>_META.schema = 1</code>. Genuinely inline code is preserved verbatim with a log note. The call is idempotent.</p>
+<p>Also converts a flat per-dataset <code>shell = "&lt;cmd&gt;"</code> field into <code>[&lt;ds&gt;._LANG.shell].fetcher</code>.</p>
+<h2 id="parameterized-bindings-ref-args-kwargs">Parameterized bindings (<code>{ ref, args, kwargs }</code>)<a class="headerlink" href="#parameterized-bindings-ref-args-kwargs" title="Permanent link">&para;</a></h2>
+<p>Fetcher and loader refs can be written as a TOML inline table to pass explicit arguments:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="k">[_META]</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="n">schema</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="k">[my_dataset._LANG.julia]</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="n">fetcher</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">ref</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;MyFetchers:fetch&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;$download_path&quot;</span><span class="p">],</span><span class="w"> </span><span class="n">kwargs</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">format</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;nc&quot;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="n">loader</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">ref</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;MyLoaders:load&quot;</span><span class="p">,</span><span class="w">  </span><span class="n">args</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;$path&quot;</span><span class="p">],</span><span class="w">           </span><span class="n">kwargs</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">grid</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;5x5&quot;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+</code></pre></div>
+<p>At call time:</p>
+<ol>
+<li><code>$var</code> placeholders in string values are substituted with the dataset context:</li>
+<li>Fetcher: <code>$download_path</code>, <code>$key</code>, <code>$uri</code>, <code>$version</code>, <code>$doi</code>, <code>$format</code>, <code>$branch</code>, <code>$project_root</code>.</li>
+<li>Loader: <code>$path</code> (the materialized file path), plus the same set.</li>
+<li>The resolved function is called as <code>ref(subst(args)...; subst(kwargs)...)</code>.</li>
+</ol>
+<p>Non-string values (numbers, arrays, sub-tables) are passed through unchanged. Bare-string bindings (<code>fetcher = "Mod:fn"</code>) are unaffected and keep the conventional <code>fn(; download_path=..., ...)</code> call.</p>
+<h2 id="verify-once-integrity">Verify-once integrity<a class="headerlink" href="#verify-once-integrity" title="Permanent link">&para;</a></h2>
+<p>Starting with v0.16.0, SHA-256 checksum is computed <strong>only when actually (re-)fetching</strong> a dataset. A present dataset with a <code>.complete</code> marker and a non-empty stored <code>sha256</code> is not re-hashed on every <code>load_dataset</code> call. To force re-verification, pass <code>overwrite=true</code> to <code>download_dataset</code>.</p>
+<h2 id="shell-julia-download-commands-v0-legacy">Shell / Julia download commands (v0 / legacy)<a class="headerlink" href="#shell-julia-download-commands-v0-legacy" title="Permanent link">&para;</a></h2>
+<p>When <code>shell</code> is set, that command runs instead of the built-in download, with working directory set to the project root (when available) for reproducibility. Use template placeholders <code>$download_path</code>, <code>$project_root</code>, <code>$uri</code>, <code>$key</code>, <code>$version</code>, <code>$doi</code>, <code>$format</code>, <code>$branch</code>. If <code>$project_root</code> is used but cannot be determined (no activated project, in-memory database), an error is thrown. Complex logic (pipes, redirects) should go in a script. Alternatively, set <code>julia</code> to run Julia code in an isolated module (takes precedence over <code>shell</code>); use <code>julia_modules</code> to load modules before the code. The code sees the same variable names as the shell template: <code>download_path</code>, <code>project_root</code>, <code>uri</code>, <code>key</code>, <code>version</code>, <code>doi</code>, <code>format</code>, <code>branch</code>, plus <code>entry</code> (the <code>DatasetEntry</code>).</p>
+<p>Under schema v1 (<code>_META.schema = 1</code>) the <code>shell=</code> and <code>julia=</code> inline fields are ignored for fetch/load — use <code>_LANG.julia</code> refs instead (see above).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="k">[my_dataset]</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="n">key</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;project/data-v1&quot;</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="n">shell</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;julia scripts/fetch.jl $key $download_path&quot;</span>
+</code></pre></div>
+<h2 id="loading-datasets-load_dataset">Loading datasets (load_dataset)<a class="headerlink" href="#loading-datasets-load_dataset" title="Permanent link">&para;</a></h2>
+<p><code>load_dataset(db, name)</code> downloads the dataset (if needed) and returns a loaded object. You can pass a <strong>loader</strong> function: it is called as <code>loader(path)</code>. If you omit the loader, the entry’s <code>loader</code> field is used (see below), or else a format-based default (e.g. CSV when available).</p>
+<p>To call a <strong>built-in format loader</strong> by name without defining it in <code>[_LOADERS]</code>, pass <code>loader="format"</code> where <code>format</code> is one of: <strong>csv</strong>, <strong>parquet</strong>, <strong>nc</strong>, <strong>dimstack</strong>, <strong>md</strong>, <strong>txt</strong>, <strong>json</strong>, <strong>yaml</strong>, <strong>yml</strong>, <strong>toml</strong>, <strong>zip</strong>, <strong>tar</strong>, <strong>tar.gz</strong>. Each uses an optional package (CSV, Parquet, NCDatasets, etc.) and will error with an "add Package" message if not installed.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="n">data</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">load_dataset</span><span class="p">(</span><span class="n">db</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;jonkers2024&quot;</span><span class="p">;</span><span class="w"> </span><span class="n">loader</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">read</span><span class="p">(</span><span class="n">path</span><span class="p">,</span><span class="w"> </span><span class="kt">String</span><span class="p">))</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="n">data</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">load_dataset</span><span class="p">(</span><span class="n">db</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;some_csv&quot;</span><span class="p">;</span><span class="w"> </span><span class="n">loader</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;csv&quot;</span><span class="p">)</span><span class="w">   </span><span class="c"># built-in CSV loader</span>
+</code></pre></div>
+<h2 id="database-level-loaders-_loaders">Database-level loaders ([_LOADERS])<a class="headerlink" href="#database-level-loaders-_loaders" title="Permanent link">&para;</a></h2>
+<p>A TOML <strong><code>[_LOADERS]</code></strong> section defines reusable loaders and a shared context. The uppercase name keeps it at the top when the file is sorted. Use <strong><code>julia_modules</code></strong> (array of module names for <code>using X</code>) and <strong><code>julia_includes</code></strong> (paths to <code>include</code>, relative to the project/TOML directory). Any other key in <code>[_LOADERS]</code> is a loader name whose value is Julia code that <strong>evaluates to a function</strong>; that function is called as <code>fn(path)</code>.</p>
+<p>An entry’s <strong><code>loader</code></strong> field can be:
+- A <strong>name</strong> that matches a key in <code>[_LOADERS]</code> → the corresponding loader function is used (compiled when the TOML is loaded and cached). The value for that key may be Julia code, or <strong>another loader name</strong> (alias); e.g. <code>md = "txt"</code> makes <code>"md"</code> an alias for the loader <code>"txt"</code>. Alias cycles are an error.
+- A <strong>string</strong> that is not a key in <code>[_LOADERS]</code> → it is evaluated in the same loader context (after includes and <code>using</code>); the result must be a function, which is then called with <code>(path)</code>.</p>
+<p>When an entry has <strong>no</strong> <code>loader</code>, the default is chosen by format: if a loader name (case-insensitive) equals the entry's format, that loader is used; otherwise a built-in default is used if available (e.g. <code>csv</code>), else an error. So defining <code>csv = "path -&gt; CSV.read(path)"</code> in <code>[_LOADERS]</code> overrides or provides the default for format <code>csv</code>.</p>
+<p>From Julia you can update the loader section with <strong><code>register_loaders(db; loaders=..., julia_modules=..., julia_includes=..., persist=true)</code></strong>. Loaders are compiled on first use (lazy), which avoids circular dependencies when a loader's <code>julia_modules</code> depends on a package that itself uses DataManifest. To compile (and validate) loaders explicitly, call <strong><code>validate_loaders(db)</code></strong> or <strong><code>validate_loader(db, name)</code></strong>. Prefer minimal code in TOML and real logic in included files (e.g. <code>julia_includes = ["scripts/loaders.jl"]</code>, then loader names that reference functions defined there).</p>
+<p>Example:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="k">[_LOADERS]</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="n">julia_modules</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;CSV&quot;</span><span class="p">]</span>
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="n">julia_includes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;scripts/loaders.jl&quot;</span><span class="p">]</span>
+<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="n">read_csv</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;path -&gt; CSV.read(path, DataFrame)&quot;</span>
+<a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a>
+<a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a><span class="k">[my_csv]</span>
+<a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a><span class="n">uri</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;https://example.com/data.csv&quot;</span>
+<a id="__codelineno-26-8" name="__codelineno-26-8" href="#__codelineno-26-8"></a><span class="n">loader</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;read_csv&quot;</span>
+</code></pre></div>
+<h2 id="low-level-declarative-syntax">Low-level declarative syntax<a class="headerlink" href="#low-level-declarative-syntax" title="Permanent link">&para;</a></h2>
+<p>Examples of the declarative syntax.</p>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="k">using</span><span class="w"> </span><span class="n">DataManifest</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>
+<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a><span class="n">db</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Database</span><span class="p">(</span><span class="n">datasets_folder</span><span class="o">=</span><span class="s">&quot;datasets&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">persist</span><span class="o">=</span><span class="nb">false</span><span class="p">)</span><span class="w"> </span><span class="c"># the default is ~/.cache/Datasets</span>
+<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a>
+<a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a><span class="n">register_dataset</span><span class="p">(</span><span class="n">db</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip&quot;</span><span class="p">;</span>
+<a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a><span class="w">  </span><span class="n">name</span><span class="o">=</span><span class="s">&quot;herzschuh2023&quot;</span><span class="p">,</span>
+<a id="__codelineno-27-7" name="__codelineno-27-7" href="#__codelineno-27-7"></a><span class="w">  </span><span class="n">doi</span><span class="o">=</span><span class="s">&quot;10.1594/PANGAEA.930512&quot;</span><span class="p">,</span>
+<a id="__codelineno-27-8" name="__codelineno-27-8" href="#__codelineno-27-8"></a><span class="w">  </span><span class="n">extract</span><span class="o">=</span><span class="nb">true</span><span class="p">,</span>
+<a id="__codelineno-27-9" name="__codelineno-27-9" href="#__codelineno-27-9"></a><span class="p">)</span>
+<a id="__codelineno-27-10" name="__codelineno-27-10" href="#__codelineno-27-10"></a>
+<a id="__codelineno-27-11" name="__codelineno-27-11" href="#__codelineno-27-11"></a><span class="n">register_dataset</span><span class="p">(</span><span class="n">db</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv&quot;</span><span class="p">;</span>
+<a id="__codelineno-27-12" name="__codelineno-27-12" href="#__codelineno-27-12"></a><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;jonkers2024&quot;</span><span class="p">,</span>
+<a id="__codelineno-27-13" name="__codelineno-27-13" href="#__codelineno-27-13"></a><span class="n">doi</span><span class="o">=</span><span class="s">&quot;10.1594/PANGAEA.962852&quot;</span><span class="p">,</span>
+<a id="__codelineno-27-14" name="__codelineno-27-14" href="#__codelineno-27-14"></a><span class="p">)</span>
+<a id="__codelineno-27-15" name="__codelineno-27-15" href="#__codelineno-27-15"></a>
+<a id="__codelineno-27-16" name="__codelineno-27-16" href="#__codelineno-27-16"></a><span class="n">register_dataset</span><span class="p">(</span><span class="n">db</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">extract</span><span class="o">=</span><span class="nb">true</span><span class="p">)</span>
+<a id="__codelineno-27-17" name="__codelineno-27-17" href="#__codelineno-27-17"></a>
+<a id="__codelineno-27-18" name="__codelineno-27-18" href="#__codelineno-27-18"></a><span class="n">register_dataset</span><span class="p">(</span><span class="n">db</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;ssh://albedo1.dmawi.de:/albedo/work/projects/p_forclima/preproc_data_esmvaltool/LGM/recipe_cmip6_lgm_tos_20241114_151009/preproc/lgm/tos_CLIM&quot;</span><span class="p">;</span><span class="w"> </span><span class="n">name</span><span class="o">=</span><span class="s">&quot;CMIP6_lgm_tos&quot;</span><span class="p">)</span>
+<a id="__codelineno-27-19" name="__codelineno-27-19" href="#__codelineno-27-19"></a>
+<a id="__codelineno-27-20" name="__codelineno-27-20" href="#__codelineno-27-20"></a><span class="n">println</span><span class="p">(</span><span class="n">db</span><span class="p">)</span>
+</code></pre></div>
+yields:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>Database:
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>- CMIP6_lgm_tos =&gt; albedo1.dmawi.de/albedo/work/projects/p_forclima/p...
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>- herzschuh2023 =&gt; doi.pangaea.de/10.1594/PANGAEA.930512
+<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a>- jonkers2024 =&gt; download.pangaea.de/dataset/962852/files/LGM_foram...
+<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a>- jesstierney/lgmDA =&gt; github.com/jesstierney/lgmDA.git
+<a id="__codelineno-28-6" name="__codelineno-28-6" href="#__codelineno-28-6"></a>datasets_folder: datasets
+<a id="__codelineno-28-7" name="__codelineno-28-7" href="#__codelineno-28-7"></a>datasets_toml=&quot;&quot; (in-memory database)
+</code></pre></div></p>
+<p>The newer <code>DataManifest.add</code> command combines <code>register_dataset</code> and <code>download_dataset</code>.</p>
+<h2 id="data-structure">Data Structure<a class="headerlink" href="#data-structure" title="Permanent link">&para;</a></h2>
+<p>To be completed. But basically
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="n">db</span>
+</code></pre></div>
+yields
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>Database(
+<a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>  datasets=Dict(
+<a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>    CMIP6_lgm_tos =&gt; DatasetEntry(uri=&quot;ssh://albedo1.dmawi.de:/albedo/work/projects/p_forclima/preproc_data_esmvaltool/LGM/recipe_cmip6_lgm_tos_20241114_151009/preproc/lgm/tos_CLIM&quot;...),
+<a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>    herzschuh2023 =&gt; DatasetEntry(uri=&quot;https://doi.pangaea.de/10.1594/PANGAEA.930512?format=zip&quot;, doi=&quot;10.1594/PANGAEA.930512&quot;...),
+<a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>    jonkers2024 =&gt; DatasetEntry(uri=&quot;https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv&quot;, doi=&quot;10.1594/PANGAEA.962852&quot;...),
+<a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a>    jesstierney/lgmDA =&gt; DatasetEntry(uri=&quot;git@github.com:jesstierney/lgmDA.git&quot;...),
+<a id="__codelineno-30-7" name="__codelineno-30-7" href="#__codelineno-30-7"></a>  ),
+<a id="__codelineno-30-8" name="__codelineno-30-8" href="#__codelineno-30-8"></a>  datasets_folder=&quot;datasets&quot;
+<a id="__codelineno-30-9" name="__codelineno-30-9" href="#__codelineno-30-9"></a>  datasets_toml=&quot;&quot; (in-memory database)
+<a id="__codelineno-30-10" name="__codelineno-30-10" href="#__codelineno-30-10"></a>)
+</code></pre></div></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "toc.follow", "search.suggest", "search.highlight", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

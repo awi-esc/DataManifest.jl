@@ -105,7 +105,8 @@ layout), or per machine in the git-ignored `.datamanifest/config.toml` / the use
 `$user_data_dir` / `$user_cache_dir` / `$repo` / `$project`, user-defined `[_STORAGE]` keys,
 `$USER`/env, `~` — host-specific via `[_STORAGE._HOST."<glob>"]`. Resolution ladder (first
 match wins): `DATAMANIFEST_<NAME>` env → checkout config → manifest `_HOST` → manifest base
-→ user config → built-in default. A per-dataset `storage_path` overrides one dataset's
+→ user config → built-in default; evaluated **once, at Database materialization** (a frozen
+snapshot, environment included — `freeze_config!(db)` re-reads it). A per-dataset `storage_path` overrides one dataset's
 location (`$key` ⇒ tool-managed; an exact path ⇒ user-managed). Read pools reuse data other
 projects already hold. Full reference: [docs/storage.md](storage.md).
 
@@ -183,7 +184,9 @@ byte-identical files, pass `write(db, path; canonical=true)` or set the
 (`.datamanifest/config.toml`), the manifest `[_STORAGE]`, the user config
 (`~/.config/datamanifest/config.toml`), each with `_HOST` glob support — so
 e.g. `canonical = true` in the checkout config enables it for that project on
-that machine. The CLI is looked up next to the manifest
+that machine. Like every config field it is evaluated once, when the Database
+is materialized (`freeze_config!(db)` re-reads the config files and
+environment). The CLI is looked up next to the manifest
 (`<manifest dir>/.venv/bin/datamanifest`, falling through to the main
 checkout's `.venv` from a linked git worktree) and then on `PATH`; when it is
 absent the native TOML is written instead (with a warning).

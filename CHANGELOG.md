@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.31.0] - 2026-06-11 — spec-v5.5: the configuration is frozen at materialization
+
+Tracks datamanifest.toml **`spec-v5.5`** (configuration evaluation timing).
 
 ### Changed
 
