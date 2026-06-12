@@ -26,6 +26,7 @@ using TOML
 using SHA
 using Dates
 using Serialization
+using ..Config: MANIFEST_FILENAMES
 using ..Storage: datacache_dir, datacache_pools, config_layers, ConfigLike, is_complete, marker_path,
     lock_path, tmp_path, user_state_dir, lock_stale_age, _main_checkout_dir
 using ..PipeLines: materialize
@@ -1271,7 +1272,7 @@ end
 # when no `Database` is in scope. Mirrors the Python `_load_storage_config`.
 function _discover_storage_config(project_root::AbstractString)::Dict{String,Any}
     isempty(project_root) && return Dict{String,Any}()
-    for name in ("Datasets.toml", "datasets.toml", "DataManifest.toml", "datamanifest.toml")
+    for name in MANIFEST_FILENAMES
         p = joinpath(project_root, name)
         isfile(p) || continue
         try

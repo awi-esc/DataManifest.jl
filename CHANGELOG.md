@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Breaking
+
+- **New projects default to `datamanifest.toml`**, the canonical manifest name
+  shared with the Python tool. When no manifest exists yet, the inferred
+  default path (and hence the file created on first write) is now
+  `<project root>/datamanifest.toml` instead of `Datasets.toml`. Existing
+  projects are unaffected: an existing `Datasets.toml` is still discovered.
+  The full discovery order (first existing file wins, identical in both
+  tools) is: `datamanifest.toml` > `DataManifest.toml` > `datasets.toml` >
+  `Datasets.toml`. The order lives in `Config.MANIFEST_FILENAMES` and is also
+  used when locating the nearest manifest's `[_STORAGE]` table.
+
 ## [0.31.0] - 2026-06-11 — spec-v5.5: the configuration is frozen at materialization
 
 Tracks datamanifest.toml **`spec-v5.5`** (configuration evaluation timing).

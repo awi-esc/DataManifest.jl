@@ -118,6 +118,11 @@ end
 const XDG_CACHE_HOME = get(ENV, "XDG_CACHE_HOME", joinpath(homedir(), ".cache"))
 const DEFAULT_DATASETS_FOLDER_PATH = joinpath(XDG_CACHE_HOME, "Datasets")
 const DEFAULT_DATASETS_TOML_PATH = ""
+
+# Manifest filename discovery order, shared with the Python tool: the first
+# existing file wins; when none exists, the first entry (`datamanifest.toml`,
+# the cross-tool canonical name) is used to create a new manifest.
+const MANIFEST_FILENAMES = ["datamanifest.toml", "DataManifest.toml", "datasets.toml", "Datasets.toml"]
 const COMPRESSED_FORMATS = ["zip", "tar.gz", "tar"]
 const HIDE_STRUCT_FIELDS = [:host, :path, :scheme]
 
@@ -147,6 +152,20 @@ function project_root_from_paths(datasets_toml_path::String, current_project_pat
     return ""
 end
 
+"""
+Manifest path for the project at `root`: the first existing `MANIFEST_FILENAMES`
+entry, else the canonical name (`datamanifest.toml`) for a new manifest.
+"""
+function default_toml_in(root::String)
+    for name in MANIFEST_FILENAMES
+        candidate = joinpath(root, name)
+        if isfile(candidate)
+            return candidate
+        end
+    end
+    return joinpath(root, first(MANIFEST_FILENAMES))
+end
+
 function get_default_toml()
     if isfile(DEFAULT_DATASETS_TOML_PATH)
         return DEFAULT_DATASETS_TOML_PATH
@@ -162,20 +181,7 @@ function get_default_toml()
     end
     if Base.current_project() !== nothing && Base.current_project() == Base.active_project()
         root = abspath(dirname(Base.current_project()))
-        currentdefault = joinpath(root, "Datasets.toml")
-        alternatives = [
-            joinpath(root, "DataManifest.toml"),
-            joinpath(root, "datasets.toml")
-        ]
-        if !isfile(currentdefault)
-            for alt in alternatives
-                if isfile(alt)
-                    currentdefault = alt
-                    return alt
-                end
-            end
-        end
-        return currentdefault
+        return default_toml_in(root)
     else
         warn("The project is not activated. Cannot infer default datasets_toml path. In-memory database will be used.")
         return ""

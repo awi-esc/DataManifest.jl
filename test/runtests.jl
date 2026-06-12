@@ -94,6 +94,38 @@ try
         @test isa(repr(db), String)
     end
 
+    @testset "Manifest filename discovery" begin
+        C = DataManifest.Config
+        # Cross-tool rule: discovery order is datamanifest.toml > DataManifest.toml
+        # > datasets.toml > Datasets.toml; a new manifest is created under the
+        # first (canonical) name.
+        @test C.MANIFEST_FILENAMES ==
+            ["datamanifest.toml", "DataManifest.toml", "datasets.toml", "Datasets.toml"]
+
+        touch_names(d, names...) = foreach(n -> touch(joinpath(d, n)), names)
+
+        # A new project (no manifest yet) defaults to the canonical name.
+        d = mktempdir()
+        @test C.default_toml_in(d) == joinpath(d, "datamanifest.toml")
+
+        # Existing projects keep working: a lone Datasets.toml is still discovered.
+        d = mktempdir(); touch_names(d, "Datasets.toml")
+        @test C.default_toml_in(d) == joinpath(d, "Datasets.toml")
+
+        # datasets.toml beats Datasets.toml.
+        d = mktempdir(); touch_names(d, "Datasets.toml", "datasets.toml")
+        @test C.default_toml_in(d) == joinpath(d, "datasets.toml")
+
+        # DataManifest.toml beats datasets.toml.
+        d = mktempdir(); touch_names(d, "Datasets.toml", "datasets.toml", "DataManifest.toml")
+        @test C.default_toml_in(d) == joinpath(d, "DataManifest.toml")
+
+        # datamanifest.toml beats everything.
+        d = mktempdir()
+        touch_names(d, "Datasets.toml", "datasets.toml", "DataManifest.toml", "datamanifest.toml")
+        @test C.default_toml_in(d) == joinpath(d, "datamanifest.toml")
+    end
+
     @testset "Path" begin
         path = get_dataset_path(db, "herzschuh2023")
         @test path == joinpath(datasets_dir, "doi.pangaea.de/10.1594/PANGAEA.930512")
