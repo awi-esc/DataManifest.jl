@@ -42,7 +42,7 @@ extract = true
 doi = "10.1594/PANGAEA.962852"
 uri = "https://download.pangaea.de/dataset/962852/files/LGM_foraminifera_assemblages_20240110.csv"
 
-[jesstierney/lgmDA]
+["jesstierney/lgmDA"]
 uri = "https://github.com/jesstierney/lgmDA/archive/refs/tags/v2.1.zip"
 extract = true
 
@@ -72,9 +72,10 @@ Database(
 
 If you work in an activated Julia environment (via `julia --project` or
 `Pkg.activate(...)`), `Database()` with no arguments looks for a `datamanifest.toml`
-next to `Project.toml`. The alternative file names `DataManifest.toml` and
-`datasets.toml` are also recognized, and the `DATAMANIFEST_TOML` (or
-`DATASETS_TOML`) environment variable can point to a manifest explicitly.
+next to `Project.toml`. The alternative file names `DataManifest.toml`,
+`datasets.toml` and `Datasets.toml` are also recognized, in that order, and
+the `DATAMANIFEST_TOML` (or `DATASETS_TOML`) environment variable can point to
+a manifest explicitly.
 
 ### Downloading datasets and getting paths
 
@@ -262,7 +263,7 @@ evaluates to a function; that function is called as `fn(path)`.
 
 ```toml
 [_LOADERS]
-julia_modules = ["CSV"]
+julia_modules = ["CSV", "DataFrames"]
 julia_includes = ["scripts/loaders.jl"]
 read_csv = "path -> CSV.read(path, DataFrame)"
 
@@ -284,8 +285,8 @@ An entry's `loader` field can be:
 When an entry has no `loader`, the default is chosen by format: a loader whose
 name (case-insensitively) equals the entry's format is used if defined,
 otherwise a built-in default if one exists for that format, otherwise an error.
-So defining `csv = "path -> CSV.read(path)"` in `[_LOADERS]` overrides the
-default for format `csv`.
+So defining `csv = "path -> CSV.read(path, DataFrame)"` in `[_LOADERS]`
+overrides the default for format `csv`.
 
 From Julia, update the loader section with
 `register_loaders(db; loaders=..., julia_modules=..., julia_includes=..., persist=true)`.
@@ -577,8 +578,9 @@ When a dataset is loaded or fetched, the binding is chosen in this order:
 - **Load:** the dataset's own `_LANG.julia.loader` → the manifest's
   `[_LANG.julia.loaders][format]` → the built-in default for the format →
   error. Loaders never spawn a subprocess.
-- **Fetch:** the dataset's own `_LANG.julia.fetcher` → its
-  `_LANG.shell.fetcher` → delegation to the Python `datamanifest` CLI when the
+- **Fetch:** the dataset's own `_LANG.julia.fetcher` → its `shell` command
+  (the bare field, or the legacy `[<ds>._LANG.shell].fetcher` as a fallback) →
+  delegation to the Python `datamanifest` CLI when the
   dataset's bytes can only be produced by a foreign-language fetcher (see
   [language-bindings.md](language-bindings.md)) → the built-in download from
   `uri`/`uris` → error.
@@ -650,7 +652,7 @@ DataManifest.migrate("datamanifest.toml")
 ```
 
 moves ref-shaped `julia=`/`loader=` per-dataset fields and `[_LOADERS]` ref
-entries into `[<ds>._LANG.julia]` / `[_LANG.julia.loaders]`, converts a flat
-per-dataset `shell = "<cmd>"` field into `[<ds>._LANG.shell].fetcher`, and sets
-`_META.schema = 1`. Genuinely inline code is preserved verbatim with a log
-note. The call is idempotent.
+entries into `[<ds>._LANG.julia]` / `[_LANG.julia.loaders]`, and sets
+`_META.schema = 1`. The bare `shell` field is already canonical and is left in
+place. Genuinely inline code is preserved verbatim with a log note. The call
+is idempotent.

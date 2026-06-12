@@ -1534,7 +1534,8 @@ Wrap a **keyword-only** function with transparent produce-or-load disk caching (
   are keyed by `(cachetype, version)` identity, not by name, so it no longer affects
   registration.
 
-The artifact lands under the manifest's **`datacache_dir`** (spec-v4; default `<repo>/cached`):
+The artifact lands under the manifest's **`datacache_dir`** (default
+`\$user_cache_dir/datamanifest/projects/\$project/cached`):
 `<datacache_dir>/<cachetype>/[<version>/]<hash>`. The wrapper injects a `cached::Bool=true`
 escape hatch (`cached=false` runs the body with no disk I/O and no registration). A kwarg
 named exactly `_metadata_extras` (NamedTuple/Dict/`nothing`) is an audit-only channel merged

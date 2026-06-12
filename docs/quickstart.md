@@ -5,8 +5,9 @@ In an activated project (`using Pkg; Pkg.activate(...)`):
 ```julia
 using DataManifest
 
-DataManifest.add("https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"; name="co2")
-path = get_dataset_path("co2")
+db = read_dataset("datamanifest.toml")
+add(db, "https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"; name="co2")
+path = get_dataset_path(db, "co2")
 ```
 
 `add` downloaded the Mauna Loa CO₂ record and wrote one entry to
@@ -44,7 +45,7 @@ everything declared in the manifest.
 `get_dataset_path` gives you a path; `load_dataset` goes one step further and
 returns the loaded object. For that, the dataset (or its file format) needs a
 **loader**: a reference to a Julia function, written as `"Module:function"` in
-the manifest. For example, with `csv = "CSV:read"` declared as a project-wide
+the manifest. For example, with `csv = "CSV:File"` declared as a project-wide
 loader, `load_dataset("co2")` returns the parsed table directly — see
 [fetchers, loaders, and language bindings](language-bindings.md).
 

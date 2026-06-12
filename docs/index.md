@@ -24,8 +24,9 @@ Pkg.add("DataManifest")
 ```julia
 using DataManifest
 
-DataManifest.add("https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"; name="co2")
-path = get_dataset_path("co2")
+db = read_dataset("datamanifest.toml")
+add(db, "https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"; name="co2")
+path = get_dataset_path(db, "co2")
 ```
 
 `add` writes one entry to `datamanifest.toml` and downloads the file into a

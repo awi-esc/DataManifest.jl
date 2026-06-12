@@ -43,8 +43,9 @@ In an activated project (`using Pkg; Pkg.activate(...)`):
 ```julia
 using DataManifest
 
-DataManifest.add("https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"; name="co2")
-path = get_dataset_path("co2")
+db = read_dataset("datamanifest.toml")
+add(db, "https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.csv"; name="co2")
+path = get_dataset_path(db, "co2")
 ```
 
 `add` downloaded the Mauna Loa CO₂ record and wrote one entry to
@@ -80,7 +81,7 @@ everything declared in the manifest.
 `get_dataset_path` gives you a path; `load_dataset` goes one step further and
 returns the loaded object. For that, the dataset (or its file format) needs a
 **loader**: a reference to a Julia function, written as `"Module:function"` in
-the manifest. For example, with `csv = "CSV:read"` declared as a project-wide
+the manifest. For example, with `csv = "CSV:File"` declared as a project-wide
 loader, `load_dataset("co2")` returns the parsed table directly. How loaders
 are declared and resolved is covered in
 [docs/language-bindings.md](docs/language-bindings.md).
@@ -153,12 +154,12 @@ datamanifest add https://host/path/file.nc
 datamanifest verify               # re-check every checksum
 datamanifest refresh --scan       # repair: reassociate data found on disk
 datamanifest push co2 user@hpc    # rsync a dataset to another machine
-datamanifest storage              # where data goes on this host
+datamanifest config show          # resolved configuration, scope by scope
 ```
 
-See the [Python README](https://github.com/perrette/datamanifest#readme) for
-the use cases and the
-[CLI reference](https://github.com/perrette/datamanifest/blob/main/docs/cli.md)
+See the [use cases](https://perrette.github.io/datamanifest/use-cases/) on the
+central site and the
+[CLI reference](https://perrette.github.io/datamanifest/cli/)
 for every command. The two tools also cooperate at fetch time: a dataset whose
 fetcher is written in Python is fetched by delegating to this CLI (and the
 Python tool can delegate to Julia in turn) — see
@@ -174,7 +175,7 @@ one manifest serves a mixed Julia/Python project:
 
 ```toml
 [_LANG.julia.loaders]            # project-wide format → loader defaults
-csv = "CSV:read"
+csv = "CSV:File"
 nc  = "NCDatasets:Dataset"
 
 [ocean_temp]
@@ -234,7 +235,7 @@ the Julia side: the [quick start](docs/quickstart.md), the
 
 The manifest format is defined by a shared specification,
 [datamanifest.toml](https://github.com/perrette/datamanifest.toml) (currently
-tag `spec-v5.5`), common to this package and the sibling Python tool
+tag `spec-v5.6`), common to this package and the sibling Python tool
 ([`datamanifestpy`](https://pypi.org/project/datamanifestpy/) on PyPI). A
 complete annotated example manifest lives in the spec repository
 ([`examples/datasets.toml`](https://github.com/perrette/datamanifest.toml/blob/main/examples/datasets.toml)).

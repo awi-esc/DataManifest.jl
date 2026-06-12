@@ -402,7 +402,7 @@ raise an error.
 
 **TOML example:**
 ```toml
-[datasets.downstream]
+[downstream]
 uri = "https://..."
 requires = ["upstream_dataset", "10.1594/PANGAEA.123456"]
 ```
