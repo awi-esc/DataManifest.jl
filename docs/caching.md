@@ -47,6 +47,11 @@ the body directly, with no disk reads or writes.
   function's code (the code itself is not hashed).
 - `ext` (default `"jls"`) and `basename` (default `"data"`): the artifact's file
   format and file name.
+- `db` (optional): a `Database` the whole cache context derives from — gives a
+  library its own cache bundle, separate from the host project's folders and
+  state; see [library cache
+  bundles](https://perrette.github.io/datamanifest/api/#library-cache-bundles-database-scoped-caching)
+  on the central site and the [API reference](api.md#caching-the-cached-macro).
 
 Values in the key table may be strings, integers, booleans, finite floats, and
 arrays/objects of those. Floats are written in the form Python's `json.dumps`
