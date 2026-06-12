@@ -10,7 +10,7 @@ path = get_dataset_path("co2")
 ```
 
 `add` downloaded the Mauna Loa CO₂ record and wrote one entry to
-`Datasets.toml`, next to your `Project.toml`. The manifest is a plain TOML
+`datamanifest.toml`, next to your `Project.toml`. The manifest is a plain TOML
 file you can read and edit by hand:
 
 ```toml
@@ -28,7 +28,7 @@ put data elsewhere — inside the repository, on a scratch disk — see
 
 ## What to commit to git
 
-Commit **`Datasets.toml`** — it is the recipe: what to fetch and how to verify
+Commit **`datamanifest.toml`** — it is the recipe: what to fetch and how to verify
 it. Everything else stays out of git:
 
 - the downloaded data lives outside the repository (see above);
@@ -54,7 +54,7 @@ The calls above relied on the activated project to locate the manifest. You
 can instead build the `Database` object explicitly:
 
 ```julia
-db = Database("Datasets.toml", "my-data-folder")
+db = Database("datamanifest.toml", "my-data-folder")
 DataManifest.add(db, "https://…"; name="…")
 path = get_dataset_path(db, "co2")
 ```
@@ -62,7 +62,7 @@ path = get_dataset_path(db, "co2")
 ## Manifest-less databases
 
 Library code that only wants checksummed downloads into a folder it controls
-can skip the manifest entirely with `persist=false`: no `Datasets.toml`, no
+can skip the manifest entirely with `persist=false`: no `datamanifest.toml`, no
 state file, nothing written but the data. The folder accepts the same
 `$`-symbols as the storage configuration (`raw"…"` keeps Julia from
 interpolating the `$`):

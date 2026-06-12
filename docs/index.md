@@ -10,7 +10,7 @@
 DataManifest.jl keeps track of the datasets a scientific project depends on.
 You declare each dataset — its URL or git repository, an optional checksum
 (a hash of the file contents, used to verify a download), a format — in a
-**manifest**: a plain `Datasets.toml` file that lives in your repository.
+**manifest**: a plain `datamanifest.toml` file that lives in your repository.
 DataManifest.jl then downloads, verifies, extracts and loads the data on
 demand, and can cache your own computed results with the same machinery. The
 same manifest is read by a sibling Python tool, which also provides a
@@ -28,7 +28,7 @@ DataManifest.add("https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_annmean_mlo.c
 path = get_dataset_path("co2")
 ```
 
-`add` writes one entry to `Datasets.toml` and downloads the file into a
+`add` writes one entry to `datamanifest.toml` and downloads the file into a
 shared folder under your user data directory; `get_dataset_path` returns the
 on-disk path. The [quick start](quickstart.md) walks through this example.
 

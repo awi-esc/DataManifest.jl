@@ -30,7 +30,7 @@ loader = "MyClimate:load_sea_ice"
 A ref `"Module:function"` is resolved by `using Module` followed by a
 `getfield` lookup — no `eval`, no `include_string` of manifest content. The
 module must be importable in the active project; the manifest's project root
-is added to the load path, so a module file next to `Datasets.toml` works as
+is added to the load path, so a module file next to `datamanifest.toml` works as
 well as a package dependency.
 
 The call conventions:
@@ -105,7 +105,7 @@ dataset without a loader is an error.
 
 Manifests without the `[_META] schema = 1` header are read in a legacy mode
 where `julia =` / `loader =` fields and `[_LOADERS]` entries may hold inline
-code; they keep working as-is. `DataManifest.migrate("Datasets.toml")`
+code; they keep working as-is. `DataManifest.migrate("datamanifest.toml")`
 rewrites such a file in place — ref-shaped fields move into
 `[<ds>._LANG.julia]` and `[_LANG.julia.loaders]`, and the `[_META]` header is
 added; inline code that cannot become a ref is preserved verbatim with a log

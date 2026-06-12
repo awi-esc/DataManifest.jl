@@ -13,7 +13,7 @@
 DataManifest.jl keeps track of the datasets a scientific project depends on.
 You declare each dataset — its URL or git repository, an optional checksum
 (a hash of the file contents, used to verify a download), a format — in a
-**manifest**: a plain `Datasets.toml` file that lives in your repository.
+**manifest**: a plain `datamanifest.toml` file that lives in your repository.
 DataManifest.jl then downloads, verifies, extracts and loads the data on
 demand, and can cache your own computed results with the same machinery. It
 works with data repositories such as PANGAEA or Zenodo and with git hosts such
@@ -48,7 +48,7 @@ path = get_dataset_path("co2")
 ```
 
 `add` downloaded the Mauna Loa CO₂ record and wrote one entry to
-`Datasets.toml`, next to your `Project.toml`. The manifest is a plain TOML
+`datamanifest.toml`, next to your `Project.toml`. The manifest is a plain TOML
 file you can read and edit by hand:
 
 ```toml
@@ -64,7 +64,7 @@ the same downloads. `get_dataset_path` returns the resolved on-disk path.
 
 ## What to commit to git
 
-Commit **`Datasets.toml`** — it is the recipe: what to fetch and how to verify
+Commit **`datamanifest.toml`** — it is the recipe: what to fetch and how to verify
 it. Everything else stays out of git:
 
 - the downloaded data lives outside the repository (see above);
@@ -139,7 +139,7 @@ moved data recoverable are documented in [docs/storage.md](docs/storage.md).
 
 DataManifest.jl has no command-line interface of its own. The manifest is
 language-neutral, and the Python implementation's `datamanifest` CLI manages
-the same file (it auto-detects `Datasets.toml`): adding, listing, verifying,
+the same file (it auto-detects `datamanifest.toml`): adding, listing, verifying,
 repairing and syncing data all work from the shell, without touching your
 Julia code.
 
@@ -200,13 +200,13 @@ The quick start relied on the activated Julia project to locate the manifest.
 You can instead build the `Database` object explicitly:
 
 ```julia
-db = Database("Datasets.toml", "my-data-folder")
+db = Database("datamanifest.toml", "my-data-folder")
 DataManifest.add(db, "https://…"; name="…")
 path = get_dataset_path(db, "co2")
 ```
 
 Library code that only wants checksummed downloads into a folder it controls
-can skip the manifest entirely with `persist=false`: no `Datasets.toml`, no
+can skip the manifest entirely with `persist=false`: no `datamanifest.toml`, no
 state file, nothing written but the data. The folder accepts the same
 `$`-symbols as the storage configuration (`raw"…"` keeps Julia from
 interpolating the `$`):
@@ -246,7 +246,7 @@ CLI for that.
 ## Related projects
 
 DataManifest.jl is one member of a multi-language family built on the shared
-TOML schema: the same `Datasets.toml` is read by sibling tools in other
+TOML schema: the same `datamanifest.toml` is read by sibling tools in other
 languages via the `_LANG` namespace, so a Julia and a Python project can share
 one data declaration without stepping on each other. Configuration stays
 declarative: custom logic lives in references to external Julia code
@@ -255,7 +255,7 @@ declarative: custom logic lives in references to external Julia code
 **The DataManifest family:**
 
 - [`perrette/datamanifest.toml`](https://github.com/perrette/datamanifest.toml) — the shared TOML schema; the common contract every implementation reads.
-- [`perrette/datamanifest`](https://github.com/perrette/datamanifest) — the Python implementation, sharing the same `Datasets.toml` via the `_LANG` namespace; also the home of the [CLI](#manage-your-data-from-the-shell).
+- [`perrette/datamanifest`](https://github.com/perrette/datamanifest) — the Python implementation, sharing the same `datamanifest.toml` via the `_LANG` namespace; also the home of the [CLI](#manage-your-data-from-the-shell).
 
 **Julia alternatives** (single-language). As a rule of thumb: if you only need
 code-driven download-and-checksum, DataDeps.jl is lighter; if you want a rich

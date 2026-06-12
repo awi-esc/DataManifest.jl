@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.32.0] - 2026-06-12 — spec-v5.6: `datamanifest.toml` is the canonical manifest name
+
+Tracks datamanifest.toml **`spec-v5.6`** (manifest file naming and discovery).
 
 ### Breaking
 

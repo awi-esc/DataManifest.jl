@@ -4,7 +4,7 @@ This is the main user guide. It assumes you have skimmed the [introduction](inde
 
 A few terms used throughout:
 
-- A **manifest** is a TOML file, usually named `Datasets.toml`, that declares the
+- A **manifest** is a TOML file, usually named `datamanifest.toml`, that declares the
   datasets a project uses: where each one comes from, how to verify it, and
   optionally how to load it into Julia. Each top-level TOML table is one
   **dataset entry**; the table name is how you refer to the dataset from code.
@@ -30,7 +30,7 @@ Contents:
 
 ### Reading a manifest
 
-The most straightforward use starts from an existing `Datasets.toml`:
+The most straightforward use starts from an existing `datamanifest.toml`:
 
 ```toml
 [herzschuh2023]
@@ -54,7 +54,7 @@ Read it with the `Database` constructor:
 
 ```julia
 using DataManifest
-db = Database("Datasets.toml") # or Database("Datasets.toml", expanduser("~/datasets"))
+db = Database("datamanifest.toml") # or Database("datamanifest.toml", expanduser("~/datasets"))
 ```
 
 ```
@@ -66,12 +66,12 @@ Database(
     jesstierney/lgmDA => DatasetEntry(uri="https:/github.com/jesstierney/lgmDA/archive/refs...),
   ),
   datasets_folder="/home/perrette/.local/share/datamanifest/shared/datasets"
-  datasets_toml="/abs/path/to/Datasets.toml"
+  datasets_toml="/abs/path/to/datamanifest.toml"
 )
 ```
 
 If you work in an activated Julia environment (via `julia --project` or
-`Pkg.activate(...)`), `Database()` with no arguments looks for a `Datasets.toml`
+`Pkg.activate(...)`), `Database()` with no arguments looks for a `datamanifest.toml`
 next to `Project.toml`. The alternative file names `DataManifest.toml` and
 `datasets.toml` are also recognized, and the `DATAMANIFEST_TOML` (or
 `DATASETS_TOML`) environment variable can point to a manifest explicitly.
@@ -211,7 +211,7 @@ versioned name ending in `#...`).
 
 ### Maintaining the manifest file
 
-A `Database` is tied to its `Datasets.toml` by default: registering or deleting
+A `Database` is tied to its `datamanifest.toml` by default: registering or deleting
 datasets writes the file back. This happens whenever a `datasets_toml=` path was
 passed (or found via the active project), unless you opt out with
 `persist=false`:
@@ -232,7 +232,7 @@ Database(
 An in-memory database can still be written explicitly:
 
 ```julia
-write(db, "Datasets.toml")
+write(db, "datamanifest.toml")
 ```
 
 The output is sorted: structural `_*` tables (`_META`, `_LANG`, `_LOADERS`,
@@ -461,7 +461,7 @@ Semantics:
   maintenance, and not subject to read-pool probing.
 - **Resolution.** The expression may use `$datasets_dir`, `$key` and the usual
   `$`-symbols. A relative result is resolved against the project root (the
-  directory of `Datasets.toml`) — convenient for committing small data files
+  directory of `datamanifest.toml`) — convenient for committing small data files
   alongside your code. An absolute path is used as-is, which is handy for files
   on a NAS, an external drive, or a scratch volume.
 - **Cache-hit logic is unchanged.** If the file is already at the resolved
@@ -479,7 +479,7 @@ agreements, manual logins), combine an exact `storage_path` with
 `skip_download = true`: the location comes from `storage_path`, while
 `skip_download` makes the user-managed nature explicit and prevents any
 download attempt. For files committed to the repository alongside
-`Datasets.toml`, this pairing is usually unnecessary: the file is always
+`datamanifest.toml`, this pairing is usually unnecessary: the file is always
 present, so the cache hit wins and `uri` is never consulted.
 
 `skip_download = true` used alone (without a `storage_path`) makes
@@ -646,7 +646,7 @@ from the Julia model.
 #### Migrating a v0 manifest
 
 ```julia
-DataManifest.migrate("Datasets.toml")
+DataManifest.migrate("datamanifest.toml")
 ```
 
 moves ref-shaped `julia=`/`loader=` per-dataset fields and `[_LOADERS]` ref

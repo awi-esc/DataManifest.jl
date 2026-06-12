@@ -28,7 +28,7 @@ Database(;
 Database(datasets_toml::String, datasets_folder::String=""; kwargs...) -> Database
 ```
 
-Create a dataset database — the in-memory counterpart of a `Datasets.toml`
+Create a dataset database — the in-memory counterpart of a `datamanifest.toml`
 manifest.
 
 - If `datasets_folder` is not provided, the fetched-datasets folder is resolved

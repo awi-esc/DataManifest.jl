@@ -31,7 +31,7 @@ failing silently.
 DataManifest.jl has no command-line interface of its own. The manifest format
 is [shared across languages](https://github.com/perrette/datamanifest.toml),
 and the [Python implementation](https://github.com/perrette/datamanifest)
-provides a `datamanifest` CLI that manages the same `Datasets.toml`:
+provides a `datamanifest` CLI that manages the same `datamanifest.toml`:
 
 ```bash
 pip install datamanifestpy

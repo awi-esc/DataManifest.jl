@@ -39,7 +39,7 @@ reference](api.md)):
   (`cached`) artifacts are eligible.
 
 ```julia
-db = read_dataset("Datasets.toml")
+db = read_dataset("datamanifest.toml")
 for o in inspect_store(db)
     o.kind == "cached" && o.referenced == false && delete_object(o)   # prune orphaned artifacts
 end
