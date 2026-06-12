@@ -209,7 +209,9 @@ The search is **case-insensitive** and proceeds in the following order:
     - Any value in the `aliases` field (alternative names).
     - The `doi` field (if present).
     - The `key` field (unique key for the dataset).
-    - The `path` field.
+    - The `path` field (the URI path).
+    - For a git-repository dataset, the bare repository name (e.g. `repo` for
+      `https://github.com/org/repo`).
 3. **Partial match on dataset name** (if `partial=true`):
    Checks if `name` is a substring of any dataset name.
 4. **Partial match on alternative keys** (if `alt=true` and `partial=true`):
@@ -242,8 +244,10 @@ first match as a tuple `(name, entry)`.
   [`search_datasets`](#search_datasets).
 - If no match is found and `raise=true` (default), an error is thrown. If
   `raise=false`, returns `nothing`.
-- If multiple matches are found, an error is thrown (or a warning if
-  `raise=false`).
+- If the identifier is ambiguous (it matches more than one dataset — e.g. a
+  `doi` shared by several entries), an error is thrown naming the candidate
+  datasets; disambiguate by exact name. With `raise=false` the first match is
+  returned.
 
 **Returns:**
 A tuple `(name, entry)` where `entry` is the found `DatasetEntry`.
@@ -431,6 +435,53 @@ in-memory database to disk.
 
 ---
 
+## Loaders and checksums
+
+### `validate_loader` / `validate_loaders`
+
+```
+validate_loader(db::Database, name::String) -> Function
+validate_loaders(db::Database) -> Nothing
+```
+
+Loaders are compiled lazily, on first use — which avoids circular dependencies
+when a loader's modules depend on a package that itself uses DataManifest, but
+also means a broken loader only fails when a dataset is loaded. To compile and
+check loaders eagerly:
+
+- `validate_loader(db, name)` resolves the loader `name` (a named loader from
+  the manifest, a `Module:function` reference, or inline code), compiles it,
+  and returns the resulting function; it errors if the loader cannot be
+  resolved or does not evaluate to a function.
+- `validate_loaders(db)` runs `validate_loader` on every named loader declared
+  in the manifest.
+
+---
+
+### `verify_checksum`
+
+```
+verify_checksum(db::Database, entry::DatasetEntry; persist::Bool=true, extract::Union{Nothing,Bool}=nothing, skip_if_complete::Bool=false)
+```
+
+Verify the on-disk data of a dataset against its `checksum` field. Called
+automatically around downloads; call it directly to re-check a dataset.
+
+- If the entry's `checksum` is empty, the checksum is computed (as sha256) and
+  stored in the entry — and persisted to the manifest when `persist=true`.
+- A declared checksum is verified in its own algorithm and never silently
+  rewritten; an algorithm this implementation cannot compute (e.g. `md5`) is
+  preserved but skipped with a warning.
+- A mismatch raises an error listing the possible resolutions (remove the
+  file, reset the `checksum` field, use a different `key`, or set
+  `skip_checksum` on the entry or the database).
+- Verification is skipped when the data is not on disk yet, when
+  `skip_checksum` is set (entry or database), for directories when the
+  database's `skip_checksum_folders` is set, or — with `skip_if_complete=true` —
+  when the entry has a checksum and the data's completion marker is present.
+
+---
+
 ## Configuration
 
 ### `freeze_config!`
@@ -449,6 +500,9 @@ to re-read the config files and environment for an existing Database — e.g.
 after editing a config file. See [storage.md](storage.md) for the resolution
 ladder.
 
+Assigning `db.storage_config` or `db.datasets_toml` invalidates the snapshot;
+it is re-frozen (from the then-current files and environment) on next use.
+
 ---
 
 ### Storage helpers
@@ -461,7 +515,11 @@ entry points (all take the optional keywords `storage_config=`, `env=ENV`,
 ```
 Storage.datasets_dir(; ...) -> String
 Storage.datacache_dir(; ...) -> String
+Storage.datasets_pools(; ...) -> Vector{String}
+Storage.datacache_pools(; ...) -> Vector{String}
 Storage.dataset_storage_path(storage_path, key; ...) -> String
+Storage.resolve_symbol(name; ...) -> String
+Storage.config_layers([storage_config]; project_root="", env=ENV) -> Vector{Dict}
 Storage.canonical_write(; ...) -> Bool
 Storage.lock_stale_age(; ...) -> Float64
 Storage.ConfigSnapshot
@@ -474,8 +532,31 @@ Storage.ConfigSnapshot
   `$user_cache_dir/datamanifest/projects/$project/cached`). Overridable by
   `DATAMANIFEST_DATACACHE_DIR` or the `datacache_dir` config field. See
   [caching.md](caching.md).
+- `datasets_pools`: The resolved fetched-dataset **read pools** — extra
+  read-only locations probed for an already-present `<pool>/<key>` before
+  downloading. Set via the `datasets_pools` config field (a list of path
+  expressions, host-composable via `_HOST`) or
+  `DATAMANIFEST_DATASETS_POOLS` (pathsep-separated); when undefined, built-in
+  defaults apply (`Storage.POOL_DEFAULTS`); an explicit empty list disables
+  them.
+- `datacache_pools`: The resolved produced-artifact read pools, probed for an
+  already-produced `<pool>/<cachetype>[/<version>]/<hash>` before recomputing.
+  Set via `datacache_pools` or `DATAMANIFEST_DATACACHE_POOLS`; **opt-in** —
+  undefined means no pools.
 - `dataset_storage_path(storage_path, key; ...)`: Resolve a dataset's on-disk
   path from its `storage_path` field (empty means `$datasets_dir/$key`).
+- `resolve_symbol(name; ...)`: Resolve a single `$`-symbol. Ladder:
+  `DATAMANIFEST_<NAME>` environment variable → the configuration layers (per
+  layer: `_HOST` glob match, then base value) → the predefined defaults
+  (`user_data_dir`, `user_cache_dir`, `repo`, `project`). A resolved value is
+  itself a path expression and may reference other symbols; an undefined
+  non-predefined symbol is an error.
+- `config_layers(storage_config=Dict(); project_root="", env=ENV)`: The full
+  configuration chain as a vector of `[_STORAGE]`-shaped dicts, in precedence
+  order — the checkout config (`.datamanifest/config.toml`), the manifest's
+  `[_STORAGE]` (the `storage_config` argument), and the user-global config
+  (`~/.config/datamanifest/config.toml`). Pass the result as `storage_config`
+  to any resolver.
 - `canonical_write`: The `canonical` manifest-write directive (default
   `false`) — whether persisted manifests are piped through the Python
   `datamanifest format` CLI for byte-identical output. Resolved from
@@ -488,8 +569,203 @@ Storage.ConfigSnapshot
 - `ConfigSnapshot`: A frozen configuration — the file-backed config layers
   together with the environment and host they are resolved against, captured
   at Database creation (see [`freeze_config!`](#freeze_config)). Accepted
-  anywhere `storage_config` is, making every lookup deterministic for the
-  snapshot's lifetime.
+  anywhere `storage_config` is. A snapshot is **authoritative**: its captured
+  environment and hostname replace the resolvers' own `env=`/`host=` inputs,
+  so every ladder lookup against it — environment rung included — is
+  deterministic for the snapshot's lifetime.
+
+---
+
+## Caching: the `@cached` macro
+
+```
+@cached key=(args -> (; …)) [cachetype="…"] [version="…"] [ext="jls"] [basename="data"] function fn(; kw…) … end
+```
+
+Wrap a **keyword-only** function with produce-or-load disk caching: the result
+is computed once and saved under `<datacache_dir>/<cachetype>/[<version>/]<hash>/`;
+later calls with the same parameters load the artifact instead of recomputing.
+Positional arguments are rejected (the cache key is built from named
+parameters). The long-form guide is [caching.md](caching.md).
+
+The cache key is the SHA-256 of the canonical JSON (RFC 8785) of the keyword
+arguments selected by `key`, computed identically by the Julia and Python
+tools, so caches are shared across languages. Key-table values may be strings,
+integers, booleans, finite floats, and arrays/objects of those; `NaN`, `±Inf`,
+and nulls (`nothing`/`missing`) raise an error.
+
+**Macro options** (all literals except `key`):
+
+- `key` (required): a function receiving the call's keyword arguments as a
+  NamedTuple (every declared keyword except `_`-prefixed runtime knobs) and
+  returning the **key table** — the parameters that identify the result. Two
+  calls whose key tables are equal share one artifact.
+- `cachetype` (optional): the namespace artifacts are stored under. Defaults
+  to the function's importable name, `Module.func`, so distinct functions
+  never collide; a function with no stable importable name (defined in a
+  script, the REPL, or via `eval`) should be given an explicit `cachetype`.
+- `version` (optional): a version string that becomes a path segment and part
+  of the recipe identity (not part of the hash). Bump it to deliberately
+  invalidate old results, e.g. after changing the function's code.
+- `ext` (default `"jls"`): the artifact serialization format. `jls` (stdlib
+  `Serialization`) is the dependency-free built-in; register others (`nc`,
+  `jld2`, …) with
+  `DataManifest.Cache.register_format!(ext, save, load)` where `save(data,
+  path)` writes and `load(path)` reads.
+- `basename` (default `"data"`): the artifact's file name (`<basename>.<ext>`).
+
+**Per-call behaviour and special keyword arguments.** The macro injects a
+`cached::Bool=true` keyword: pass `cached=false` to run the body directly,
+with no disk reads or writes. If the wrapped function declares keyword
+arguments with these names, they get extra meaning:
+
+- any `_`-prefixed keyword is a runtime knob: visible in the body, excluded
+  from the hash;
+- `_metadata_extras` (NamedTuple/Dict/`nothing`) is merged into the artifact's
+  `metadata.toml` sidecar without affecting the hash;
+- `cache_dir` overrides the artifact location verbatim
+  (`<cache_dir>/<cachetype>/[<version>/]<hash>`), bypassing `datacache_dir`
+  entirely — useful for keeping one experiment's outputs in a folder of its
+  own;
+- `cached_toml` overrides the state-file path the produced variation is
+  registered in.
+
+---
+
+## State file
+
+The state file (`.datamanifest/state.toml`, next to the manifest) records
+where each fetched dataset and produced artifact landed on *this* machine. It
+is maintained automatically by `download_dataset` and `@cached`; the following
+exported helpers read and write it directly (e.g. for custom maintenance
+tooling).
+
+### `CachedIndex`
+
+```
+CachedIndex(; recipes=Dict(), datasets=Dict(), path="")
+```
+
+The in-memory view of a state file: `recipes` (produced artifacts) maps a
+recipe identity `(cachetype, version)` to its `ref`, `format`, and an
+`instances` map `hash => artifact directory`; `datasets` (fetched) maps a
+storage `key` to its recorded `storage_path` and `sha256`; `path` is the file
+it was read from / will be written to.
+
+### `locate_state`
+
+```
+locate_state(base::AbstractString) -> String
+```
+
+The state file to read at `base` (a directory or file path): the canonical
+`.datamanifest/state.toml` when present, else a legacy sibling
+(`.datamanifest-state.toml`, `cached.toml`), else the canonical path (which
+may not exist yet). In a linked git worktree without a state file of its own,
+the lookup falls through to the main checkout, so worktrees share one
+inventory.
+
+### `read_index` / `read_index_or_empty`
+
+```
+read_index(path::AbstractString) -> CachedIndex
+read_index_or_empty(path::AbstractString) -> CachedIndex
+```
+
+Read a state file from `path` (a file, or a directory holding one under its
+canonical or legacy name). Older schemas are migrated forward on read.
+`read_index_or_empty` returns an empty index bound to the canonical path when
+no file exists, so the next `write_index` lands in the right place.
+
+### `register!` / `register_dataset!`
+
+```
+register!(index::CachedIndex; cachetype, hash, storage_path="", ref="", format="", version="") -> CachedIndex
+register_dataset!(index::CachedIndex; key, storage_path="", sha256="") -> CachedIndex
+```
+
+Record a produced variation (`register!`: a new `hash` adds an instance under
+its `(cachetype, version)` recipe rather than replacing it) or a fetched
+dataset's resolved location and checksum (`register_dataset!`: a non-empty
+argument overwrites the recorded value, an empty one leaves it untouched).
+
+### `write_index`
+
+```
+write_index(index::CachedIndex, path::AbstractString="") -> String
+```
+
+Write the state file to `path` (or the index's bound `path`), canonically
+ordered, via a temp file and atomic rename. A legacy-named file is migrated to
+the canonical `.datamanifest/state.toml` on first write. Returns the path
+written.
+
+---
+
+## Store maintenance
+
+There is no automatic garbage collector: maintenance is always an explicit
+*inspect, filter, act* sequence, and only produced (`cached`) artifacts are
+eligible for deletion.
+
+### `inspect_store`
+
+```
+inspect_store(db::Database; cache_root="", cached_toml="") -> Vector{CacheObject}
+```
+
+Enumerate the produced artifacts under the resolved `datacache_dir` and the
+datasets present on disk as one list of maintenance objects, resolving
+`referenced`: a produced artifact is referenced iff its
+`(cachetype, version, hash)` identity is rooted by the project's state file; a
+present fetched dataset is always referenced (by its manifest entry).
+`cache_root` and `cached_toml` override the resolved cache folder and the
+state-file path (both default from `db`).
+
+Each `CacheObject` has the fields:
+
+- `kind`: `"cached"` (produced artifact) or `"datasets"` (fetched dataset);
+- `key`: `"<cachetype>/<hash>"` (produced) or the dataset name (fetched);
+- `hash`, `cachetype`, `version`: produced-artifact identity;
+- `format`, `size` (bytes), `location` (absolute path);
+- `created`: when the object was produced/fetched — the reliable age signal;
+- `last_access`: read from the filesystem at inspect time (the access time,
+  falling back to the modification time when atime is unreadable). Coarse and
+  possibly stale — `relatime` advances atime at most once a day, and
+  `noatime`/network/read-only filesystems record nothing — so never use it as
+  the sole basis for deletion; prefer `created`;
+- `referenced`: `true`/`false` once resolved (`nothing` while unknown).
+
+Pass the result through your own filter and act with `delete_object` /
+`move_object` — for example, pruning orphaned artifacts:
+
+```julia
+db = read_dataset("datamanifest.toml")
+for o in inspect_store(db)
+    o.kind == "cached" && o.referenced == false && delete_object(o)   # prune orphaned artifacts
+end
+```
+
+### `delete_object`
+
+```
+delete_object(obj::CacheObject) -> Nothing
+```
+
+Delete a produced artifact directory and its sibling completion/lock/tmp
+markers. Refuses anything that is not `kind="cached"` — fetched datasets are
+never removed by the maintenance surface (use
+[`delete_dataset`](#delete_dataset) for those).
+
+### `move_object`
+
+```
+move_object(obj::CacheObject, dest_root::AbstractString) -> String
+```
+
+Move a produced artifact to `dest_root`, preserving its
+`<cachetype>/[<version>/]<hash>` key path; returns the new location. Refuses
+anything that is not `kind="cached"`.
 
 ---
 
