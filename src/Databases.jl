@@ -634,12 +634,33 @@ end
 # The recorded path only helps *find* an existing object; a (re)download still writes to the
 # derived directive location (the gold standard).
 
+"""
+    dataset_state_root(db) -> String
+
+The directory whose `.datamanifest/state.toml` inventories this database's **fetched**
+datasets: the manifest's directory for a persisted database; for an **in-memory** one
+(`datasets_toml == ""`, e.g. `persist=false`) the resolved datasets root itself — the
+explicit `datasets_folder` (path expressions expanded) when set, else the resolved
+`datasets_dir` — so an in-memory database keeps its inventory under the storage root it
+describes and never writes a state file into the caller's project / cwd.
+"""
+function dataset_state_root(db::Database)::String
+    db.datasets_toml != "" && return dirname(db.datasets_toml)
+    sc = storage_layers(db)
+    proot = get_project_root(db)
+    folder = db.datasets_folder
+    isempty(folder) &&
+        return datasets_dir(; project_root=proot, storage_config=sc)
+    p = expand_path_expr(folder; project_root=proot, storage_config=sc)
+    return isabspath(p) ? p : (isempty(proot) ? abspath(p) : joinpath(proot, p))
+end
+
 # The state-file reader lives in the sibling `Cache` module (loaded after this one); reached
 # at runtime via the parent package. Returns `entry`'s recorded resolved location (absolute,
 # relative records anchored to the project root), or "" when unrecorded / unavailable.
 function _state_recorded_dataset_path(db::Database, entry::DatasetEntry)::String
-    isempty(db.datasets_toml) && return ""
-    base = dirname(db.datasets_toml)
+    base = dataset_state_root(db)
+    isempty(base) && return ""
     C = try; getfield(parentmodule(@__MODULE__), :Cache); catch; return ""; end
     sp = try
         sf = C.locate_state(base)
@@ -667,17 +688,26 @@ end
     record_dataset_state(db, entry, path)
 
 Record a fetched dataset's resolved `path` (+ its actual `sha256` unless checksums are
-skipped) into the project's state file — the inventory of where every object lives. Additive
-and concurrency-safe (re-read + merge + atomic write). Best-effort: a read-only / unwritable
-state file never breaks a download. No-op for a manifest-less (transient) database.
+skipped) into the database's state file — the inventory of where every object lives.
+Additive and concurrency-safe (re-read + merge + atomic write). Best-effort: a read-only /
+unwritable state file never breaks a download.
+
+The state file anchors at [`dataset_state_root`](@ref): the project (manifest) directory for
+a persisted database; for an **in-memory** database the resolved datasets root itself
+(`<datasets_root>/.datamanifest/state.toml`), recorded with absolute paths — nothing is
+written outside directories the database explicitly owns.
 """
 function record_dataset_state(db::Database, entry::DatasetEntry, path::AbstractString)
-    (isempty(path) || isempty(entry.key) || isempty(db.datasets_toml)) && return nothing
-    base = dirname(db.datasets_toml)
+    (isempty(path) || isempty(entry.key)) && return nothing
+    base = dataset_state_root(db)
+    isempty(base) && return nothing
     C = try; getfield(parentmodule(@__MODULE__), :Cache); catch; return nothing; end
     try
         idx = C.read_index_or_empty(base)
-        sp = _portable_storage_path(path, get_project_root(db))
+        # In-memory: the inventory lives under the datasets root, not the project — record
+        # the location absolute (project-relative rendering would mis-anchor on read-back).
+        sp = db.datasets_toml != "" ? _portable_storage_path(path, get_project_root(db)) :
+            abspath(path)
         sha = (db.skip_checksum || entry.skip_checksum) ? "" : entry.sha256
         C.register_dataset!(idx; key=entry.key, storage_path=sp, sha256=sha)
         C.write_index(idx)
@@ -1413,9 +1443,28 @@ function register_datasets(db::Database, datasets_toml::String; kwargs...)
 end
 
 # ----- Database keyword constructor, get_default_database, get_project_root -----
+"""
+    Database(; datasets_toml="", datasets_folder="", persist=true, storage_config=nothing,
+              skip_checksum=false, skip_checksum_folders=false, datasets=Dict(), kwargs...)
+
+Construct a database from a manifest (`datasets_toml`, defaulting to the discoverable
+manifest of the active project) or **in-memory** (`persist=false`: nothing is ever written
+back to a manifest, and `db.datasets_toml == ""` even when a file was read). An in-memory
+database keeps its state-file inventories under the storage roots it describes (see
+[`dataset_state_root`](@ref) and the `db=` option of `@cached`), never under the caller's
+project / cwd.
+
+`storage_config` (optional `Dict`) sets the manifest-layer `[_STORAGE]` table directly —
+the way to name an in-memory database's cache bundle, e.g.
+`Database(datasets_folder=..., persist=false, storage_config=Dict("project" => "mylib"))`
+puts produced artifacts under `…/projects/mylib/cached`. It overrides a `[_STORAGE]` table
+read from `datasets_toml`. The configuration is frozen at construction
+([`freeze_config!`](@ref)).
+"""
 function Database(; datasets_toml::String="", datasets_folder::String="",
     persist::Bool=true, skip_checksum::Bool=false, skip_checksum_folders::Bool=false,
-    datasets::Dict{String,<:DatasetEntry}=Dict{String,DatasetEntry}(), kwargs...)
+    datasets::Dict{String,<:DatasetEntry}=Dict{String,DatasetEntry}(),
+    storage_config::Union{Nothing,AbstractDict}=nothing, kwargs...)
     # A defaulted (empty) `datasets_folder` is left empty so the path model
     # resolves the `data` store via `Storage` (platformdirs). An explicit value
     # acts as the `data`-store root override (back-compat).
@@ -1438,6 +1487,10 @@ function Database(; datasets_toml::String="", datasets_folder::String="",
     if isfile(datasets_toml)
         register_datasets(db, datasets_toml; kwargs...)
     end
+    # An explicit storage_config is the manifest layer (it wins over a `[_STORAGE]` table
+    # read from the file above); set before the freeze so the snapshot carries it.
+    storage_config === nothing ||
+        (db.storage_config = Dict{String,Any}(String(k) => v for (k, v) in storage_config))
     freeze_config!(db)
     return db
 end

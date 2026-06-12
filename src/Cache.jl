@@ -1263,9 +1263,44 @@ end
 
 # ── Cache context (where produced artifacts default to) ───────────────────────
 #
-# Without a Database in scope, the produced path resolves from the environment (the
-# `$cache` folder) + the active project (for the cached scope = project id, and the git
-# audit anchor). An explicit `cache_dir` per call overrides location entirely.
+# The cache context is a plain `(storage_config, project_root, state_root)` triple.
+# With a Database in scope (`@cached db=…` / the `db=` kwarg of the functional API) it
+# derives from the database's frozen ConfigSnapshot and roots; without one, the bare
+# form unifies over the default database when a manifest is discoverable, and falls
+# back to the ambient derivation (active project + `[_STORAGE]` + config ladder)
+# otherwise. An explicit `cache_dir` per call overrides location entirely.
+#
+# Layering: this module never imports the fetch layer. A `db` handed in is reached
+# through a runtime-resolved reference to the sibling `Databases` module — the same
+# pattern `Databases` uses to reach `Cache` (see `_state_recorded_dataset_path`) — so
+# the include order (Databases before Cache) carries no static dependency edge and
+# there is no circular import.
+_databases_module() = getfield(parentmodule(@__MODULE__), :Databases)
+
+# The manifest the DEFAULT database would anchor at, discovered QUIETLY: the
+# `DATAMANIFEST_TOML` / `DATASETS_TOML` override, else the first manifest filename in
+# the active project — but only when the file actually EXISTS. A pointer to a missing
+# file means "no manifest discoverable" here (return ""), never a warning or an error:
+# caching must keep working in projects without a manifest, so the default-database
+# discovery error (`get_default_database`) is deliberately not reachable from caching.
+function _default_manifest_path(env=ENV)::String
+    for envvar in ("DATAMANIFEST_TOML", "DATASETS_TOML")
+        p = get(env, envvar, "")
+        !isempty(p) && isfile(p) && return String(p)
+    end
+    root = try
+        (Base.current_project() !== nothing && Base.current_project() == Base.active_project()) ?
+            abspath(dirname(Base.current_project())) : ""
+    catch
+        ""
+    end
+    isempty(root) && return ""
+    for name in MANIFEST_FILENAMES
+        p = joinpath(root, name)
+        isfile(p) && return p
+    end
+    return ""
+end
 
 # Load `[_STORAGE]` from the nearest manifest at `project_root` (empty when none/unreadable)
 # — so the same storage settings that drive fetched datasets also drive produced artifacts
@@ -1285,28 +1320,66 @@ function _discover_storage_config(project_root::AbstractString)::Dict{String,Any
     return Dict{String,Any}()
 end
 
-function _cache_context()
-    proot = try
-        dirname(Base.active_project())
-    catch
-        pwd()
+"""
+    _cache_context(db=nothing) -> (; storage_config, project_root, state_root)
+
+The cache layer's resolution context (database-scoped caching, spec-v5.6 docs note).
+
+With a `db` (a `Databases.Database`), the context derives from the database: its frozen
+`ConfigSnapshot` (`Databases.storage_layers(db)` — carrying `datacache_dir`, `\$project`,
+`lock_stale_age`, …), its project root, and its state-file anchor. An **in-memory**
+database (`datasets_toml == ""`, e.g. constructed with `persist=false`) anchors its
+produced-artifact inventory under the resolved datacache root itself
+(`<datacache_dir>/.datamanifest/state.toml`), so the caller's project / cwd never gains
+a `.datamanifest/` from it.
+
+Without a `db`, the bare form unifies over the **default database** when a manifest is
+discoverable (`DATAMANIFEST_TOML` / `DATASETS_TOML`, else the active project): the same
+config layers, anchored at the manifest's directory — in a normal project this equals
+the pre-existing ambient derivation. With no manifest discoverable it falls back to
+that ambient derivation (active project / cwd + the spec-v5 config ladder), so caching
+keeps working in manifest-less projects.
+"""
+function _cache_context(db=nothing)
+    if db !== nothing
+        D = _databases_module()
+        db isa D.Database ||
+            error("@cached: `db` must be a DataManifest Database; got $(typeof(db))")
+        sc = D.storage_layers(db)           # the frozen ConfigSnapshot
+        proot = D.get_project_root(db)
+        # persist=false rule: an in-memory database writes NO project state file — its
+        # produced inventory lives under the storage root it describes.
+        state_root = db.datasets_toml != "" ? dirname(db.datasets_toml) :
+            datacache_dir(; project_root=proot, storage_config=sc)
+        return (storage_config=sc, project_root=proot, state_root=state_root)
+    end
+    mf = _default_manifest_path()
+    proot = if !isempty(mf)
+        abspath(dirname(mf))   # the default database's anchor
+    else
+        try
+            dirname(Base.active_project())
+        catch
+            pwd()
+        end
     end
     # The full spec-v5 ladder: checkout config → manifest [_STORAGE] → user config.
     return (storage_config=config_layers(_discover_storage_config(proot); project_root=proot),
-            project_root=proot)
+            project_root=proot, state_root=proot)
 end
 
 # Resolve the state-file path a produced artifact is registered in (the spec's
 # `.datamanifest/state.toml` convention, with pragmatic fallbacks): an explicit
 # `cached_toml` (file, or a directory holding the default) →
-# `<project_root>/.datamanifest/state.toml` → the cwd equivalent. Mirrors the Python
-# `_locate_cached_toml`.
-function _locate_cached_toml(cached_toml, project_root::AbstractString)::String
+# `<state_root>/.datamanifest/state.toml` → the cwd equivalent. `state_root` is the
+# context's state-file anchor: the project root, or — for an in-memory database — the
+# resolved datacache root itself. Mirrors the Python `_locate_cached_toml`.
+function _locate_cached_toml(cached_toml, state_root::AbstractString)::String
     if cached_toml !== nothing && !isempty(string(cached_toml))
         ct = String(cached_toml)
         return isdir(ct) ? joinpath(ct, CACHED_INDEX_NAME) : ct
     end
-    !isempty(project_root) && return joinpath(project_root, CACHED_INDEX_NAME)
+    !isempty(state_root) && return joinpath(state_root, CACHED_INDEX_NAME)
     return joinpath(pwd(), CACHED_INDEX_NAME)
 end
 
@@ -1352,28 +1425,32 @@ end
 
 """
     save_cache(data, cachetype, key_table; ext="jls", basename="data", version=nothing,
-               cache_dir=nothing, extras=Dict(), name="", ref="", cached_toml=nothing) -> String
+               cache_dir=nothing, extras=Dict(), name="", ref="", cached_toml=nothing,
+               db=nothing) -> String
 
 Materialize `data` as a produced artifact under `datacache_dir` (or `cache_dir` verbatim) and
 write the `config.toml` / `metadata.toml` sidecars. Returns the artifact directory.
 
-The variation is registered in `cached.toml` (resolved from `cached_toml` →
-`<project_root>/cached.toml` → `<cwd>/cached.toml`) under its recipe `(cachetype, version)`
-with the parameter `hash` + `params`, and that index is stamped into the depot usage log.
-`name` is accepted for backward compatibility but no longer affects registration (schema 2
-keys recipes by identity, not by name).
+The variation is registered in the state file (resolved from `cached_toml` →
+`<state_root>/.datamanifest/state.toml`, where the state root is the context's anchor — see
+[`_cache_context`]) under its recipe `(cachetype, version)` with the parameter `hash`, and
+that index is stamped into the depot usage log. `db` scopes the whole context to a
+`Databases.Database` (its frozen config, project root, and state anchor); `name` is accepted
+for backward compatibility but no longer affects registration (recipes are keyed by
+identity, not by name).
 """
 function save_cache(data, cachetype::AbstractString, key_table;
                     ext::AbstractString="jls", basename::AbstractString="data",
                     version=nothing, cache_dir=nothing,
                     extras=Dict{String,Any}(),
-                    name::AbstractString="", ref::AbstractString="", cached_toml=nothing)::String
-    ctx = _cache_context()
+                    name::AbstractString="", ref::AbstractString="", cached_toml=nothing,
+                    db=nothing)::String
+    ctx = _cache_context(db)
     h = param_hash(key_table)
     dir = cached_dir(cachetype, h; version=version, cache_dir=cache_dir,
                      storage_config=ctx.storage_config, project_root=ctx.project_root)
     written_index = _register_produced(
-        _locate_cached_toml(cached_toml, ctx.project_root);
+        _locate_cached_toml(cached_toml, ctx.state_root);
         cachetype=cachetype, hash=h, storage_path=dir, ref=ref, format=ext,
         version=(version === nothing ? "" : String(version)))
     materialize(dir; stale_age=lock_stale_age(storage_config=ctx.storage_config)) do tmp
@@ -1387,13 +1464,14 @@ function save_cache(data, cachetype::AbstractString, key_table;
 end
 
 """
-    has_cache(cachetype, key_table; version=nothing, cache_dir=nothing) -> Bool
+    has_cache(cachetype, key_table; version=nothing, cache_dir=nothing, db=nothing) -> Bool
 
-`true` iff a complete, hash-valid produced artifact exists for these parameters.
+`true` iff a complete, hash-valid produced artifact exists for these parameters. `db`
+scopes the lookup to a `Databases.Database`'s context (see [`_cache_context`]).
 """
 function has_cache(cachetype::AbstractString, key_table;
-                   version=nothing, cache_dir=nothing)::Bool
-    ctx = _cache_context()
+                   version=nothing, cache_dir=nothing, db=nothing)::Bool
+    ctx = _cache_context(db)
     h = param_hash(key_table)
     dir = cached_dir(cachetype, h; version=version, cache_dir=cache_dir,
                      storage_config=ctx.storage_config, project_root=ctx.project_root)
@@ -1402,14 +1480,15 @@ end
 
 """
     load_cache(cachetype, key_table; ext="jls", basename="data", version=nothing,
-               cache_dir=nothing) -> data or nothing
+               cache_dir=nothing, db=nothing) -> data or nothing
 
-Return the produced artifact for these parameters, or `nothing` on a miss.
+Return the produced artifact for these parameters, or `nothing` on a miss. `db` scopes
+the lookup to a `Databases.Database`'s context (see [`_cache_context`]).
 """
 function load_cache(cachetype::AbstractString, key_table;
                     ext::AbstractString="jls", basename::AbstractString="data",
-                    version=nothing, cache_dir=nothing)
-    ctx = _cache_context()
+                    version=nothing, cache_dir=nothing, db=nothing)
+    ctx = _cache_context(db)
     h = param_hash(key_table)
     dir = cached_dir(cachetype, h; version=version, cache_dir=cache_dir,
                      storage_config=ctx.storage_config, project_root=ctx.project_root)
@@ -1424,13 +1503,14 @@ function _run_cached(body::Function, cachetype::AbstractString, key_table;
                      ext::AbstractString="jls", basename::AbstractString="data",
                      version=nothing, cache_dir=nothing,
                      extras=Dict{String,Any}(),
-                     name::AbstractString="", ref::AbstractString="", cached_toml=nothing)
-    ctx = _cache_context()
+                     name::AbstractString="", ref::AbstractString="", cached_toml=nothing,
+                     db=nothing)
+    ctx = _cache_context(db)
     h = param_hash(key_table)
     vstr = version === nothing ? "" : String(version)
     dir = cached_dir(cachetype, h; version=version, cache_dir=cache_dir,
                      storage_config=ctx.storage_config, project_root=ctx.project_root)
-    index_path = _locate_cached_toml(cached_toml, ctx.project_root)
+    index_path = _locate_cached_toml(cached_toml, ctx.state_root)
 
     # Search order for a hit: the state-file-recorded artifact dir (where it was actually
     # written — read-first, so a moved artifact is still found), the derived dir (current
@@ -1510,7 +1590,7 @@ end
 
 """
     @cached cachetype="name" key=(args -> (;…)) [ext="jls"] [basename="data"]
-            [version="v3"] function fn(; kw…) … end
+            [version="v3"] [db=DB] function fn(; kw…) … end
 
 Wrap a **keyword-only** function with transparent produce-or-load disk caching (spec-v4
 `cache-produce`).
@@ -1533,6 +1613,18 @@ Wrap a **keyword-only** function with transparent produce-or-load disk caching (
 - `name` (String literal, optional): accepted for backward compatibility; schema-2 recipes
   are keyed by `(cachetype, version)` identity, not by name, so it no longer affects
   registration.
+- `db` (optional): an expression whose value is a `Databases.Database`, **evaluated in the
+  caller's scope at call time** (so a `const LIBDB = Database(...)` defined anywhere works).
+  The entire cache context then derives from the database's frozen configuration
+  ([`Databases.storage_layers`](@ref)): artifacts land under *its* `datacache_dir` (keyed
+  with *its* `\$project`), locks use *its* `lock_stale_age`, and the variation registers in
+  *its* state file. An **in-memory** database (`persist=false` / `datasets_toml == ""`)
+  keeps that inventory under the resolved datacache root itself
+  (`<datacache_dir>/.datamanifest/state.toml`) — the caller's project / cwd never gains a
+  `.datamanifest/` from it. Without `db=`, the bare form unifies over the **default
+  database** when a manifest is discoverable (env override or active project), and falls
+  back to the ambient derivation when none is — caching keeps working in manifest-less
+  projects.
 
 The artifact lands under the manifest's **`datacache_dir`** (default
 `\$user_cache_dir/datamanifest/projects/\$project/cached`):
@@ -1580,6 +1672,7 @@ macro cached(args...)
     basename = nothing
     version = nothing
     regname = nothing
+    dbexpr = nothing
     for kw in kw_args
         Meta.isexpr(kw, :(=)) || error("@cached: expected `name=value`, got $(kw)")
         kwname, val = kw.args
@@ -1600,8 +1693,10 @@ macro cached(args...)
         elseif kwname === :name
             isa(val, String) || error("@cached: `name` must be a String literal")
             regname = val
+        elseif kwname === :db
+            dbexpr = val
         else
-            error("@cached: unknown argument `$kwname`. Expected `cachetype`, `key`, `ext`, `basename`, `version`, or `name`.")
+            error("@cached: unknown argument `$kwname`. Expected `cachetype`, `key`, `ext`, `basename`, `version`, `name`, or `db`.")
         end
     end
     keyfn === nothing && error("@cached: missing required `key=...`")
@@ -1672,6 +1767,10 @@ macro cached(args...)
 
     cd_expr = has_cache_dir ? :(cache_dir) : :(nothing)
     ct_expr = has_cached_toml ? :(cached_toml) : :(nothing)
+    # `db=` is an arbitrary expression evaluated in the CALLER's scope at CALL time, so a
+    # `const LIBDB = Database(...)` defined anywhere (even after the decorated function)
+    # works — definition order does not matter.
+    db_expr = dbexpr === nothing ? :(nothing) : dbexpr
     _ext = ext === nothing ? "jls" : ext
     _basename = basename === nothing ? "data" : basename
     _version = version === nothing ? nothing : version
@@ -1693,7 +1792,7 @@ macro cached(args...)
         return $_run(_body_fn, $_cachetype, _kt;
             ext=$_ext, basename=$_basename, version=$_version,
             cache_dir=$cd_expr, extras=$build_extras,
-            name=$_name, ref=$_ref, cached_toml=$ct_expr)
+            name=$_name, ref=$_ref, cached_toml=$ct_expr, db=$db_expr)
     end
 
     return esc(Expr(:function, new_sig, wrapper))

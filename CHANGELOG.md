@@ -1,5 +1,49 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Database-scoped caching (cache bundles).** The `@cached` macro gains a
+  `db=` option: an expression evaluated in the caller's scope at call time
+  (so a `const LIBDB = Database(...)` defined anywhere works) whose value is
+  a `Databases.Database`. The whole cache context then derives from the
+  database's frozen `ConfigSnapshot` (`Databases.storage_layers`): artifacts
+  land under *its* `datacache_dir` keyed with *its* `$project`, locks use
+  *its* `lock_stale_age`, and the variation registers in *its* state file.
+  The functional API (`save_cache` / `load_cache` / `has_cache`) accepts the
+  same `db=` keyword. Mirrors the Python tool's `Database.cached(...)`.
+- **The `persist=false` rule.** An in-memory database (`datasets_toml == ""`)
+  writes **no** project state file: produced-artifact records go under its
+  resolved datacache root (`<datacache_dir>/.datamanifest/state.toml`) and
+  fetched-dataset records under its resolved datasets root
+  (`<datasets_root>/.datamanifest/state.toml`, see
+  `Databases.dataset_state_root`) — nothing is written outside directories
+  the database explicitly owns, so a library holding its own in-memory
+  database never drops a `.datamanifest/` into the host project or the
+  caller's cwd. `inspect_store` reads the per-root inventories, so bundle
+  maintenance keeps working. (Previously an in-memory database recorded no
+  dataset state at all, and produced state anchored at the ambient project.)
+- `Database(; storage_config=...)`: the keyword constructor accepts the
+  manifest-layer `[_STORAGE]` table directly — the way to name an in-memory
+  database's cache bundle, e.g.
+  `Database(datasets_folder=..., persist=false, storage_config=Dict("project" => "mylib"))`.
+
+### Changed
+
+- **Bare `@cached` unifies over the default database** when a manifest is
+  discoverable (`DATAMANIFEST_TOML` / `DATASETS_TOML` pointing at an existing
+  file, else the active project): the context anchors at the manifest's
+  directory — in a normal project this is exactly the previous ambient
+  derivation. With no manifest discoverable the ambient fallback (active
+  project / cwd + config ladder) still applies, so caching keeps working in
+  manifest-less projects; the default-database "no manifest found" error is
+  never raised from caching.
+- Collision/identity checks remain per database (one inventory). Two
+  databases share artifacts exactly when they resolve the same
+  `datacache_dir`; no cross-project claims are made about caches that happen
+  to share a directory.
+
 ## [0.32.0] - 2026-06-12 — spec-v5.6: `datamanifest.toml` is the canonical manifest name
 
 Tracks datamanifest.toml **`spec-v5.6`** (manifest file naming and discovery).

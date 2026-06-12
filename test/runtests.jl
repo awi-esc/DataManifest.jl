@@ -1363,6 +1363,158 @@ try
         @test occursin("keyword-only", kwonly_err)
     end
 
+    @testset "database-scoped caching (db= / cache bundles)" begin
+        C = DataManifest.Cache
+        S = DataManifest.Storage
+        D = DataManifest.Databases
+
+        # ── `@cached db=`: the whole cache context derives from the database ──────
+        tmp = mktempdir()
+        cacheroot = joinpath(tmp, "cacheroot")
+        datadir = joinpath(tmp, "data")
+        # An in-memory database (persist=false): `storage_config` names the bundle
+        # ($project) and places it; lock_stale_age rides the same snapshot.
+        bundle_db = Database(datasets_folder=datadir; persist=false,
+            storage_config=Dict{String,Any}(
+                "project" => "mylib",
+                "datacache_dir" => joinpath(cacheroot, "projects", "\$project", "cached"),
+                "lock_stale_age" => 5))
+        @test bundle_db.datasets_toml == ""   # in-memory marker
+        ctx = C._cache_context(bundle_db)
+        # The context IS the database's frozen ConfigSnapshot (datacache_dir, $project,
+        # lock_stale_age all come from it), not a re-derived ambient one.
+        @test ctx.storage_config === D.storage_layers(bundle_db)
+        @test S.lock_stale_age(storage_config=ctx.storage_config) == 5.0
+        bundle_root = joinpath(cacheroot, "projects", "mylib", "cached")
+        @test S.datacache_dir(; project_root=ctx.project_root,
+                              storage_config=ctx.storage_config) == bundle_root
+        # persist=false rule: the produced inventory anchors at the datacache root itself.
+        @test ctx.state_root == bundle_root
+
+        lm_calls = Ref(0)
+        # `db=` is an expression evaluated in the caller's scope at CALL time: `LIBDB`
+        # is assigned only AFTER the decorated definition (definition order is free).
+        @cached cachetype="landmask" key=(a -> (; a.grid)) db=LIBDB function landmask(;
+                grid::String)
+            lm_calls[] += 1
+            return Dict("grid" => grid)
+        end
+        LIBDB = bundle_db
+
+        withenv("DATAMANIFEST_USAGE_LOG" => joinpath(tmp, "usage.toml")) do
+            host = mktempdir()   # a foreign cwd: must never gain a .datamanifest/
+            r1 = cd(() -> landmask(grid="5x5"), host)
+            r2 = cd(() -> landmask(grid="5x5"), host)   # hit
+            @test lm_calls[] == 1
+            @test r1 == r2 == Dict("grid" => "5x5")
+            # The caller's cwd stays clean (the in-memory rule).
+            @test !isdir(joinpath(host, ".datamanifest"))
+            # Artifact under the db's datacache_dir, keyed with the db's $project; the
+            # cross-language layout (<root>/<cachetype>/<hash>) is unchanged.
+            h = param_hash((; grid="5x5"))
+            adir = joinpath(bundle_root, "landmask", h)
+            @test isfile(joinpath(adir, "data.jls"))
+            @test C.config_is_valid(adir)
+            # The produced inventory lives under the bundle root itself.
+            sf = joinpath(bundle_root, ".datamanifest", "state.toml")
+            @test isfile(sf)
+            idx = read_index(sf)
+            @test has_instance(idx; cachetype="landmask", version="", hash=h)
+            @test instance_path_of(idx; cachetype="landmask", version="", hash=h) == adir
+            # inspect_store over the bundle works: the artifact is found and referenced.
+            objs = inspect_store(bundle_db)
+            produced = [o for o in objs if o.kind == "cached"]
+            @test length(produced) == 1
+            @test produced[1].hash == h
+            @test produced[1].referenced === true
+        end
+
+        # ── in-memory fetch side: dataset inventory under the datasets root ───────
+        src = joinpath(tmp, "incoming.txt")
+        write(src, "payload\n")
+        register_dataset(bundle_db, "file://$src"; name="incoming", key="files/incoming.txt")
+        host2 = mktempdir()
+        cd(() -> download_dataset(bundle_db, "incoming"), host2)
+        @test !isdir(joinpath(host2, ".datamanifest"))   # cwd stays clean here too
+        @test D.dataset_state_root(bundle_db) == datadir
+        dsf = joinpath(datadir, ".datamanifest", "state.toml")
+        @test isfile(dsf)
+        dsidx = read_index(dsf)
+        @test has_dataset(dsidx, "files/incoming.txt")
+        @test isabspath(dataset_path_of(dsidx, "files/incoming.txt"))
+        @test isfile(get_dataset_path(bundle_db, "incoming"))
+        # Round-trip: a fresh in-memory db over the same root finds the fetched bytes.
+        db2 = Database(datasets_folder=datadir; persist=false)
+        register_dataset(db2, "file://$src"; name="incoming", key="files/incoming.txt")
+        @test isfile(D.resolve_existing_path(db2, db2.datasets["incoming"]))
+
+        # ── bare @cached: unifies over the default database when discoverable ─────
+        proj = mktempdir()
+        manifest = joinpath(proj, "datamanifest.toml")
+        write(manifest, """
+        [_META]
+        schema = 1
+        [_STORAGE]
+        datacache_dir = "cached"
+        """)
+        bare_calls = Ref(0)
+        @cached cachetype="baretest" key=(a -> (; a.x)) function barefn(; x::Int=1)
+            bare_calls[] += 1
+            return x * 2
+        end
+        withenv("DATAMANIFEST_TOML" => manifest, "DATASETS_TOML" => nothing,
+                "DATAMANIFEST_USAGE_LOG" => joinpath(tmp, "usage2.toml")) do
+            @test C._default_manifest_path() == manifest
+            # Same context a Database over that manifest would freeze: anchored at the
+            # manifest's directory, [_STORAGE] honored, state at the project root.
+            ctxbare = C._cache_context()
+            @test ctxbare.project_root == proj
+            @test ctxbare.state_root == proj
+            @test S.datacache_dir(; project_root=ctxbare.project_root,
+                                  storage_config=ctxbare.storage_config) ==
+                  joinpath(proj, "cached")
+            dbp = Database(datasets_toml=manifest)
+            @test C._cache_context(dbp).state_root == proj
+            @test barefn(x=3) == 6
+            @test barefn(x=3) == 6   # hit
+            @test bare_calls[] == 1
+            h2 = param_hash((; x=3))
+            @test isfile(joinpath(proj, "cached", "baretest", h2, "data.jls"))
+            # State file where a persisted Database over this manifest puts it.
+            psf = joinpath(proj, ".datamanifest", "state.toml")
+            @test isfile(psf)
+            @test has_instance(read_index(psf); cachetype="baretest", version="", hash=h2)
+        end
+
+        # ── bare form with NO manifest discoverable: ambient fallback, no error ───
+        nowhere = mktempdir()
+        amb_calls = Ref(0)
+        @cached cachetype="ambient" key=(a -> (; a.x)) function ambientfn(; x::Int=1,
+                cache_dir=nothing, cached_toml=nothing)
+            amb_calls[] += 1
+            return x + 1
+        end
+        withenv("DATAMANIFEST_TOML" => nothing, "DATASETS_TOML" => nothing,
+                "DATAMANIFEST_USAGE_LOG" => joinpath(tmp, "usage3.toml")) do
+            cd(nowhere) do
+                @test C._default_manifest_path() == ""
+                # The default-database "no manifest found" error must not leak into
+                # caching: the bare form keeps working on the ambient derivation.
+                kw = (; cache_dir=joinpath(nowhere, "c"),
+                        cached_toml=joinpath(nowhere, ".datamanifest", "state.toml"))
+                @test ambientfn(; x=1, kw...) == 2
+                @test ambientfn(; x=1, kw...) == 2   # hit
+                @test amb_calls[] == 1
+            end
+        end
+
+        # A non-Database `db=` fails with a clear message (evaluated at call time).
+        @cached cachetype="baddb" key=(a -> (; a.x)) db="not a db" function baddbfn(; x::Int=1)
+            x
+        end
+        @test_throws ErrorException baddbfn(x=1)
+    end
+
     @testset "materialize lock semantics (spec-v5.2)" begin
         M = DataManifest.PipeLines
         S = DataManifest.Storage

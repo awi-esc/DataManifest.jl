@@ -68,7 +68,10 @@ maintenance objects, resolving `referenced` — the one place that bridges both 
 A produced artifact is `referenced` iff its `(cachetype, version, hash)` identity is rooted by
 the project's state file (`.datamanifest/state.toml`, or a legacy `.datamanifest-state.toml` /
 `cached.toml`); a
-present fetched dataset is referenced by its manifest entry. `cache_root` / `cached_toml`
+present fetched dataset is referenced by its manifest entry. For an **in-memory** database
+(`datasets_toml == ""`) the produced inventory lives under the resolved datacache root itself
+(`<datacache_dir>/.datamanifest/state.toml`), and that is where it is read from — so
+maintenance over a library's cache bundle works without a project. `cache_root` / `cached_toml`
 override the resolved `datacache_dir` and the state-file path (both default from `db`). Pass
 the result through your own filter (`kind`, `referenced == false`, `last_access` age, …) and
 act with [`delete_object`] / [`move_object`].
@@ -80,11 +83,12 @@ function inspect_store(db::Databases.Database; cache_root::AbstractString="",
     objects = Cache.CacheObject[]
 
     # Produced artifacts under the manifest's `datacache_dir` (spec-v4), tagged referenced via
-    # the state file on the `(cachetype, version, hash)` reachability key.
-    croot = isempty(cache_root) ?
-        Storage.datacache_dir(; project_root=project_root, storage_config=sc) :
-        String(cache_root)
-    base = db.datasets_toml != "" ? dirname(db.datasets_toml) : pwd()
+    # the state file on the `(cachetype, version, hash)` reachability key. An in-memory
+    # database keeps that inventory under the resolved datacache root itself
+    # (`<datacache_dir>/.datamanifest/state.toml`), not under a project / the cwd.
+    default_croot = Storage.datacache_dir(; project_root=project_root, storage_config=sc)
+    croot = isempty(cache_root) ? default_croot : String(cache_root)
+    base = db.datasets_toml != "" ? dirname(db.datasets_toml) : default_croot
     idx_path = isempty(cached_toml) ? Cache.locate_state(base) : String(cached_toml)
     referenced_keys = Set{NTuple{3,String}}()
     if isfile(idx_path)
