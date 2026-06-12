@@ -1,6 +1,0 @@
-# Pin below MkDocs 2.0: that release drops the plugin/theme/config system
-# with no migration path and is incompatible with Material for MkDocs.
-# The 1.x line is stable and is what Material targets.
-mkdocs>=1.5,<2
-mkdocs-material>=9.5
-mkdocs-include-markdown-plugin>=6.0

@@ -1,12 +1,16 @@
 # Produce-or-load caching (`@cached`)
 
-`@cached` wraps a function so that its result is computed once and saved to disk;
-later calls with the same parameters load the saved result instead of recomputing
-it. The saved result is called an **artifact**. This is separate from fetching
-declared datasets: an artifact comes from running your own code, not from
-downloading a URI, and it has no entry in `datasets.toml`. The
-[walkthrough](doc.md) shows the short version;
-this page describes the full behaviour.
+`@cached` wraps a function so that its result is computed once and saved to
+disk; later calls with the same parameters load the saved result (an
+**artifact**) instead of recomputing it. The concept — and the Python
+`@cached` decorator over the same store — is described on the central site
+under [Caching computed
+results](https://perrette.github.io/datamanifest/api/#caching-computed-results);
+where artifacts land on disk and how to inspect or prune them is part of the
+[storage model](https://perrette.github.io/datamanifest/storage/). The cache
+key is the SHA-256 of the canonical JSON (RFC 8785) of the hash-affecting
+parameters, computed identically by every implementation, so caches are shared
+across languages. This page documents the Julia macro.
 
 ```julia
 using DataManifest
@@ -23,10 +27,10 @@ load_anomaly(; grid="5x5")               # computes once, then loads from disk o
 load_anomaly(; grid="5x5", cached=false) # escape hatch: run the body, no disk I/O
 ```
 
-The wrapped function must take keyword arguments only — positional arguments are
-rejected, because the cache key is built from named parameters. The macro adds a
-`cached::Bool=true` keyword to the function: pass `cached=false` to run the body
-directly, with no disk reads or writes.
+The wrapped function must take keyword arguments only — positional arguments
+are rejected, because the cache key is built from named parameters. The macro
+adds a `cached::Bool=true` keyword to the function: pass `cached=false` to run
+the body directly, with no disk reads or writes.
 
 ## Macro options
 
@@ -44,37 +48,12 @@ directly, with no disk reads or writes.
 - `ext` (default `"jls"`) and `basename` (default `"data"`): the artifact's file
   format and file name.
 
-## The cache key
-
-Each key table maps to a **cache key** in two steps. First the table is
-serialized to **canonical JSON** — a fully specified JSON encoding (RFC 8785)
-with object keys sorted and no insignificant whitespace, so the same table
-always yields the same bytes. The **parameter hash** is the SHA-256 of those
-bytes. Because the byte form is pinned, other tools (such as the Python
-implementation) compute the same hash, and caches are shared across languages.
-
 Values in the key table may be strings, integers, booleans, finite floats, and
 arrays/objects of those. Floats are written in the form Python's `json.dumps`
 uses (`1.0` → `1.0`, `1e-5` → `1e-05`). `NaN`, `±Inf`, and nulls
 (`nothing`/`missing`) raise an error, since they have no stable JSON form.
 
-## Artifacts on disk
-
-Each artifact is a self-describing directory at
-`<datacache_dir>/<cachetype>/[<version>/]<hash>/`, where `datacache_dir`
-defaults to the per-project `$user_cache_dir/datamanifest/projects/$project/cached`
-(see [storage.md](storage.md) for how it is configured). The directory contains:
-
-- `<basename>.<ext>` — the artifact itself;
-- `config.toml` — a **sidecar** (a small file stored next to the artifact)
-  holding the key table and the recorded hash, so the hash can be recomputed and
-  verified from disk alone;
-- `metadata.toml` — a sidecar with provenance: creation time, tool, host, user,
-  and git state;
-- `.complete` — a marker that the write finished.
-
-A directory only counts as a cache hit when its `.complete` marker exists and
-re-hashing the `config.toml` key table reproduces the recorded hash.
+## Formats
 
 `jls` (stdlib `Serialization`) is the built-in zero-dependency format; register
 others (`nc`, `jld2`, …) with `DataManifest.Cache.register_format!(ext, save, load)`.
@@ -94,13 +73,14 @@ gives them extra meaning:
   (`<cache_dir>/<cachetype>/[<version>/]<hash>`), bypassing `datacache_dir`
   entirely — useful for keeping one experiment's outputs in a folder of its own.
 
-## Concurrency
+## On disk
 
-Processes producing the same artifact serialize on a `.lock` pidfile next to the
-artifact directory, refreshed by the holder while it works. A second process
-asking for the same artifact waits, then re-checks the directory and loads what
-the first one wrote instead of recomputing it — N workers compute the result
-once. Locks left behind by a crashed holder are detected as stale and reclaimed.
-
-Where artifacts are recorded, how a moved or deleted state file recovers, and how
-to inspect / prune the cache: see [storage.md](storage.md).
+Each artifact is a self-describing directory at
+`<datacache_dir>/<cachetype>/[<version>/]<hash>/`, holding the artifact file,
+a `config.toml` sidecar (the re-hashable key table), a `metadata.toml` sidecar
+(provenance), and a `.complete` marker. Processes producing the same artifact
+serialize on a `.lock` pidfile, so N workers compute a result once; stale
+locks left by a crashed holder are reclaimed (see the `lock_stale_age`
+[configuration variable](https://perrette.github.io/datamanifest/configuration/)).
+How artifacts are recorded in the state file and how to inspect or prune the
+cache from Julia: see [storage](storage.md).

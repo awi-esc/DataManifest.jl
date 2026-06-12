@@ -32,3 +32,4 @@ workflows/
 
 # spec-v4.1 git-ignored state file (regenerable local inventory)
 .datamanifest-state.toml
+site/

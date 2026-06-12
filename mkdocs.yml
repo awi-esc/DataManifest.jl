@@ -69,9 +69,10 @@ nav:
   - Guides:
       - Walkthrough: doc.md
       - Produce-or-load caching: caching.md
-      - Per-language bindings: language-bindings.md
-      - Storage model: storage.md
+      - Fetchers and loaders: language-bindings.md
+      - Storage: storage.md
       - Configuration: configuration.md
       - Manage your data from the shell: shell.md
   - Reference:
       - API: api.md
+  - Ecosystem documentation: https://perrette.github.io/datamanifest/

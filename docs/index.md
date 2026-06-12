@@ -32,6 +32,15 @@ path = get_dataset_path("co2")
 shared folder under your user data directory; `get_dataset_path` returns the
 on-disk path. The [quick start](quickstart.md) walks through this example.
 
+## How the documentation is arranged
+
+This site covers the Julia package: [installation](installation.md), the
+[quick start](quickstart.md), the [walkthrough](doc.md), and the
+[API reference](api.md). Everything shared across the ecosystem — the storage
+and configuration concepts, the manifest format, and the `datamanifest`
+command-line interface — is documented once, on the central site:
+**<https://perrette.github.io/datamanifest/>**.
+
 ## Where to go next
 
 **Getting started**
@@ -42,15 +51,15 @@ on-disk path. The [quick start](quickstart.md) walks through this example.
 **Guides**
 
 - [Walkthrough](doc.md) — the main user guide, from everyday usage to advanced topics.
-- [Produce-or-load caching (`@cached`)](caching.md) — cache computed results, keyed by parameters.
-- [Fetchers, loaders, and language bindings](language-bindings.md) — custom fetch and load code, `_LANG`, lazy access.
-- [Storage](storage.md) — where data lands on disk, read pools, the state file.
-- [Configuration](configuration.md) — every configuration variable, its scopes, and how values are resolved.
-- [Manage your data from the shell](shell.md) — the Python `datamanifest` CLI over the same manifest.
+- [Produce-or-load caching (`@cached`)](caching.md) — the Julia caching macro.
+- [Fetchers, loaders, and language bindings](language-bindings.md) — custom fetch and load code in Julia.
+- [Storage](storage.md) and [configuration](configuration.md) — the Julia entry points, with pointers to the central reference.
+- [Manage your data from the shell](shell.md) — the `datamanifest` CLI over the same manifest.
 
 **Reference**
 
 - [API](api.md) — every function and field.
+- [Ecosystem documentation](https://perrette.github.io/datamanifest/) — concepts, [CLI reference](https://perrette.github.io/datamanifest/cli/), [manifest format](https://perrette.github.io/datamanifest/manifest-format/).
 
 ## From the same author
 

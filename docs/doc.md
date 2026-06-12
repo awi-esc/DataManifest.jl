@@ -169,55 +169,35 @@ When `name` is omitted, it is derived from the URI (for git repositories, the
 
 ## Configuration
 
-> Every configuration variable, its scopes, and the resolution rule are
-> summarized on the [configuration page](configuration.md).
+> The storage model and the configuration system are shared by every
+> implementation and documented in full on the central site:
+> [storage model](https://perrette.github.io/datamanifest/storage/) and
+> [configuration](https://perrette.github.io/datamanifest/configuration/).
+> The Julia entry points are summarized in [storage](storage.md) and
+> [configuration](configuration.md).
 
 ### Where data is stored
 
-Storage reduces to two folder settings:
-
-- **`datasets_dir`** — where fetched datasets land, one per dataset key:
-  `<datasets_dir>/<key>`. The default is a machine-global shared store,
-  `$user_data_dir/datamanifest/shared/datasets` (on Linux:
-  `$XDG_DATA_HOME/...`, falling back to `~/.local/share/...`), shared and
-  de-duplicated across projects.
-- **`datacache_dir`** — where results produced by `@cached` land:
-  `<datacache_dir>/<cachetype>/[<version>/]<hash>/`. The default is per project:
-  `$user_cache_dir/datamanifest/projects/$project/cached`.
-
+Storage reduces to two folder settings: **`datasets_dir`** — where fetched
+datasets land, one per dataset key (`<datasets_dir>/<key>`; the default is a
+machine-global shared store under your user data directory, de-duplicated
+across projects) — and **`datacache_dir`** — where results produced by
+`@cached` land (per project by default, under your user cache directory).
 Both can be set in the manifest's committed `[_STORAGE]` table (e.g.
 `datasets_dir = "datasets"` for a repo-local layout), per machine in the
-git-ignored `.datamanifest/config.toml` next to the manifest, or user-globally
-in `~/.config/datamanifest/config.toml`. Path values may contain `$`-symbols:
-the predefined `$user_data_dir`, `$user_cache_dir`, `$repo` and `$project`,
-user-defined `[_STORAGE]` keys, environment variables such as `$USER`, and `~`.
-Host-specific values go under `[_STORAGE._HOST."<glob>"]`.
-
-When the same setting is defined in several places, the first match on this
-ladder wins:
-
-1. `DATAMANIFEST_<NAME>` environment variable
-2. checkout config (`.datamanifest/config.toml`)
-3. manifest `[_STORAGE._HOST."<glob>"]` (matching this host)
-4. manifest `[_STORAGE]`
-5. user config (`~/.config/datamanifest/config.toml`)
-6. built-in default
-
-The ladder is evaluated once, when the `Database` is created — see
+git-ignored `.datamanifest/config.toml`, user-globally, or with a
+`DATAMANIFEST_<NAME>` environment variable; path values may contain
+`$`-symbols, and **read pools** let a project reuse data another project
+already holds. The defaults, the resolution ladder, pools, and host-specific
+values are on the
+[central storage page](https://perrette.github.io/datamanifest/storage/).
+In Julia, the ladder is evaluated once, when the `Database` is created — see
 [The frozen configuration snapshot](#the-frozen-configuration-snapshot).
-
-A **read pool** is an extra, read-only location that is checked for a dataset
-before downloading; it lets a project reuse data that another project (or
-another folder layout) already holds. A few locations (`./datasets/`,
-`$user_data_dir/datamanifest/datasets`, `~/.cache/Datasets`) are built-in read
-pools, so datasets already present there resolve without a re-download.
 
 Two simpler overrides exist: passing `datasets_folder=` to the `Database`
 constructor uses that exact folder for all datasets, and a per-dataset
 `storage_path` field relocates a single dataset (see
 [Per-dataset locations](#per-dataset-locations-storage_path)).
-
-The full storage reference is in [docs/storage.md](storage.md).
 
 #### Names on disk
 
@@ -536,13 +516,11 @@ in TOML formatting details. For byte-identical files, pass
 `write(db, path; canonical=true)` or set the `canonical` config field to pipe
 every persisted manifest through the Python `datamanifest format` CLI.
 
-`canonical` is resolved on the ordinary configuration ladder —
-`DATAMANIFEST_CANONICAL` environment variable, the checkout config
-(`.datamanifest/config.toml`), the manifest `[_STORAGE]`, the user config
-(`~/.config/datamanifest/config.toml`), each with `_HOST` glob support — so
-e.g. `canonical = true` in the checkout config enables it for that project on
-that machine. Like every config field, it is evaluated once, when the Database
-is created (see below).
+`canonical` is resolved on the ordinary
+[configuration ladder](https://perrette.github.io/datamanifest/configuration/)
+— so e.g. `canonical = true` in the checkout config enables it for that
+project on that machine. Like every config field, it is evaluated once, when
+the Database is created (see below).
 
 The CLI is looked up next to the manifest
 (`<manifest dir>/.venv/bin/datamanifest`, falling through to the main

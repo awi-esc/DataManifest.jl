@@ -162,7 +162,7 @@ the use cases and the
 for every command. The two tools also cooperate at fetch time: a dataset whose
 fetcher is written in Python is fetched by delegating to this CLI (and the
 Python tool can delegate to Julia in turn) — see
-[cross-language fetch](docs/language-bindings.md#the-ladders).
+[cross-language fetch](docs/language-bindings.md#the-julia-rungs-of-the-ladders).
 
 ## One manifest, several languages
 
@@ -219,13 +219,16 @@ path = get_dataset_path(db, "co2")   # → ~/.local/share/mylib/gml.noaa.gov/…
 
 ## Documentation
 
-Browsable site: **<https://awi-esc.github.io/DataManifest.jl/>**. The same pages in the repo:
+The main documentation lives on the central site,
+**<https://perrette.github.io/datamanifest/>** — the storage and configuration
+concepts, the manifest format, and the `datamanifest` CLI, shared by the whole
+ecosystem.
 
-- [docs/doc.md](docs/doc.md) — the long-form walkthrough; [docs/api.md](docs/api.md) — the API.
-- [docs/configuration.md](docs/configuration.md) — every configuration variable, its scopes, and how values are resolved.
-- [docs/storage.md](docs/storage.md) — storage model, read pools, state file, maintenance.
-- [docs/caching.md](docs/caching.md) — the `@cached` layer in full.
-- [docs/language-bindings.md](docs/language-bindings.md) — `_LANG`, resolution order, `lazy_access`.
+This package's site, **<https://awi-esc.github.io/DataManifest.jl/>**, covers
+the Julia side: the [quick start](docs/quickstart.md), the
+[walkthrough](docs/doc.md), the [API reference](docs/api.md), the
+[`@cached` macro](docs/caching.md), and
+[fetchers and loaders in Julia](docs/language-bindings.md).
 
 ## Conformance
 
