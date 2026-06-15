@@ -1257,9 +1257,15 @@ try
         kt = Dict("grid" => "5x5", "skip_models" => ["CESM.*", "FGOALS.*"])
         @test C.canonical_json(kt) == "{\"grid\":\"5x5\",\"skip_models\":[\"CESM.*\",\"FGOALS.*\"]}"
         @test param_hash(kt) == "83425a30d111562d46c1fce9de7618ea7f1f54e1be72e086cba0ac63c6f2ce9b"
-        # NamedTuple + Symbol coercion + `_`-key exclusion give the same hash.
+        # NamedTuple + Symbol-key coercion + `_`-key exclusion give the same hash.
         @test param_hash((; grid="5x5", skip_models=["CESM.*", "FGOALS.*"])) == param_hash(kt)
         @test param_hash((; grid="5x5", skip_models=["CESM.*", "FGOALS.*"], _parallel=true)) == param_hash(kt)
+        # A Symbol *value* in the key is coerced to its string form (a deterministic
+        # projection), so it hashes identically to the equivalent string — both as a
+        # dict value, a NamedTuple value, and nested inside an array.
+        @test param_hash(Dict("grid" => :coarse)) == param_hash(Dict("grid" => "coarse"))
+        @test param_hash((; grid=:coarse)) == param_hash((; grid="coarse"))
+        @test param_hash(Dict("opts" => [:a, :b])) == param_hash(Dict("opts" => ["a", "b"]))
 
         # spec-v3.1: finite floats are valid hash inputs, serialized via the normative
         # Python `json.dumps` form. Cross-tool reference vectors (from the Python tool):
