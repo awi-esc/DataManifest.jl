@@ -311,9 +311,9 @@ load_anomaly(; grid="5x5")               # computes once; subsequent calls load 
 load_anomaly(; grid="5x5", cached=false) # escape hatch: run the body, no disk I/O
 ```
 
-The cache key is the SHA-256 of the canonical JSON of the hash-affecting keyword
-parameters (kwargs whose name starts with `_` are runtime knobs and are
-excluded). Produced datasets are keyword-only, and hash inputs must be strings,
+The cache key is the SHA-256 of the canonical JSON of the hash-affecting
+parameters — positional and keyword alike, each by name (parameters whose name
+starts with `_` are runtime knobs and are excluded). Hash inputs must be strings,
 integers, booleans, finite floats, or arrays/objects of those. Finite floats are
 serialized in the normative Python `json.dumps` form; `NaN`, `±Inf` and nulls
 raise an error. This keeps the hash identical across the Julia and Python

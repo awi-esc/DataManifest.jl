@@ -1573,10 +1573,9 @@ end
 
 """
     @cached cachetype="name" key=(args -> (;…)) [ext="jls"] [basename="data"]
-            [version="v3"] [db=DB] function fn(; kw…) … end
+            [version="v3"] [db=DB] function fn(pos…; kw…) … end
 
-Wrap a **keyword-only** function with transparent produce-or-load disk caching (spec-v4
-`cache-produce`).
+Wrap a function with transparent produce-or-load disk caching (spec-v4 `cache-produce`).
 
 - `cachetype` (String literal, optional): the artifact namespace. **Defaults to the producing
   function's importable name `Module.func`** so distinct functions never collide; pass an
@@ -1629,8 +1628,18 @@ and `format`; that index path is stamped into the depot usage log and the `metad
 (best-effort): if the index lost this variation (deleted by hand, or never written) or its
 `ref` drifted, the hit re-registers it, so the index rebuilds by re-running.
 
-**Produced datasets are keyword-only** — a function with positional arguments is rejected
-(a positional list has no stable name→value identity to hash).
+**Positional and keyword arguments both feed the key.** A positional parameter
+participates in the key NamedTuple by its declared name, just like a keyword argument, so
+`function fn(grid, n; opt=1)` hashes on `(; grid, n, opt)`. (The hash is the SHA-256 of the
+table your `key` closure returns, so it is unaffected by whether a call passes an argument
+positionally or by keyword.) The full positional expressions — type annotations and
+defaults — are preserved in the wrapper's signature, so it stays method-dispatch faithful:
+several `@cached` methods of one function dispatching on distinct positional types keep
+distinct caches, and `@invoke fn(x::T, …)` still routes through the wrapper. Splatted
+parameters (`args...`) are rejected — a varargs list has no fixed name→value identity to
+hash. A `_`-prefixed *keyword* argument is a runtime knob excluded from the key; a
+`_`-prefixed *positional* parameter is still hashed (a positional is a load-bearing
+identity).
 
 **Concurrency (spec-v5.2).** Concurrent processes producing the same variation serialize on
 a heartbeat-refreshed `.lock` pidfile: a contender **waits** for the holder, then re-checks
@@ -1708,27 +1717,33 @@ macro cached(args...)
         end
     end
 
-    # spec-v3: produced datasets are keyword-only.
-    if !isempty(pos_args)
-        names = join(string.(_cached_argname.(pos_args)), ", ")
-        error("@cached: produced datasets are keyword-only (spec-v3); `$(fname)` has " *
-              "positional argument(s): $names. Make them keyword arguments.")
-    end
-
+    pos_names = Symbol[_cached_argname(a) for a in pos_args]
     kw_names = Symbol[_cached_argname(a) for a in kw_params]
-    :cached in kw_names && error("@cached: the wrapped function already has a `cached` argument")
+    all_names = vcat(pos_names, kw_names)
+    :cached in all_names && error("@cached: the wrapped function already has a `cached` argument")
 
-    # Key NamedTuple: every declared kwarg except `_`-prefixed runtime knobs.
-    key_names = Symbol[n for n in kw_names if !startswith(string(n), "_")]
+    # Key NamedTuple: every positional parameter (always — a positional is a load-bearing
+    # identity, so even a `_`-prefixed one is hashed) plus every keyword arg that is not a
+    # `_`-prefixed runtime knob. Positionals participate by their declared name, the same
+    # name→value identity a keyword arg has; the closure's returned table is what is
+    # hashed, so reproducibility is independent of the call spelling.
+    key_names = vcat(pos_names, Symbol[n for n in kw_names if !startswith(string(n), "_")])
     nt_args = Expr(:tuple, Expr(:parameters, [Expr(:kw, n, n) for n in key_names]...))
 
+    # The reserved channels (cache_dir / cached_toml overrides, _metadata_extras) remain
+    # keyword-only — they are looked up among the kwargs.
     has_meta_extras = :_metadata_extras in kw_names
     has_cache_dir = :cache_dir in kw_names
     has_cached_toml = :cached_toml in kw_names
 
     new_kw_params = copy(kw_params)
     push!(new_kw_params, Expr(:kw, :(cached::Bool), true))
-    new_sig = Expr(:call, fname, Expr(:parameters, new_kw_params...))
+    # Splice the FULL positional expressions (`sym::T=default`), not just names, so type
+    # annotations and defaults survive — the wrapper preserves the method's dispatch
+    # signature (multiple `@cached` methods of one function on distinct positional types
+    # stay distinct, and `@invoke f(x::T, …)` still routes through the wrapper). Do not
+    # reduce this to `pos_names` or dispatch collapses silently.
+    new_sig = Expr(:call, fname, Expr(:parameters, new_kw_params...), pos_args...)
 
     build_extras = if has_meta_extras
         quote

@@ -2,6 +2,12 @@ using Test
 using DataManifest
 using TOML
 
+# Types for the @cached positional-dispatch regression test — top-level so the generated
+# methods can dispatch on them (a concrete subtype + its abstract supertype).
+abstract type _CachedShape end
+struct _CachedCircle <: _CachedShape end
+struct _CachedSquare <: _CachedShape end
+
 pkg_root = abspath(joinpath(@__DIR__, ".."))
 
 function setup_db(datasets_folder::String)
@@ -1344,16 +1350,77 @@ try
             @test calls[] == 2
         end
 
-        # Produced datasets are keyword-only: a positional arg is rejected at macro time.
-        kwonly_err = try
-            @eval @cached cachetype="bad" key=(a -> (; a.x)) function _bad_pos(y; x=1)
-                y
+        # Positional and keyword args both feed the key: a positional parameter
+        # participates by name, so the artifact is keyed under the same hash a keyword
+        # call would produce, and a repeat positional call hits the cache.
+        pdir = mktempdir()
+        pidx = joinpath(pdir, ".datamanifest", "state.toml")
+        pcalls = Ref(0)
+        @cached cachetype="pos" key=(a -> (; a.grid, a.n)) function demo_pos(grid, n;
+                _verbose::Bool=false, cache_dir=nothing, cached_toml=nothing)
+            pcalls[] += 1
+            return Dict("grid" => grid, "n" => n)
+        end
+        withenv("DATAMANIFEST_USAGE_LOG" => joinpath(pdir, "usage.toml")) do
+            rp1 = demo_pos("5x5", 3; cache_dir=pdir, cached_toml=pidx)
+            rp2 = demo_pos("5x5", 3; cache_dir=pdir, cached_toml=pidx, _verbose=true)  # hit
+            @test pcalls[] == 1
+            @test rp1 == rp2
+            # Keyed under the hash a keyword call with the same names/values produces.
+            @test isdir(joinpath(pdir, "pos", param_hash((; grid="5x5", n=3))))
+            # A different positional value is a distinct key → recompute.
+            demo_pos("9x9", 3; cache_dir=pdir, cached_toml=pidx)
+            @test pcalls[] == 2
+        end
+
+        # Splatted parameters are still rejected — a varargs list has no fixed
+        # name→value identity to hash.
+        splat_err = try
+            @eval @cached cachetype="bad" key=(a -> (; a.x)) function _bad_splat(xs...; x=1)
+                xs
             end
             ""
         catch e
             sprint(showerror, e)
         end
-        @test occursin("keyword-only", kwonly_err)
+        @test occursin("splat", splat_err)
+
+        # Dispatch regression: the wrapper preserves the full positional signature (type
+        # annotations + defaults), so multiple @cached methods of one function on distinct
+        # positional types keep distinct caches, and @invoke routes a concrete value
+        # through a less-specific method that still caches. Protects multiple-dispatch use
+        # (e.g. LGM's build_proxy_model_data methods + @invoke delegation).
+        ddir = mktempdir()
+        didx = joinpath(ddir, ".datamanifest", "state.toml")
+        circle_calls = Ref(0); generic_calls = Ref(0)
+        @cached cachetype="disp" key=(a -> (; tag=:circle, a.n)) function disp_area(
+                s::_CachedCircle, n; cache_dir=nothing, cached_toml=nothing)   # specific
+            circle_calls[] += 1; return :circle
+        end
+        @cached cachetype="disp" key=(a -> (; tag=:generic, a.n)) function disp_area(
+                s::_CachedShape, n; cache_dir=nothing, cached_toml=nothing)    # generic
+            generic_calls[] += 1; return :generic
+        end
+        withenv("DATAMANIFEST_USAGE_LOG" => joinpath(ddir, "usage.toml")) do
+            # The concrete type dispatches to the specific method; a sibling subtype falls
+            # through to the generic one — distinct key tags → distinct caches.
+            @test disp_area(_CachedCircle(), 3; cache_dir=ddir, cached_toml=didx) == :circle
+            @test disp_area(_CachedSquare(), 3; cache_dir=ddir, cached_toml=didx) == :generic
+            @test circle_calls[] == 1 && generic_calls[] == 1
+            @test isdir(joinpath(ddir, "disp", param_hash((; tag="circle", n=3))))
+            @test isdir(joinpath(ddir, "disp", param_hash((; tag="generic", n=3))))
+            # A repeat concrete call hits the (specific) cache, not the generic one.
+            @test disp_area(_CachedCircle(), 3; cache_dir=ddir, cached_toml=didx) == :circle
+            @test circle_calls[] == 1
+            # @invoke forces a concrete value through the GENERIC method, and that method's
+            # wrapper still caches: the first call (n=7) misses and computes, the second hits.
+            @test @invoke(disp_area(_CachedCircle()::_CachedShape, 7;
+                                    cache_dir=ddir, cached_toml=didx)) == :generic
+            @test generic_calls[] == 2
+            @test @invoke(disp_area(_CachedCircle()::_CachedShape, 7;
+                                    cache_dir=ddir, cached_toml=didx)) == :generic
+            @test generic_calls[] == 2
+        end
     end
 
     @testset "database-scoped caching (db= / cache bundles)" begin

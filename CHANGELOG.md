@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.34.0] - 2026-06-15 — @cached accepts positional arguments
+
+### Added
+
+- **`@cached` accepts positional arguments.** A decorated function may now take
+  positional parameters in addition to keyword ones; each positional parameter
+  participates in the cache key **by its declared name**, exactly as a keyword
+  argument does (`function fn(grid, n; opt=1)` hashes on `(; grid, n, opt)`).
+  The hash is still the SHA-256 of the table the `key` closure returns, so it is
+  independent of whether a call passes an argument positionally or by keyword —
+  cross-tool reproducibility is unaffected. `_`-prefixed parameters remain
+  runtime knobs excluded from the key (positional or keyword), and splatted
+  parameters (`args...`) are still rejected (no fixed name→value identity to
+  hash). This lifts the previous keyword-only restriction; the `@cached` spelling
+  is a per-language, non-normative ergonomic surface. Mirrors the LGMIO model.
+
 ## [0.33.1] - 2026-06-15 — no git-worktree special treatment (spec-v5.7)
 
 ### Changed

@@ -27,10 +27,11 @@ load_anomaly(; grid="5x5")               # computes once, then loads from disk o
 load_anomaly(; grid="5x5", cached=false) # escape hatch: run the body, no disk I/O
 ```
 
-The wrapped function must take keyword arguments only — positional arguments
-are rejected, because the cache key is built from named parameters. The macro
-adds a `cached::Bool=true` keyword to the function: pass `cached=false` to run
-the body directly, with no disk reads or writes.
+The wrapped function may take positional and/or keyword arguments; each
+parameter feeds the cache key by its declared name (splatted `args...` are
+rejected, having no fixed name to hash). The macro adds a `cached::Bool=true`
+keyword to the function: pass `cached=false` to run the body directly, with no
+disk reads or writes.
 
 ## Macro options
 
