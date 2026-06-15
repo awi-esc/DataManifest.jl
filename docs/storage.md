@@ -3,8 +3,8 @@
 The storage model is a property of the manifest format, shared by every
 implementation: two folder settings (`datasets_dir` for fetched datasets,
 `datacache_dir` for `@cached` artifacts), path expressions with `$`-symbols,
-read pools, per-dataset `storage_path`, host-specific `_HOST` values, git
-worktrees, and the state file (`.datamanifest/state.toml`). The full treatment
+read pools, per-dataset `storage_path`, host-specific `_HOST` values, and the
+state file (`.datamanifest/state.toml`). The full treatment
 lives on the central site:
 **[Storage model](https://perrette.github.io/datamanifest/storage/)** (see
 also [Configuration](https://perrette.github.io/datamanifest/configuration/)

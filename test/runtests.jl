@@ -197,7 +197,7 @@ try
         end
     end
 
-    @testset "canonical directive (config ladder + worktree routing)" begin
+    @testset "canonical directive (config ladder + worktree CLI lookup)" begin
         ST = DataManifest.Storage
 
         # Ladder unit: TOML booleans and truthy strings; _HOST glob beats the
@@ -280,8 +280,9 @@ try
         end
 
         # A linked git worktree starts without the project's .datamanifest/ and
-        # .venv: both the checkout-config lookup and the CLI lookup fall through
-        # to the corresponding paths in the main checkout.
+        # .venv. The checkout-config lookup gets NO special treatment — it does
+        # not fall back to the main checkout — but the CLI lookup still does
+        # (finding the main checkout's .venv when the worktree has none).
         repo = mktempdir()
         run(`git -C $repo init -q -b main`)
         run(`git -C $repo -c user.email=t@t -c user.name=t commit -q --allow-empty -m init`)
@@ -290,20 +291,21 @@ try
         Base.write(joinpath(repo, ".datamanifest", "config.toml"), "canonical = true\n")
         wt = joinpath(repo, "wt")
         run(`git -C $repo worktree add -q $wt`)
-        withenv("DATAMANIFEST_CANONICAL" => nothing, "XDG_CONFIG_HOME" => xdg,
-                "PATH" => "/usr/bin:/bin") do
-            target = joinpath(wt, "Datasets.toml")
-            write(new_db(mktempdir(), target), target)
-            @test startswith(read(target, String), "# formatted-by-fake")
-        end
-        # A config file present in the worktree itself wins over the main checkout's.
-        mkpath(joinpath(wt, ".datamanifest"))
-        Base.write(joinpath(wt, ".datamanifest", "config.toml"), "canonical = false\n")
+        # No config fallback: the main checkout's `canonical = true` does not
+        # reach the worktree, so output stays native.
         withenv("DATAMANIFEST_CANONICAL" => nothing, "XDG_CONFIG_HOME" => xdg,
                 "PATH" => "/usr/bin:/bin") do
             target = joinpath(wt, "Datasets.toml")
             write(new_db(mktempdir(), target), target)
             @test !startswith(read(target, String), "# formatted-by-fake")
+        end
+        # With canonical enabled via the environment, the CLI is still resolved
+        # through the main checkout's .venv — the worktree has none of its own.
+        withenv("DATAMANIFEST_CANONICAL" => "1", "XDG_CONFIG_HOME" => xdg,
+                "PATH" => "/usr/bin:/bin") do
+            target = joinpath(wt, "Datasets.toml")
+            write(new_db(mktempdir(), target), target)
+            @test startswith(read(target, String), "# formatted-by-fake")
         end
     end
 
@@ -579,7 +581,7 @@ try
         end
     end
 
-    @testset "git worktree shared state file" begin
+    @testset "git worktree has no state-file fallback" begin
         C = DataManifest.Cache
         gitok = try success(pipeline(`git --version`; stdout=devnull, stderr=devnull))
         catch; false end
@@ -590,35 +592,14 @@ try
                 git(args...) = run(pipeline(`git $(collect(args))`;
                                             stdout=devnull, stderr=devnull))
                 main = joinpath(tmp, "main")
-                mkpath(joinpath(main, "sub"))
+                mkpath(main)
                 write(joinpath(main, "README"), "x\n")
-                write(joinpath(main, "sub", "file"), "x\n")
                 git("-C", main, "init", "-q")
                 git("-C", main, "add", "-A")
                 git("-C", main, "-c", "user.name=t", "-c", "user.email=t@t",
                     "commit", "-q", "-m", "init")
-                wt = joinpath(tmp, "wt")
-                git("-C", main, "worktree", "add", "-q", wt)
-
-                # The main checkout is never redirected; the worktree maps onto it
-                # (subdirectories included).
-                @test C._main_checkout_dir(main) == ""
-                @test realpath(C._main_checkout_dir(wt)) == realpath(main)
-                @test realpath(C._main_checkout_dir(joinpath(wt, "sub"))) ==
-                      realpath(joinpath(main, "sub"))
-
-                # No state file anywhere: lookups in the worktree bind to the MAIN
-                # checkout's canonical path, so the first write lands in the shared
-                # inventory.
-                main_state = joinpath(C._main_checkout_dir(wt), C.STATE_FILE_NAME)
-                @test C.locate_state(wt) == main_state
-                idx = read_index_or_empty(wt)
-                @test idx.path == main_state
-                target = write_index(idx)
-                @test realpath(target) == realpath(joinpath(main, C.STATE_FILE_NAME))
-                @test !ispath(joinpath(wt, ".datamanifest"))
-
-                # The shared inventory is read back from the worktree.
+                # The main checkout has an inventory; the worktree must not see it.
+                mkpath(joinpath(main, ".datamanifest"))
                 write(joinpath(main, ".datamanifest", "state.toml"), """
                 [_META]
                 schema = 5
@@ -626,14 +607,20 @@ try
                 storage_path = "datasets/ex.com/foo.nc"
                 sha256 = "abc"
                 """)
-                idx = read_index_or_empty(wt)
-                @test C.dataset_path_of(idx, "ex.com/foo.nc") == "datasets/ex.com/foo.nc"
+                wt = joinpath(tmp, "wt")
+                git("-C", main, "worktree", "add", "-q", wt)
 
-                # A state file in the worktree itself always wins.
-                mkpath(joinpath(wt, ".datamanifest"))
-                local_state = joinpath(wt, ".datamanifest", "state.toml")
-                write(local_state, "[_META]\nschema = 5\n")
-                @test C.locate_state(wt) == local_state
+                # A worktree gets no special treatment: locate_state resolves to the
+                # worktree's own canonical path, not the main checkout's, and the
+                # inventory there is empty.
+                wt_state = joinpath(wt, C.STATE_FILE_NAME)
+                @test C.locate_state(wt) == wt_state
+                idx = read_index_or_empty(wt)
+                @test C.dataset_path_of(idx, "ex.com/foo.nc") == ""
+
+                # A write lands in the worktree, leaving the main checkout untouched.
+                target = write_index(idx)
+                @test realpath(target) == realpath(wt_state)
             end
         end
     end

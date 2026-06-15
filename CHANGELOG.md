@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.33.1] - 2026-06-15 — no git-worktree special treatment (spec-v5.7)
+
+### Changed
+
+- **The linked-`git worktree` config and state fallbacks are removed**
+  (spec-v5.7, reverting spec-v5.1 and the spec-v5.4 config extension).
+  `config_layers` and `locate_state` no longer probe `git` to resolve a
+  worktree's missing `.datamanifest/config.toml` / `state.toml` against the
+  main checkout: lookups are strictly local to the project directory. Share a
+  config or inventory across worktrees by symlinking `.datamanifest/` (or an
+  individual file) yourself. The CLI lookup is unaffected — DataManifest.jl
+  still falls through to the main checkout's `.venv` to find `datamanifest`
+  from a linked worktree (`Storage._main_checkout_dir` stays for that).
+
 ## [0.33.0] - 2026-06-13 — database-scoped caching (cache bundles)
 
 ### Added

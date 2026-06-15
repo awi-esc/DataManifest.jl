@@ -4,8 +4,8 @@ The configuration system is shared by every implementation: the variables
 (`datasets_dir`, `datacache_dir`, the pools, `project`, `canonical`,
 `lock_stale_age`, user-defined `$`-symbols), the five scopes a value can be
 set in (environment variable, checkout config, manifest `[_STORAGE]`, user
-config, built-in default), host-specific `_HOST` values, git worktrees, and
-the resolution rule that decides which value wins. The full reference lives on
+config, built-in default), host-specific `_HOST` values, and the resolution
+rule that decides which value wins. The full reference lives on
 the central site:
 **[Configuration](https://perrette.github.io/datamanifest/configuration/)**.
 The files can be edited directly or with [`datamanifest config

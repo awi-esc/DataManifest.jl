@@ -243,25 +243,10 @@ every layer. Pass the result as `storage_config` to any resolver.
 function config_layers(storage_config::AbstractDict=Dict{String,Any}();
                        project_root::AbstractString="", env=ENV)::Vector{Dict{String,Any}}
     return Dict{String,Any}[
-        _read_config_file(_locate_local_config(project_root)),
+        _read_config_file(local_config_path(project_root)),
         Dict{String,Any}(storage_config),
         _read_config_file(user_config_path(env)),
     ]
-end
-
-# The checkout-config file to read for `project_root`: the project's own
-# `.datamanifest/config.toml` when present; in a linked `git worktree` without one, the
-# corresponding file in the **main checkout** (a worktree starts without the git-ignored
-# `.datamanifest/` directory, so worktrees share the per-checkout scope — the same
-# rationale as the spec-v5.1 state-file fallback). A config file present in the worktree
-# itself always wins.
-function _locate_local_config(project_root::AbstractString)::String
-    path = local_config_path(project_root)
-    (isempty(path) || isfile(path)) && return path
-    main = _main_checkout_dir(abspath(String(project_root)))
-    isempty(main) && return path
-    mainpath = local_config_path(main)
-    return isfile(mainpath) ? mainpath : path
 end
 
 """
@@ -271,7 +256,8 @@ The directory in the **main checkout** corresponding to `dir` when `dir` lives i
 linked `git worktree`; `""` when `dir` is the main checkout itself, is not in a git
 repository, the main repository is bare, the mapped directory does not exist, or `git` is
 unavailable. Resolved by asking the `git` executable (the on-disk worktree layout is git
-internal), so any failure simply disables the fallback.
+internal), so any failure simply yields `""`. Used to locate the CLI installed in the main
+checkout's `.venv` (see `Databases.jl`).
 """
 function _main_checkout_dir(dir::AbstractString)::String
     d = abspath(String(dir))

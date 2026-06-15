@@ -28,7 +28,7 @@ using Dates
 using Serialization
 using ..Config: MANIFEST_FILENAMES
 using ..Storage: datacache_dir, datacache_pools, config_layers, ConfigLike, is_complete, marker_path,
-    lock_path, tmp_path, user_state_dir, lock_stale_age, _main_checkout_dir
+    lock_path, tmp_path, user_state_dir, lock_stale_age
 using ..PipeLines: materialize
 
 export @cached, param_hash, cache_key, cached_dir,
@@ -500,13 +500,8 @@ end
 The state file to **read** at `base` (a directory or file path): the canonical
 `.datamanifest/state.toml` when present, else a legacy `.datamanifest-state.toml` /
 `cached.toml` sibling, else the canonical path (which may not exist). Lets callers find an
-inventory under any recognized name.
-
-Linked `git worktree`s share one inventory: a worktree starts without the (git-ignored)
-`.datamanifest/` directory, so when the project directory has no state file of its own and
-sits inside a linked worktree, the lookup falls through to the corresponding directory in the
-**main checkout** — both for reading and (via [`read_index_or_empty`] / [`write_index`]) as
-the write target. A state file present in the worktree itself always wins.
+inventory under any recognized name. Resolution is local to `base`'s project directory —
+no git-worktree fallback.
 """
 function locate_state(base::AbstractString)::String
     b = String(base)
@@ -515,11 +510,6 @@ function locate_state(base::AbstractString)::String
     isempty(d) && (d = ".")
     found = _existing_state_in(d)
     found === nothing || return found
-    main = _main_checkout_dir(d)
-    if !isempty(main)
-        found = _existing_state_in(main)
-        return found === nothing ? joinpath(main, STATE_FILE_NAME) : found
-    end
     return joinpath(d, STATE_FILE_NAME)
 end
 
@@ -629,19 +619,12 @@ end
 Read the state file at `path` (canonical or legacy name), or an empty one bound to the
 canonical path when none exists. The index keeps the path it was actually read from, so the
 next [`write_index`] relocates a legacy-named file to the canonical
-`.datamanifest/state.toml`. In a linked `git worktree` without a state file of its own,
-[`locate_state`] redirects to the main checkout — the empty index is then bound there, so
-the first write also lands in the shared inventory.
+`.datamanifest/state.toml`.
 """
 function read_index_or_empty(path::AbstractString)::CachedIndex
     target = locate_state(path)
     isfile(target) && return read_index(target)
-    canonical = _index_canonical_path(path)
-    # A redirected target (linked worktree) belongs to a different project directory than
-    # `path` — bind the empty index there rather than to the local canonical path.
-    abspath(_state_project_dir(canonical)) == abspath(_state_project_dir(target)) ||
-        (canonical = target)
-    return CachedIndex(path=canonical)
+    return CachedIndex(path=_index_canonical_path(path))
 end
 
 # ----- produced recipes -----
