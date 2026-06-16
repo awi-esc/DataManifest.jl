@@ -1423,6 +1423,76 @@ try
         end
     end
 
+    @testset "format/ext decoupling + legacy-extension fallback" begin
+        C = DataManifest.Cache
+
+        # A custom codec registered under a codec key, writing a DISTINCT on-disk content
+        # (a sentinel-prefixed text file) so we can prove the codec — not the generic jls /
+        # the extension — was used.
+        C.register_format!("widget",
+            (data, path) -> write(path, "WIDGET:" * string(data)),
+            (path) -> replace(read(path, String), "WIDGET:" => ""))
+
+        fdir = mktempdir()
+        fidx = joinpath(fdir, ".datamanifest", "state.toml")
+        fcalls = Ref(0)
+        # format= selects the codec; ext= names the file with a standard, unrelated suffix.
+        @cached cachetype="fmt" format="widget" ext="nc" key=(a -> (; a.n)) function fmt_demo(;
+                n::Int=0, cache_dir=nothing, cached_toml=nothing)
+            fcalls[] += 1
+            return "n$(n)"
+        end
+        withenv("DATAMANIFEST_USAGE_LOG" => joinpath(fdir, "usage.toml")) do
+            @test fmt_demo(; n=1, cache_dir=fdir, cached_toml=fidx) == "n1"
+            adir = joinpath(fdir, "fmt", param_hash((; n=1)))
+            # The artifact is named with the standard `ext`, not the codec key.
+            @test isfile(joinpath(adir, "data.nc"))
+            @test !isfile(joinpath(adir, "data.widget"))
+            # It was written by the `widget` codec (sentinel present), and re-reads via it.
+            @test startswith(read(joinpath(adir, "data.nc"), String), "WIDGET:")
+            @test fmt_demo(; n=1, cache_dir=fdir, cached_toml=fidx) == "n1"  # cache hit
+            @test fcalls[] == 1
+            # The recipe records the CODEC (format), not the on-disk suffix.
+            @test C.instance_path_of(read_index(fidx);
+                cachetype="fmt", version="", hash=param_hash((; n=1))) == adir
+            rec = read_index(fidx).recipes[("fmt", "")]
+            @test rec["format"] == "widget"
+        end
+
+        # Legacy-extension fallback: an artifact written under an OLD on-disk extension
+        # (data.widgetlegacy) is still a hit after the site switches `ext` to `nc` — the
+        # hash dir is unchanged, _resolve_artifact finds the sibling data.* file.
+        ldir = mktempdir()
+        lhash = param_hash((; n=2))
+        ladir = joinpath(ldir, "fmt", lhash)
+        mkpath(ladir)
+        write(joinpath(ladir, "data.widgetlegacy"), "WIDGET:legacy2")
+        C.write_config(ladir, Dict("n" => 2), "fmt")
+        touch(C.marker_path(ladir))
+        lcalls = Ref(0)
+        @cached cachetype="fmt" format="widget" ext="nc" key=(a -> (; a.n)) function fmt_legacy(;
+                n::Int=0, cache_dir=nothing, cached_toml=nothing)
+            lcalls[] += 1
+            return "recomputed"
+        end
+        withenv("DATAMANIFEST_USAGE_LOG" => joinpath(ldir, "usage.toml")) do
+            # Loads the legacy file via the widget codec instead of recomputing.
+            @test fmt_legacy(; n=2, cache_dir=ldir, cached_toml=joinpath(ldir, "s.toml")) == "legacy2"
+            @test lcalls[] == 0
+        end
+
+        # _resolve_artifact unit behaviour: exact match preferred; sidecars/dotfiles ignored.
+        rdir = mktempdir()
+        @test C._resolve_artifact(rdir, "data", "nc") === nothing
+        write(joinpath(rdir, "config.toml"), "")
+        touch(joinpath(rdir, ".complete"))
+        @test C._resolve_artifact(rdir, "data", "nc") === nothing   # only sidecars/dotfiles
+        write(joinpath(rdir, "data.eof.nc"), "x")
+        @test C._resolve_artifact(rdir, "data", "nc") == joinpath(rdir, "data.eof.nc")  # fallback
+        write(joinpath(rdir, "data.nc"), "y")
+        @test C._resolve_artifact(rdir, "data", "nc") == joinpath(rdir, "data.nc")      # exact wins
+    end
+
     @testset "database-scoped caching (db= / cache bundles)" begin
         C = DataManifest.Cache
         S = DataManifest.Storage

@@ -1213,35 +1213,74 @@ end
 const _FORMATS = Dict{String,NamedTuple{(:save, :load),Tuple{Function,Function}}}()
 
 """
-    register_format!(ext, save, load)
+    register_format!(format, save, load)
 
-Register a produced-artifact (de)serializer for extension `ext`: `save(data, path)` and
-`load(path)`. Lets an extension add `nc`/`jld2`/… without a hard dependency in the core.
+Register a produced-artifact (de)serializer under the codec key `format`: `save(data, path)`
+and `load(path)`. Lets an extension add `nc`/`jld2`/… without a hard dependency in the core.
+
+`format` is the **codec key**, not necessarily the on-disk file extension: a `@cached` site
+selects this codec with `format=` and names the file with a separate `ext=` (defaulting to
+`format`). So a custom codec can write a standard, tool-recognisable suffix — e.g. register
+`register_format!("nceof", write, read)` and decorate with `format="nceof" ext="nc"` to get a
+`data.nc` file loaded by the EOF reader.
 """
-register_format!(ext::AbstractString, save::Function, load::Function) =
-    (_FORMATS[String(ext)] = (save=save, load=load); nothing)
+register_format!(format::AbstractString, save::Function, load::Function) =
+    (_FORMATS[String(format)] = (save=save, load=load); nothing)
 
-function _produce_save(data, path::AbstractString, ext::AbstractString)
-    if ext == "jls"
+function _produce_save(data, path::AbstractString, format::AbstractString)
+    if format == "jls"
         Serialization.serialize(path, data)
-    elseif haskey(_FORMATS, ext)
-        _FORMATS[ext].save(data, path)
+    elseif haskey(_FORMATS, format)
+        _FORMATS[format].save(data, path)
     else
-        error("@cached: no writer for format \"$(ext)\" (built-in: jls). Register one with " *
-              "DataManifest.Cache.register_format!(\"$(ext)\", save, load).")
+        error("@cached: no writer for format \"$(format)\" (built-in: jls). Register one with " *
+              "DataManifest.Cache.register_format!(\"$(format)\", save, load).")
     end
     return path
 end
 
-function _produce_load(path::AbstractString, ext::AbstractString)
-    if ext == "jls"
+# `_produce_save`/`_produce_load`'s third argument is the *format* (codec registry key),
+# which since spec-v4.2 is decoupled from the on-disk extension: the file may be named with
+# any standard suffix (e.g. `data.nc`) while still selecting a distinct codec (e.g. the
+# gridded-EOF writer). The codec key is the registry key; `jls` is the built-in.
+function _produce_load(path::AbstractString, format::AbstractString)
+    if format == "jls"
         return Serialization.deserialize(path)
-    elseif haskey(_FORMATS, ext)
-        return _FORMATS[ext].load(path)
+    elseif haskey(_FORMATS, format)
+        return _FORMATS[format].load(path)
     else
-        error("@cached: no reader for format \"$(ext)\" (built-in: jls). Register one with " *
-              "DataManifest.Cache.register_format!(\"$(ext)\", save, load).")
+        error("@cached: no reader for format \"$(format)\" (built-in: jls). Register one with " *
+              "DataManifest.Cache.register_format!(\"$(format)\", save, load).")
     end
+end
+
+const _ARTIFACT_SIDECARS = ("config.toml", "metadata.toml")
+
+"""
+    _resolve_artifact(dir, basename, ext) -> String or nothing
+
+The on-disk path of a produced artifact in `dir`. Prefers the exact
+`<dir>/<basename>.<ext>`; when absent (e.g. a cache written under a different on-disk
+extension before the format/extension decoupling — `data.nceof` vs `data.nc`), falls back
+to the single sibling file sharing the `<basename>.` leaf prefix, ignoring the `config.toml`
+/ `metadata.toml` sidecars and dotfiles (`.complete`/`.lock`/`.tmp`). Returns `nothing` when
+no artifact file is present. The hash directory holds exactly one data artifact, so the
+fallback is unambiguous; it keeps caches written under a legacy extension hittable after a
+call site switches to a standard suffix (the hash directory itself never depends on `ext`).
+"""
+function _resolve_artifact(dir::AbstractString, basename::AbstractString, ext::AbstractString)
+    exact = joinpath(dir, "$(basename).$(ext)")
+    isfile(exact) && return exact
+    full = joinpath(dir, basename)
+    bdir = dirname(full)
+    leaf = Base.basename(full)
+    isdir(bdir) || return nothing
+    prefix = "$(leaf)."
+    for name in sort!(readdir(bdir))
+        (name in _ARTIFACT_SIDECARS || startswith(name, ".")) && continue
+        startswith(name, prefix) && isfile(joinpath(bdir, name)) && return joinpath(bdir, name)
+    end
+    return nothing
 end
 
 # ── Cache context (where produced artifacts default to) ───────────────────────
@@ -1423,7 +1462,8 @@ for backward compatibility but no longer affects registration (recipes are keyed
 identity, not by name).
 """
 function save_cache(data, cachetype::AbstractString, key_table;
-                    ext::AbstractString="jls", basename::AbstractString="data",
+                    ext::AbstractString="jls", format::AbstractString=ext,
+                    basename::AbstractString="data",
                     version=nothing, cache_dir=nothing,
                     extras=Dict{String,Any}(),
                     name::AbstractString="", ref::AbstractString="", cached_toml=nothing,
@@ -1434,11 +1474,11 @@ function save_cache(data, cachetype::AbstractString, key_table;
                      storage_config=ctx.storage_config, project_root=ctx.project_root)
     written_index = _register_produced(
         _locate_cached_toml(cached_toml, ctx.state_root);
-        cachetype=cachetype, hash=h, storage_path=dir, ref=ref, format=ext,
+        cachetype=cachetype, hash=h, storage_path=dir, ref=ref, format=format,
         version=(version === nothing ? "" : String(version)))
     materialize(dir; stale_age=lock_stale_age(storage_config=ctx.storage_config)) do tmp
         mkpath(tmp)
-        _produce_save(data, joinpath(tmp, "$(basename).$(ext)"), ext)
+        _produce_save(data, joinpath(tmp, "$(basename).$(ext)"), format)
         write_config(tmp, key_table, cachetype; version=version, hash=h)
         write_metadata(tmp; cachetype=cachetype, extras=extras, project_root=ctx.project_root,
                        state_file=written_index)
@@ -1469,21 +1509,25 @@ Return the produced artifact for these parameters, or `nothing` on a miss. `db` 
 the lookup to a `Databases.Database`'s context (see [`_cache_context`]).
 """
 function load_cache(cachetype::AbstractString, key_table;
-                    ext::AbstractString="jls", basename::AbstractString="data",
+                    ext::AbstractString="jls", format::AbstractString=ext,
+                    basename::AbstractString="data",
                     version=nothing, cache_dir=nothing, db=nothing)
     ctx = _cache_context(db)
     h = param_hash(key_table)
     dir = cached_dir(cachetype, h; version=version, cache_dir=cache_dir,
                      storage_config=ctx.storage_config, project_root=ctx.project_root)
     (is_complete(dir) && config_is_valid(dir)) || return nothing
-    return _produce_load(joinpath(dir, "$(basename).$(ext)"), ext)
+    art = _resolve_artifact(dir, basename, ext)
+    art === nothing && return nothing
+    return _produce_load(art, format)
 end
 
 # The produce-or-load core invoked by the `@cached` wrapper: fast-path load on a hit (with a
 # best-effort registry self-heal), otherwise compute + save under the safe-materialization
 # primitive, registering the variation in cached.toml first.
 function _run_cached(body::Function, cachetype::AbstractString, key_table;
-                     ext::AbstractString="jls", basename::AbstractString="data",
+                     ext::AbstractString="jls", format::AbstractString=ext,
+                     basename::AbstractString="data",
                      version=nothing, cache_dir=nothing,
                      extras=Dict{String,Any}(),
                      name::AbstractString="", ref::AbstractString="", cached_toml=nothing,
@@ -1520,13 +1564,14 @@ function _run_cached(body::Function, cachetype::AbstractString, key_table;
         end
     end
     for adir in unique(search)
-        art = joinpath(adir, "$(basename).$(ext)")
-        if is_complete(adir) && config_is_valid(adir) && isfile(art)
+        art = (is_complete(adir) && config_is_valid(adir)) ?
+              _resolve_artifact(adir, basename, ext) : nothing
+        if art !== nothing
             # spec-v3.2: never written on read for last-access — but the inventory self-heals
             # (best-effort), recording where the artifact was actually found.
             _heal_on_hit(index_path; cachetype=cachetype, hash=h, storage_path=adir, ref=ref,
-                         format=ext, version=vstr)
-            return _produce_load(art, ext)
+                         format=format, version=vstr)
+            return _produce_load(art, format)
         end
     end
     # Miss: register the produced variation in the project's state file (the liveness root for
@@ -1535,22 +1580,22 @@ function _run_cached(body::Function, cachetype::AbstractString, key_table;
     # lock is acquired the artifact is rechecked (spec-v5.2) — a waiter then loads what its
     # peer just published instead of recomputing it.
     written_index = _register_produced(index_path;
-        cachetype=cachetype, hash=h, storage_path=dir, ref=ref, format=ext, version=vstr)
+        cachetype=cachetype, hash=h, storage_path=dir, ref=ref, format=format, version=vstr)
     artname = "$(basename).$(ext)"
-    hit = d -> is_complete(d) && config_is_valid(d) && isfile(joinpath(d, artname))
+    hit = d -> is_complete(d) && config_is_valid(d) && _resolve_artifact(d, basename, ext) !== nothing
     local result
     produced = false
     materialize(dir; skip_if=hit,
                 stale_age=lock_stale_age(storage_config=ctx.storage_config)) do tmp
         mkpath(tmp)
         result = body()
-        _produce_save(result, joinpath(tmp, artname), ext)
+        _produce_save(result, joinpath(tmp, artname), format)
         write_config(tmp, key_table, cachetype; version=version, hash=h)
         write_metadata(tmp; cachetype=cachetype, extras=extras, project_root=ctx.project_root,
                        state_file=written_index)
         produced = true
     end
-    return produced ? result : _produce_load(joinpath(dir, artname), ext)
+    return produced ? result : _produce_load(_resolve_artifact(dir, basename, ext), format)
 end
 
 # ── @cached macro (non-normative ergonomic surface; ported from LGMIO) ─────────
@@ -1572,7 +1617,7 @@ function _cached_argname(ex)
 end
 
 """
-    @cached cachetype="name" key=(args -> (;…)) [ext="jls"] [basename="data"]
+    @cached cachetype="name" key=(args -> (;…)) [ext="jls"] [format="jls"] [basename="data"]
             [version="v3"] [db=DB] function fn(pos…; kw…) … end
 
 Wrap a function with transparent produce-or-load disk caching (spec-v4 `cache-produce`).
@@ -1587,9 +1632,17 @@ Wrap a function with transparent produce-or-load disk caching (spec-v4 `cache-pr
   Hash inputs are strings/integers/booleans/**finite floats**/arrays/objects of those
   (spec-v3.1); finite floats serialize via the normative Python `json.dumps` form
   (`1.0`→"1.0"). `NaN`/`±Inf` and nulls raise.
-- `ext` (default `"jls"`): artifact serialization format. `jls` (stdlib `Serialization`) is
-  the zero-dependency built-in self-saver; register others (e.g. the spec's RECOMMENDED Julia
-  default `jld2`) with `DataManifest.Cache.register_format!`.
+- `ext` (default `"jls"`): the **on-disk file suffix** (`<basename>.<ext>`). Free to be any
+  standard, tool-recognisable extension (`nc`, `eof.nc`, …).
+- `format` (default = `ext`): the **codec** (format-registry key) used to (de)serialize the
+  artifact. Defaults to `ext`, so an existing `@cached ext="nc"` keeps using the `nc` codec.
+  Pass it to decouple the codec from the filename — e.g. `format="nceof" ext="nc"` writes a
+  `data.nc` file with the gridded-EOF codec. `jls` (stdlib `Serialization`) is the
+  zero-dependency built-in; register others (e.g. the spec's RECOMMENDED `jld2`) with
+  `DataManifest.Cache.register_format!`. On load, the exact `<basename>.<ext>` is preferred,
+  falling back to a sibling `<basename>.*` artifact (so caches written under a previous
+  extension stay hittable when a site switches suffix — the hash directory never depends on
+  `ext`).
 - `basename` (default `"data"`), `version` (optional recipe/code version → a path segment +
   part of the recipe identity, not in the hash).
 - `name` (String literal, optional): accepted for backward compatibility; schema-2 recipes
@@ -1661,6 +1714,7 @@ macro cached(args...)
     cachetype = nothing
     keyfn = nothing
     ext = nothing
+    format = nothing
     basename = nothing
     version = nothing
     regname = nothing
@@ -1676,6 +1730,9 @@ macro cached(args...)
         elseif kwname === :ext
             isa(val, String) || error("@cached: `ext` must be a String literal")
             ext = val
+        elseif kwname === :format
+            isa(val, String) || error("@cached: `format` must be a String literal")
+            format = val
         elseif kwname === :basename
             isa(val, String) || error("@cached: `basename` must be a String literal")
             basename = val
@@ -1688,7 +1745,7 @@ macro cached(args...)
         elseif kwname === :db
             dbexpr = val
         else
-            error("@cached: unknown argument `$kwname`. Expected `cachetype`, `key`, `ext`, `basename`, `version`, `name`, or `db`.")
+            error("@cached: unknown argument `$kwname`. Expected `cachetype`, `key`, `ext`, `format`, `basename`, `version`, `name`, or `db`.")
         end
     end
     keyfn === nothing && error("@cached: missing required `key=...`")
@@ -1770,6 +1827,10 @@ macro cached(args...)
     # works — definition order does not matter.
     db_expr = dbexpr === nothing ? :(nothing) : dbexpr
     _ext = ext === nothing ? "jls" : ext
+    # The codec (format-registry key) defaults to the on-disk extension, so an existing
+    # `@cached ext="nc"` keeps selecting the `nc` codec; pass `format=` to decouple them
+    # (a distinct codec under a standard suffix, e.g. `format="nceof" ext="nc"`).
+    _format = format === nothing ? _ext : format
     _basename = basename === nothing ? "data" : basename
     _version = version === nothing ? nothing : version
     # cachetype default (spec-v4): the producing function's importable name `Module.func`.
@@ -1788,7 +1849,7 @@ macro cached(args...)
         end
         _kt = $(keyfn)($nt_args)
         return $_run(_body_fn, $_cachetype, _kt;
-            ext=$_ext, basename=$_basename, version=$_version,
+            ext=$_ext, format=$_format, basename=$_basename, version=$_version,
             cache_dir=$cd_expr, extras=$build_extras,
             name=$_name, ref=$_ref, cached_toml=$ct_expr, db=$db_expr)
     end

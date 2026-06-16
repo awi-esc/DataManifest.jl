@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.35.0] - 2026-06-17 — decouple the codec from the on-disk extension
+
+### Added
+
+- **`@cached` gains a `format=` option, decoupled from `ext=`.** `ext` is now
+  purely the on-disk file suffix (`<basename>.<ext>`), free to be any standard,
+  tool-recognisable extension; `format` selects the codec (format-registry key)
+  and **defaults to `ext`**, so every existing decoration is unchanged. This
+  lets a custom codec write a standard suffix — e.g. `format="nceof" ext="nc"`
+  produces a `data.nc` file loaded by the gridded-EOF reader, instead of forcing
+  a non-standard `data.nceof` name that external tools (`ncdump`, `xarray`,
+  Panoply) don't recognise. The codec, not the filename, is recorded in the
+  state-file recipe. `save_cache` / `load_cache` gained the same `format=`
+  keyword; `register_format!`'s key is documented as the codec name, not the
+  extension.
+
+### Changed
+
+- **Artifact load resolves a legacy on-disk extension.** On a cache hit the
+  exact `<basename>.<ext>` is preferred, falling back to the single sibling
+  `<basename>.*` artifact in the (unchanged) hash directory. So a cache written
+  under a previous extension stays hittable when a call site switches `ext` to a
+  standard suffix — no cold rebuild, since the hash directory never depended on
+  `ext`. Lock acquisition / produce paths otherwise unchanged.
+
 ## [0.34.1] - 2026-06-17 — `with_lock` consumer-side artifact lock
 
 ### Added

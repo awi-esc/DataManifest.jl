@@ -46,8 +46,13 @@ disk reads or writes.
 - `version` (optional): a version string that becomes part of the artifact path.
   Bump it to deliberately invalidate the cache, e.g. after changing the
   function's code (the code itself is not hashed).
-- `ext` (default `"jls"`) and `basename` (default `"data"`): the artifact's file
-  format and file name.
+- `ext` (default `"jls"`) and `basename` (default `"data"`): the artifact's
+  on-disk suffix and file name (`<basename>.<ext>`). `ext` is free to be any
+  standard, tool-recognisable extension.
+- `format` (default = `ext`): the codec used to (de)serialize the artifact,
+  decoupled from the filename. Defaults to `ext`; pass it to select a distinct
+  codec under a standard suffix — e.g. `format="nceof" ext="nc"` writes a
+  `data.nc` while loading via the gridded-EOF codec. See [Formats](#formats).
 - `db` (optional): a `Database` the whole cache context derives from — gives a
   library its own cache bundle, separate from the host project's folders and
   state; see [library cache
@@ -62,9 +67,13 @@ uses (`1.0` → `1.0`, `1e-5` → `1e-05`). `NaN`, `±Inf`, and nulls
 ## Formats
 
 `jls` (stdlib `Serialization`) is the built-in zero-dependency format; register
-others (`nc`, `jld2`, …) with `DataManifest.Cache.register_format!(ext, save, load)`.
-The cross-language DataManifest spec recommends `jld2` as the Julia default;
-shipping `jls` as the built-in is a documented, spec-permitted deviation.
+others (`nc`, `jld2`, …) with `DataManifest.Cache.register_format!(format, save, load)`.
+The registry key is the **codec name**, not the file extension: a `@cached` site
+selects the codec with `format=` and names the file with a separate `ext=`
+(defaulting to `format`), so a custom codec can still write a standard suffix
+(`format="nceof" ext="nc"` → a `data.nc` loaded by the EOF reader). The
+cross-language DataManifest spec recommends `jld2` as the Julia default; shipping
+`jls` as the built-in is a documented, spec-permitted deviation.
 
 ## Special keyword arguments
 

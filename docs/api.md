@@ -592,7 +592,7 @@ Storage.ConfigSnapshot
 ## Caching: the `@cached` macro
 
 ```
-@cached key=(args -> (; …)) [cachetype="…"] [version="…"] [ext="jls"] [basename="data"] [db=DB] function fn(pos…; kw…) … end
+@cached key=(args -> (; …)) [cachetype="…"] [version="…"] [ext="jls"] [format="jls"] [basename="data"] [db=DB] function fn(pos…; kw…) … end
 ```
 
 Wrap a function with produce-or-load disk caching: the result is computed once
@@ -620,12 +620,19 @@ and nulls (`nothing`/`missing`) raise an error.
 - `version` (optional): a version string that becomes a path segment and part
   of the recipe identity (not part of the hash). Bump it to deliberately
   invalidate old results, e.g. after changing the function's code.
-- `ext` (default `"jls"`): the artifact serialization format. `jls` (stdlib
-  `Serialization`) is the dependency-free built-in; register others (`nc`,
-  `jld2`, …) with
-  `DataManifest.Cache.register_format!(ext, save, load)` where `save(data,
-  path)` writes and `load(path)` reads.
-- `basename` (default `"data"`): the artifact's file name (`<basename>.<ext>`).
+- `ext` (default `"jls"`): the on-disk file suffix (`<basename>.<ext>`). Free to
+  be any standard, tool-recognisable extension (`nc`, `eof.nc`, …).
+- `format` (default = `ext`): the codec (format-registry key) used to
+  (de)serialize the artifact, decoupled from the filename. Defaults to `ext`, so
+  an existing `@cached ext="nc"` keeps using the `nc` codec. Pass it to select a
+  distinct codec under a standard suffix — e.g. `format="nceof" ext="nc"` writes
+  a `data.nc` file with the gridded-EOF codec. `jls` (stdlib `Serialization`) is
+  the dependency-free built-in; register others (`nc`, `jld2`, …) with
+  `DataManifest.Cache.register_format!(format, save, load)` where `save(data,
+  path)` writes and `load(path)` reads. On load the exact `<basename>.<ext>` is
+  preferred, falling back to a sibling `<basename>.*` artifact — so caches
+  written under a previous extension stay hittable when a site switches suffix
+  (the hash directory never depends on `ext`).
 - `db` (optional): an expression whose value is a `Database`, evaluated in the
   caller's scope at **call** time (so a `const LIBDB = Database(...)` defined
   after the `@cached` function works). The entire cache context then derives
