@@ -37,11 +37,14 @@ using .Databases: Database, DatasetEntry,
     search_datasets, search_dataset,
     repr_datasets, print_dataset_keys, list_dataset_keys, list_alternative_keys,
     verify_checksum, read_dataset, delete_dataset, add, migrate, freeze_config!
-using .PipeLines: download_dataset, download_datasets, load_dataset, get_project_root
+using .PipeLines: download_dataset, download_datasets, load_dataset, get_project_root,
+    materialize, with_lock
 
 const add_dataset = add
 
 export Databases, PipeLines, Loaders, Storage, Cache
+# Safe-materialization / consumer-side locking primitives (spec-v5.2).
+export materialize, with_lock
 # Produce-or-load (`@cached`) companion layer — spec-v4.1 `cache-produce`.
 using .Cache: @cached, param_hash, cache_key,
     CachedIndex, read_index, read_index_or_empty, register!, index_keys, reachable_keys,

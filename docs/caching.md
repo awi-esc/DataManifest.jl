@@ -90,3 +90,12 @@ locks left by a crashed holder are reclaimed (see the `lock_stale_age`
 [configuration variable](https://perrette.github.io/datamanifest/configuration/)).
 How artifacts are recorded in the state file and how to inspect or prune the
 cache from Julia: see [storage](storage.md).
+
+That `.lock` protects the **producer** of the artifact. If you write *additional*
+shared files into an already-produced artifact directory (e.g. derived
+diagnostics reused by every consumer of the artifact), use
+[`with_lock`](api.md#with_lock) to take the same lock so those consumer-side
+writes are serialized too — otherwise concurrent consumers race on
+check-then-write. `with_lock` (and the lower-level `materialize` it shares the
+lock with) are documented under
+[Concurrency primitives](api.md#concurrency-primitives-materialize-and-with_lock).

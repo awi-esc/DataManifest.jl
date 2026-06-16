@@ -662,6 +662,73 @@ arguments with these names, they get extra meaning:
 
 ---
 
+## Concurrency primitives: `materialize` and `with_lock`
+
+`@cached` builds on two lower-level primitives in the `PipeLines` submodule,
+re-exported at the top level. Reach for them directly when you publish or
+serialize artifacts outside the produce-or-load macro.
+
+### `materialize`
+
+```
+materialize(write_fn, target; on_locked=:wait, stale_age=lock_stale_age(...), skip_if=nothing) -> target
+```
+
+Safely publish a single artifact at `target`. `write_fn(tmp)` populates a
+staging path `tmp = <target>.tmp`; on success it is atomically renamed onto
+`target` and a `.complete` marker is written. A `<target>.lock` pidfile
+(recording `pid host`, mtime-refreshed every `stale_age/2` while held) is held
+for the duration. An interrupted write leaves only a stray `.tmp`, so the
+target stays absent on the next load. `skip_if(target)`, evaluated **after**
+the lock is acquired, skips the write and returns `target` when it is already
+present — the recheck that lets a waiter adopt what a peer just published.
+
+### `with_lock`
+
+```
+with_lock(f, target; on_locked=:wait, stale_age=lock_stale_age(...), skip_if=nothing) -> f() | nothing
+```
+
+Run `f()` while holding `target`'s `<target>.lock` pidfile — the **same** lock
+`materialize` uses, with the same staleness/heartbeat rules — but with **no**
+staging, rename, or marker. It is the consumer-side primitive for serializing
+arbitrary side-effecting writes that derive *additional* files into an
+**already-materialised** artifact directory (or anything keyed by `target`),
+so a "produce these shared side-artifacts once, reuse across all peers"
+contract is actually serialized rather than racing on check-then-write. `f`
+takes no arguments — it writes into paths it already knows (typically siblings
+of `target`).
+
+`skip_if(target)`, evaluated **after** the lock is acquired, skips `f` and
+returns `nothing` when a peer already finished the work; otherwise `with_lock`
+returns `f()`'s value. A returned `nothing` is therefore the "reused, did not
+run" signal. Example — emit a directory's shared diagnostics exactly once
+across concurrent workers that all cache-hit its main artifact:
+
+```julia
+marker = joinpath(artifact_dir, "report.md")
+produced = DataManifest.with_lock(artifact_dir; skip_if = _ -> isfile(marker)) do
+    write_figures(artifact_dir)          # siblings of the marker
+    write(marker, render_report())       # written LAST — its presence is the marker
+    true
+end
+produced === nothing && @info "diagnostics already present — reused"
+```
+
+**`on_locked`** (both primitives, spec-v5.2):
+
+- `:wait` (default) — block until the holder releases the lock (or it goes
+  stale: age beyond `stale_age` with a dead local PID, or beyond
+  5×`stale_age` of missed heartbeats), then proceed.
+- `:fail` — raise immediately if the lock is held.
+- `:proceed` — proceed without exclusivity if the lock cannot be taken
+  (`materialize` then stages under a process-private `<target>.tmp.<pid>`).
+
+`stale_age` defaults to the `lock_stale_age` configuration field (default 30s;
+see [Storage helpers](#storage-helpers)).
+
+---
+
 ## State file
 
 The state file (`.datamanifest/state.toml`, next to the manifest; for an

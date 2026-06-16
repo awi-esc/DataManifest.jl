@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.34.1] - 2026-06-17 — `with_lock` consumer-side artifact lock
+
+### Added
+
+- **`with_lock(f, target; on_locked=:wait, stale_age=…, skip_if=…)`** — a
+  consumer-side counterpart to `materialize`. It runs `f()` while holding
+  `target`'s `<target>.lock` pidfile (the same heartbeat-refreshed lock
+  `materialize` uses, with the same `:wait`/`:fail`/`:proceed` and staleness
+  rules) but performs **no** staging, rename, or completion marker. It is the
+  primitive for serializing arbitrary side-effecting writes that derive
+  *additional* shared files into an **already-materialised** artifact directory:
+  the producer's `.lock` only protects the artifact itself, leaving consumer-side
+  "write these shared side-artifacts once, reuse across all peers" writes racing
+  on check-then-write. `skip_if(target)`, evaluated after the lock is acquired,
+  skips `f` and returns `nothing` when a peer already did the work (the recheck);
+  otherwise `with_lock` returns `f()`. Exported at the top level alongside the now
+  also-exported `materialize`. Lock acquisition is factored into a shared helper,
+  so `materialize`'s behaviour is unchanged.
+
 ## [0.34.0] - 2026-06-15 — @cached accepts positional arguments
 
 ### Added

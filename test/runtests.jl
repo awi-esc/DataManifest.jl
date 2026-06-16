@@ -1688,6 +1688,65 @@ try
         end
     end
 
+    @testset "with_lock consumer-side serialization (spec-v5.2)" begin
+        M = DataManifest.PipeLines
+        S = DataManifest.Storage
+        d = mktempdir()
+
+        # Runs the body, returns its value, and leaves no lock behind.
+        t = joinpath(d, "art")
+        mkpath(t)
+        @test M.with_lock(() -> 7, t) == 7
+        @test with_lock(() -> 8, t) == 8           # re-exported at top level
+        @test !isfile(S.lock_path(t))
+
+        # skip_if recheck under the lock skips the body and returns nothing.
+        ran = Ref(false)
+        marker = joinpath(t, "done")
+        touch(marker)
+        got = M.with_lock(t; skip_if = _ -> isfile(marker)) do
+            ran[] = true
+        end
+        @test got === nothing
+        @test !ran[]
+
+        # on_locked=:fail raises on a fresh lock held by a live foreign process (pid 1).
+        t2 = joinpath(d, "art2")
+        write(S.lock_path(t2), "1 $(gethostname())")
+        err = try
+            M.with_lock(() -> nothing, t2; on_locked=:fail); ""
+        catch e
+            sprint(showerror, e)
+        end
+        @test occursin("locked by another process", err)
+        rm(S.lock_path(t2))
+
+        # on_locked=:proceed runs without exclusivity under a live holder, leaving its
+        # lock untouched.
+        t3 = joinpath(d, "art3")
+        write(S.lock_path(t3), "1 $(gethostname())")
+        @test M.with_lock(() -> 5, t3; on_locked=:proceed) == 5
+        @test isfile(S.lock_path(t3))
+        rm(S.lock_path(t3))
+
+        # Default :wait — a contender blocks on the holder, then (via skip_if) adopts what
+        # the holder produced instead of redoing the work. Exactly one body runs.
+        t4 = joinpath(d, "art4")
+        order = String[]
+        holder = @async M.with_lock(t4) do
+            push!(order, "holder")
+            sleep(1.0)
+            touch(joinpath(d, "art4.flag"))
+        end
+        sleep(0.3)
+        waited = @elapsed M.with_lock(t4; skip_if = _ -> isfile(joinpath(d, "art4.flag"))) do
+            push!(order, "contender")
+        end
+        wait(holder)
+        @test waited > 0.5
+        @test order == ["holder"]
+    end
+
     @testset "Cache index + usage + inspect (state file)" begin
         C = DataManifest.Cache
 

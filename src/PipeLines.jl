@@ -482,6 +482,35 @@ For back-compatibility with fetchers that write straight to `target` (e.g. the
 `rsync`/`file` schemes, which deposit the source basename into the parent dir),
 a `write_fn` that produced `target` directly (and no `tmp`) is accepted as-is.
 """
+# Acquire `target`'s `.lock` pidfile per `on_locked`, shared by `materialize` and
+# `with_lock`. Returns `(monitor, got)`: `monitor` is the lock handle to `close` later
+# (`nothing` only under `:proceed` when the lock could not be taken — i.e. running without
+# exclusivity); `got` is whether this call holds the lock. Throws under `:fail` when held.
+function _acquire_lock(lock::AbstractString, on_locked::Symbol, stale_age::Real)
+    if on_locked === :wait
+        # An already-stale lock (a holder that crashed long ago) is reclaimed
+        # IMMEDIATELY: the stdlib's blocking path only runs its first staleness check
+        # after one full `stale_age` of waiting, so try the non-blocking acquire (which
+        # checks and reclaims stale locks up front) before falling back to the wait.
+        # Only a lock fresher than `stale_age` — a live holder, or a crash within the
+        # last `stale_age` seconds (indistinguishable until the heartbeat is missed) —
+        # is actually waited on.
+        got = trymkpidlock(lock; stale_age=stale_age)
+        monitor = got === false ? mkpidlock(lock; stale_age=stale_age) : got
+        return (monitor, true)
+    end
+    got = trymkpidlock(lock; stale_age=stale_age)
+    if got === false
+        if on_locked === :fail
+            pid, host, _ = Pidfile.parse_pidfile(lock)
+            error("Target is locked by another process (pid $pid" *
+                  (isempty(host) ? "" : " on $host") * "): $lock")
+        end
+        return (nothing, false)   # :proceed — no exclusivity
+    end
+    return (got, true)
+end
+
 function materialize(write_fn, target::AbstractString;
                      on_locked::Symbol=:wait,
                      stale_age::Real=lock_stale_age(storage_config=config_layers()),
@@ -493,31 +522,10 @@ function materialize(write_fn, target::AbstractString;
     lock = lock_path(target)
     dir = dirname(target)
     !isempty(dir) && mkpath(dir)
-    monitor = nothing
-    if on_locked === :wait
-        # An already-stale lock (a holder that crashed long ago) is reclaimed
-        # IMMEDIATELY: the stdlib's blocking path only runs its first staleness check
-        # after one full `stale_age` of waiting, so try the non-blocking acquire (which
-        # checks and reclaims stale locks up front) before falling back to the wait.
-        # Only a lock fresher than `stale_age` — a live holder, or a crash within the
-        # last `stale_age` seconds (indistinguishable until the heartbeat is missed) —
-        # is actually waited on.
-        got = trymkpidlock(lock; stale_age=stale_age)
-        monitor = got === false ? mkpidlock(lock; stale_age=stale_age) : got
-    else
-        got = trymkpidlock(lock; stale_age=stale_age)
-        if got === false
-            if on_locked === :fail
-                pid, host, _ = Pidfile.parse_pidfile(lock)
-                error("Dataset target is locked by another process (pid $pid" *
-                      (isempty(host) ? "" : " on $host") * "): $lock")
-            end
-            # :proceed — no exclusivity; stage under a process-private path.
-            tmp = string(tmp, ".", getpid())
-        else
-            monitor = got
-        end
-    end
+    monitor, got = _acquire_lock(lock, on_locked, stale_age)
+    # :proceed without the lock — stage under a process-private path so concurrent
+    # writers never clobber each other's staging; the last atomic rename wins.
+    got || (tmp = string(tmp, ".", getpid()))
     try
         # Recheck under the lock: a peer may have just published this very target.
         if skip_if !== nothing && skip_if(target)
@@ -536,6 +544,50 @@ function materialize(write_fn, target::AbstractString;
         monitor === nothing || close(monitor)
     end
     return target
+end
+
+"""
+    with_lock(f, target; on_locked=:wait, stale_age=lock_stale_age(...), skip_if=nothing)
+
+Run `f()` while holding `target`'s `<target>.lock` pidfile — the same heartbeat-refreshed
+lock [`materialize`](@ref) uses, with the same `on_locked`/`stale_age` semantics. Unlike
+`materialize`, it performs **no staging, rename, or completion marker**: it is the
+consumer-side primitive for serializing arbitrary side-effecting writes that derive
+*additional* files into an already-materialised artifact directory (or anything else keyed
+by `target`), so the "produce these side-artifacts once, reuse across all peers" contract
+is actually serialized rather than racing on check-then-write.
+
+`on_locked` (spec-v5.2):
+- `:wait` (default) — block until the holder releases the lock (or it goes stale), then run.
+- `:fail` — raise immediately if the lock is held.
+- `:proceed` — run without exclusivity if the lock cannot be taken.
+
+`skip_if(target)`, when given, is evaluated **after** the lock is acquired: if it returns
+`true`, `f` is **not** run and `with_lock` returns `nothing` — the recheck that lets a waiter
+adopt what a peer just produced instead of redoing the work. Otherwise returns `f()`'s value.
+
+The directory holding the lock is created if absent. `f` takes no arguments (it writes into
+paths it already knows — typically siblings of `target`).
+"""
+function with_lock(f, target::AbstractString;
+                   on_locked::Symbol=:wait,
+                   stale_age::Real=lock_stale_age(storage_config=config_layers()),
+                   skip_if=nothing)
+    on_locked in (:wait, :fail, :proceed) ||
+        throw(ArgumentError("with_lock: on_locked must be :wait, :fail, or :proceed; got :$on_locked"))
+    target = String(target)
+    lock = lock_path(target)
+    dir = dirname(lock)
+    !isempty(dir) && mkpath(dir)
+    monitor, _ = _acquire_lock(lock, on_locked, stale_age)
+    try
+        if skip_if !== nothing && skip_if(target)
+            return nothing
+        end
+        return f()
+    finally
+        monitor === nothing || close(monitor)
+    end
 end
 
 # Object-store URI schemes (spec-v4.3): "fetch the object, then verify sha256", mechanism
