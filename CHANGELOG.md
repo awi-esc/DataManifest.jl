@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.37.2] - 2026-06-17 — manifest writes only when content changed
+
+### Changed
+
+- **`write(db, path)` skips the write when the manifest is unchanged.** Every
+  download/access used to re-serialize and rewrite the whole manifest, churning
+  its mtime and — the first time — replacing a hand-authored layout (comments,
+  ordering) even when nothing changed. `write` now compares the content it would
+  write against the on-disk file (parsed and re-serialized through the same native
+  serializer — native-vs-native, never the Python CLI — evaluated at write time
+  against the current file) and returns without writing when they are semantically
+  identical. A no-op persist now leaves the file and any hand-authored
+  comments/ordering untouched; only a real content change rewrites (still
+  atomically, still optionally canonicalized). A purely formatting-level change
+  (e.g. flipping `canonical` on with identical content) is also treated as no
+  change and applies on the next content write.
+
+### Conformance
+
+- Advanced the conformance pin to **spec-v5.9** (cache-directory coexistence
+  generalized from differing formats to differing basenames — the requirement the
+  0.37.0 `merge` fix implements). No fixture change.
+
 ## [0.37.1] - 2026-06-17 — `merge` defaults to true; `merge=false` is strict
 
 ### Changed

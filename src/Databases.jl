@@ -445,6 +445,25 @@ function TOML.print(db::Database; sorted=true, by=_toml_sort_key, kwargs...)
     return TOML.print(to_dict(db); sorted=sorted, by=by, kwargs...)
 end
 
+# True when `path` already holds a manifest whose content — parsed and re-serialized
+# through the SAME native serializer that produced `toml_string` — is byte-identical to
+# it, i.e. nothing changed semantically. Used by `write` to skip a no-op rewrite: it
+# avoids churning the file's mtime and, the first time, replacing a hand-authored layout
+# (comments, ordering) for no content change. The comparison is native-vs-native — the
+# optional Python-CLI canonicalization in `write` is never involved — so a file last
+# written by the peer CLI still parses to the same dict and matches. An absent or
+# unparseable file returns false (fall through to a normal write).
+function _manifest_unchanged(path::String, toml_string::String)::Bool
+    isfile(path) || return false
+    parsed = try
+        TOML.parsefile(path)
+    catch
+        return false
+    end
+    file_norm = sprint(io -> TOML.print(io, parsed; sorted=true, by=_toml_sort_key))
+    return file_norm == toml_string
+end
+
 # Locate the Python `datamanifest` CLI: the project-local venv next to the
 # manifest first (`<dir>/.venv/bin/datamanifest`), then — when the manifest
 # sits inside a linked `git worktree`, which starts without the project's
@@ -491,6 +510,14 @@ function write(db::Database, datasets_toml::String; canonical::Union{Bool,Nothin
     toml_string = sprint(TOML.print, db; kwargs...)
     if (toml_string === nothing)
         error("Failed to convert Database to TOML string.")
+    end
+    # Skip the write entirely when the on-disk manifest already has the same semantic
+    # content (compared native-vs-native at write time against the current file), so a
+    # no-op persist neither churns the file nor reformats a hand-authored layout. Only
+    # an empty `kwargs` (the normal call shape) is eligible — a caller passing custom
+    # print options bypasses the fast path and always writes (safe, never skips wrongly).
+    if isempty(kwargs) && _manifest_unchanged(datasets_toml, toml_string)
+        return
     end
     explicit = canonical !== nothing
     if explicit ? canonical : canonical_write(storage_config=storage_layers(db))

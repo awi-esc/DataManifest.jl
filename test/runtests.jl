@@ -213,6 +213,23 @@ try
         @test !isempty(read(atomic_toml, String))
         @test read_dataset(atomic_toml, datasets_dir; persist=false) == db
 
+        # Conditional write: a persist whose serialized content matches what is already
+        # on disk is skipped, so it neither churns the file nor reformats a hand-authored
+        # layout. We prove the skip by injecting a comment (semantically identical) and
+        # confirming a re-write leaves it intact; a real change still rewrites.
+        cond_toml = joinpath(mktempdir(), "datamanifest.toml")
+        write(db, cond_toml)
+        Base.write(cond_toml, "# hand-authored note\n\n" * read(cond_toml, String))
+        write(db, cond_toml)                                            # no change → skipped
+        @test occursin("# hand-authored note", read(cond_toml, String)) # comment preserved
+        @test read_dataset(cond_toml, datasets_dir; persist=false) == db
+        db_chg = read_dataset(cond_toml, datasets_dir; persist=false)
+        register_dataset(db_chg, "https://example.com/new.csv"; name="cond_new",
+            skip_checksum=true, persist=false)
+        write(db_chg, cond_toml)
+        @test !occursin("# hand-authored note", read(cond_toml, String))   # rewritten
+        @test haskey(read_dataset(cond_toml, datasets_dir; persist=false).datasets, "cond_new")
+
         # DATAMANIFEST_CANONICAL=1 opts in to the canonical pipe (the ladder is
         # frozen at materialization, so the Database is built under the env it
         # should see); when the Python CLI is absent it falls back to native
@@ -302,9 +319,13 @@ try
         withenv("DATAMANIFEST_CANONICAL" => "1", "XDG_CONFIG_HOME" => xdg) do
             write(db2, target2)
             @test !startswith(read(target2, String), "# formatted-by-fake")
-            freeze_config!(db2)
-            write(db2, target2)
-            @test startswith(read(target2, String), "# formatted-by-fake")
+            freeze_config!(db2)   # re-reads config.toml + env → canonical now on
+            # Write to a fresh path: the conditional write skips a no-op re-write of
+            # identical content (only the canonical flag changed), so assert the
+            # re-read canonical setting on a write that actually happens.
+            target2b = joinpath(proj2, "fresh.toml")
+            write(db2, target2b)
+            @test startswith(read(target2b, String), "# formatted-by-fake")
         end
 
         # A linked git worktree starts without the project's .datamanifest/ and
