@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.37.1] - 2026-06-17 — `merge` defaults to true; `merge=false` is strict
+
+### Changed
+
+- **`materialize`'s `merge` keyword now defaults to `true`.** Coexistence is the
+  safe default: publishing a directory into an already-populated directory merges
+  the produced entries in (per-entry atomic rename) and leaves the existing
+  siblings intact, so two producers sharing a hash directory never clobber each
+  other without the caller having to opt in. The produced-cache callers no longer
+  pass `merge=true` explicitly (it is the default).
+- **`merge=false` is now strict: it raises instead of silently replacing an
+  existing directory wholesale.** A caller that did not expect to share the
+  directory gets an error rather than silent data loss. A caller that genuinely
+  wants a clean wholesale replace removes the target first — which is what the
+  dataset fetch now does on `overwrite=true` (clearing the old artifact so the
+  re-fetch drops stale files rather than merging into them).
+
+No on-disk format, hash, or artifact-name change.
+
 ## [0.37.0] - 2026-06-17 — cache siblings coexist in a shared hash dir (`merge`)
 
 ### Fixed

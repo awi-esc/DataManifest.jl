@@ -1485,8 +1485,7 @@ function save_cache(data, cachetype::AbstractString, key_table;
         _locate_cached_toml(cached_toml, ctx.state_root);
         cachetype=cachetype, hash=h, storage_path=dir, ref=ref, format=format,
         version=(version === nothing ? "" : String(version)))
-    materialize(dir; merge=true,
-                stale_age=lock_stale_age(storage_config=ctx.storage_config)) do tmp
+    materialize(dir; stale_age=lock_stale_age(storage_config=ctx.storage_config)) do tmp
         mkpath(tmp)
         _produce_save(data, joinpath(tmp, "$(basename).$(ext)"), format; saver=saver)
         write_config(tmp, key_table, cachetype; version=version, hash=h)
@@ -1600,7 +1599,7 @@ function _run_cached(body::Function, cachetype::AbstractString, key_table;
     hit = d -> is_complete(d) && config_is_valid(d) && _resolve_artifact(d, basename, ext) !== nothing
     local result
     produced = false
-    materialize(dir; skip_if=hit, merge=true,
+    materialize(dir; skip_if=hit,
                 stale_age=lock_stale_age(storage_config=ctx.storage_config)) do tmp
         mkpath(tmp)
         result = body()

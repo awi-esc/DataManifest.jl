@@ -482,14 +482,21 @@ For back-compatibility with fetchers that write straight to `target` (e.g. the
 `rsync`/`file` schemes, which deposit the source basename into the parent dir),
 a `write_fn` that produced `target` directly (and no `tmp`) is accepted as-is.
 
-`merge=true` (used by the produced-artifact cache) changes the publish step when
-both `tmp` and an already-present `target` are directories: instead of replacing
-`target` wholesale, each entry produced in `tmp` is moved into `target`
-individually, overwriting same-named entries while leaving any other entries in
-place. This lets two producers that resolve to the **same** directory under
-different basenames coexist — the default wholesale rename would delete the first
-producer's artifact. The merge runs under the lock and each per-entry move is an
-atomic rename, so a same-filesystem `tmp` keeps every individual entry atomic.
+`merge` (default `true`) governs how a **directory** is published over an existing
+directory — the case where two producers resolve to the **same** directory under
+different basenames or formats:
+
+- `merge=true` (default): each entry produced in `tmp` is moved into `target`
+  individually (an atomic per-entry rename), overwriting same-named entries while
+  leaving the others in place, so the two producers coexist instead of one
+  clobbering the other. The merge runs under the lock.
+- `merge=false`: *strict* — raise rather than replace the existing directory
+  wholesale, so a caller that did not expect to share the directory never silently
+  destroys what is already there. A caller that genuinely wants a clean wholesale
+  replace removes `target` first (as the dataset fetch does on `overwrite`).
+
+`merge` has no effect when `target` is absent (a fresh publish) or a file (replaced
+in one atomic rename).
 """
 # Acquire `target`'s `.lock` pidfile per `on_locked`, shared by `materialize` and
 # `with_lock`. Returns `(monitor, got)`: `monitor` is the lock handle to `close` later
@@ -523,7 +530,7 @@ end
 function materialize(write_fn, target::AbstractString;
                      on_locked::Symbol=:wait,
                      stale_age::Real=lock_stale_age(storage_config=config_layers()),
-                     skip_if=nothing, merge::Bool=false)
+                     skip_if=nothing, merge::Bool=true)
     on_locked in (:wait, :fail, :proceed) ||
         throw(ArgumentError("materialize: on_locked must be :wait, :fail, or :proceed; got :$on_locked"))
     target = String(target)
@@ -544,17 +551,27 @@ function materialize(write_fn, target::AbstractString;
         (isfile(tmp) || isdir(tmp)) && rm(tmp; force=true, recursive=true)
         write_fn(tmp)
         if isfile(tmp) || isdir(tmp)
-            if merge && isdir(tmp) && isdir(target)
-                # Merge into an existing directory instead of replacing it wholesale: a
-                # sibling producer may share this directory (same hash dir, a different
-                # `basename`). `mv(tmp, target; force=true)` removes the whole target first,
-                # which would clobber the sibling's artifacts. Move each produced entry into
-                # place individually (an atomic per-file rename on the same filesystem),
-                # overwriting same-named entries and leaving the siblings intact.
-                for entry in readdir(tmp)
-                    mv(joinpath(tmp, entry), joinpath(target, entry); force=true)
+            if isdir(tmp) && isdir(target)
+                # Publishing a directory over an existing directory: two producers may
+                # resolve to the same directory (same hash dir, a different `basename` or
+                # `format`). `mv(tmp, target; force=true)` would remove the whole target
+                # first, clobbering whatever a sibling produced there.
+                if merge
+                    # Merge (default): move each produced entry into place individually — an
+                    # atomic per-file rename on the same filesystem — overwriting same-named
+                    # entries and leaving the existing siblings intact.
+                    for entry in readdir(tmp)
+                        mv(joinpath(tmp, entry), joinpath(target, entry); force=true)
+                    end
+                    rm(tmp; force=true, recursive=true)
+                else
+                    # Strict: refuse to destroy the existing directory wholesale. A caller
+                    # that genuinely wants a clean replace removes the target first (e.g. the
+                    # dataset fetch on `overwrite`).
+                    rm(tmp; force=true, recursive=true)
+                    error("materialize: refusing to overwrite the existing directory `$target` " *
+                          "with merge=false; pass merge=true to merge into it, or remove it first.")
                 end
-                rm(tmp; force=true, recursive=true)
             else
                 mv(tmp, target; force=true)
             end
@@ -856,6 +873,12 @@ function download_dataset(db::Database, dataset::DatasetEntry; extract::Union{No
                 (_, dep_entry) = search_dataset(db, dep_name; kwargs...)
                 push!(req_paths_ordered, get_dataset_path(db, dep_entry; extract=extract !== nothing ? extract : dep_entry.extract))
             end
+        end
+        # An explicit overwrite is a clean wholesale replace: clear the old artifact so the
+        # re-fetch drops any stale files, rather than merging into the previous contents
+        # (materialize now merges into an existing directory by default).
+        if overwrite && (isfile(download_path) || isdir(download_path))
+            rm(download_path; force=true, recursive=true)
         end
         # On lock contention, wait for the peer fetching this same target; unless an
         # explicit overwrite was requested, adopt what it published instead of re-fetching.

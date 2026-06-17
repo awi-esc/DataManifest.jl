@@ -1887,27 +1887,30 @@ try
             @test ncalls[] == 1
         end
 
-        # merge=true publishes into an existing directory without clobbering siblings:
-        # the default wholesale rename would delete `a.txt` when `b.txt` is published.
+        # merge defaults to true: publishing into an existing directory keeps the
+        # siblings — the second publish must not delete `a.txt` when it writes `b.txt`.
         md = mktempdir()
         mt = joinpath(md, "shared")
         M.materialize(mt) do tmp
             mkpath(tmp)
             write(joinpath(tmp, "a.txt"), "A")
         end
-        M.materialize(mt; merge=true) do tmp
+        M.materialize(mt) do tmp                            # default merge=true
             mkpath(tmp)
             write(joinpath(tmp, "b.txt"), "B")
         end
         @test read(joinpath(mt, "a.txt"), String) == "A"   # sibling survived
         @test read(joinpath(mt, "b.txt"), String) == "B"
         @test S.is_complete(mt)
-        # contrast: without merge the second publish replaces the directory wholesale.
-        mt2 = joinpath(md, "replaced")
+        # merge=false is strict: it refuses to overwrite an existing directory wholesale,
+        # raising instead of silently destroying what is already there.
+        mt2 = joinpath(md, "strict")
         M.materialize(tmp -> (mkpath(tmp); write(joinpath(tmp, "a.txt"), "A")), mt2)
-        M.materialize(tmp -> (mkpath(tmp); write(joinpath(tmp, "b.txt"), "B")), mt2)
-        @test !isfile(joinpath(mt2, "a.txt"))
-        @test isfile(joinpath(mt2, "b.txt"))
+        @test_throws ErrorException M.materialize(
+            tmp -> (mkpath(tmp); write(joinpath(tmp, "b.txt"), "B")), mt2; merge=false)
+        @test isfile(joinpath(mt2, "a.txt"))                # original preserved
+        @test !isfile(joinpath(mt2, "b.txt"))               # nothing published
+        @test isempty(filter(f -> endswith(f, ".tmp"), readdir(md)))  # no leftover staging
 
         # @cached: two producers sharing a hash dir (same cachetype+key, different
         # basename) must coexist — the second must not destroy the first's artifact.
