@@ -481,6 +481,15 @@ only a stray `.tmp` — so the target is still treated as absent on the next loa
 For back-compatibility with fetchers that write straight to `target` (e.g. the
 `rsync`/`file` schemes, which deposit the source basename into the parent dir),
 a `write_fn` that produced `target` directly (and no `tmp`) is accepted as-is.
+
+`merge=true` (used by the produced-artifact cache) changes the publish step when
+both `tmp` and an already-present `target` are directories: instead of replacing
+`target` wholesale, each entry produced in `tmp` is moved into `target`
+individually, overwriting same-named entries while leaving any other entries in
+place. This lets two producers that resolve to the **same** directory under
+different basenames coexist — the default wholesale rename would delete the first
+producer's artifact. The merge runs under the lock and each per-entry move is an
+atomic rename, so a same-filesystem `tmp` keeps every individual entry atomic.
 """
 # Acquire `target`'s `.lock` pidfile per `on_locked`, shared by `materialize` and
 # `with_lock`. Returns `(monitor, got)`: `monitor` is the lock handle to `close` later
@@ -514,7 +523,7 @@ end
 function materialize(write_fn, target::AbstractString;
                      on_locked::Symbol=:wait,
                      stale_age::Real=lock_stale_age(storage_config=config_layers()),
-                     skip_if=nothing)
+                     skip_if=nothing, merge::Bool=false)
     on_locked in (:wait, :fail, :proceed) ||
         throw(ArgumentError("materialize: on_locked must be :wait, :fail, or :proceed; got :$on_locked"))
     target = String(target)
@@ -535,7 +544,20 @@ function materialize(write_fn, target::AbstractString;
         (isfile(tmp) || isdir(tmp)) && rm(tmp; force=true, recursive=true)
         write_fn(tmp)
         if isfile(tmp) || isdir(tmp)
-            mv(tmp, target; force=true)
+            if merge && isdir(tmp) && isdir(target)
+                # Merge into an existing directory instead of replacing it wholesale: a
+                # sibling producer may share this directory (same hash dir, a different
+                # `basename`). `mv(tmp, target; force=true)` removes the whole target first,
+                # which would clobber the sibling's artifacts. Move each produced entry into
+                # place individually (an atomic per-file rename on the same filesystem),
+                # overwriting same-named entries and leaving the siblings intact.
+                for entry in readdir(tmp)
+                    mv(joinpath(tmp, entry), joinpath(target, entry); force=true)
+                end
+                rm(tmp; force=true, recursive=true)
+            else
+                mv(tmp, target; force=true)
+            end
         elseif !(isfile(target) || isdir(target))
             error("materialize: write function produced neither `$tmp` nor `$target`")
         end

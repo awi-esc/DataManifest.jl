@@ -1886,6 +1886,58 @@ try
             @test all(==(42), fetch.(tasks))
             @test ncalls[] == 1
         end
+
+        # merge=true publishes into an existing directory without clobbering siblings:
+        # the default wholesale rename would delete `a.txt` when `b.txt` is published.
+        md = mktempdir()
+        mt = joinpath(md, "shared")
+        M.materialize(mt) do tmp
+            mkpath(tmp)
+            write(joinpath(tmp, "a.txt"), "A")
+        end
+        M.materialize(mt; merge=true) do tmp
+            mkpath(tmp)
+            write(joinpath(tmp, "b.txt"), "B")
+        end
+        @test read(joinpath(mt, "a.txt"), String) == "A"   # sibling survived
+        @test read(joinpath(mt, "b.txt"), String) == "B"
+        @test S.is_complete(mt)
+        # contrast: without merge the second publish replaces the directory wholesale.
+        mt2 = joinpath(md, "replaced")
+        M.materialize(tmp -> (mkpath(tmp); write(joinpath(tmp, "a.txt"), "A")), mt2)
+        M.materialize(tmp -> (mkpath(tmp); write(joinpath(tmp, "b.txt"), "B")), mt2)
+        @test !isfile(joinpath(mt2, "a.txt"))
+        @test isfile(joinpath(mt2, "b.txt"))
+
+        # @cached: two producers sharing a hash dir (same cachetype+key, different
+        # basename) must coexist — the second must not destroy the first's artifact.
+        sdir = mktempdir()
+        sidx = joinpath(sdir, ".datamanifest", "state.toml")
+        susage = joinpath(sdir, "usage.toml")
+        nprior = Ref(0); npost = Ref(0)
+        @cached cachetype="shared_hashdir" key=(a -> (; a.n)) basename="prior" function sib_prior(;
+                n::Int=0, cache_dir=nothing, cached_toml=nothing)
+            nprior[] += 1
+            return "prior-$n"
+        end
+        @cached cachetype="shared_hashdir" key=(a -> (; a.n)) basename="posterior" function sib_posterior(;
+                n::Int=0, cache_dir=nothing, cached_toml=nothing)
+            npost[] += 1
+            return "posterior-$n"
+        end
+        withenv("DATAMANIFEST_USAGE_LOG" => susage) do
+            @test sib_prior(; n=7, cache_dir=sdir, cached_toml=sidx) == "prior-7"
+            @test sib_posterior(; n=7, cache_dir=sdir, cached_toml=sidx) == "posterior-7"
+            # The prior must still load from disk after the posterior published into the same
+            # hash dir — a recompute here (nprior[] == 2) is the exact clobber this fixes.
+            @test sib_prior(; n=7, cache_dir=sdir, cached_toml=sidx) == "prior-7"
+            @test nprior[] == 1
+            @test npost[] == 1
+        end
+        # both artifacts physically coexist in the one shared hash dir
+        hashdir = only(filter(isdir, readdir(joinpath(sdir, "shared_hashdir"); join=true)))
+        @test isfile(joinpath(hashdir, "prior.jls"))
+        @test isfile(joinpath(hashdir, "posterior.jls"))
     end
 
     @testset "with_lock consumer-side serialization (spec-v5.2)" begin

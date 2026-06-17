@@ -1,6 +1,28 @@
 # Changelog
 
-## [0.36.1] - 2026-06-17 — atomic manifest write
+## [0.37.0] - 2026-06-17 — cache siblings coexist in a shared hash dir (`merge`)
+
+### Fixed
+
+- **`materialize` no longer clobbers sibling artifacts when two producers share a
+  hash directory.** Two `@cached` producers with the same `cachetype` and key (so
+  the same `<cachetype>/[<version>/]<hash>` directory) but a different `basename`
+  or `format` resolve to one directory. The publish step used `mv(tmp, dir;
+  force=true)`, and Julia's `mv` onto an existing directory removes the whole
+  target first — so the second producer deleted the first's artifact (and the
+  shared sidecars). This violated the spec's cache-layout requirement that such
+  artifacts "coexist instead of colliding" (SCHEMA.md §"Cache layout and
+  sidecars").
+
+### Added
+
+- **`materialize` gains a `merge` keyword (default `false`).** When `merge=true`
+  (set by the produced-cache callers `save_cache` / `_run_cached`) and both the
+  staging path and an existing target are directories, each produced entry is
+  moved into place individually — an atomic per-file rename — preserving the
+  existing siblings instead of replacing the directory wholesale. The merge runs
+  under the existing lock. The dataset-fetch path keeps the default wholesale
+  atomic rename. No on-disk format, hash, or artifact-name change.
 
 ### Fixed
 
