@@ -1493,6 +1493,114 @@ try
         @test C._resolve_artifact(rdir, "data", "nc") == joinpath(rdir, "data.nc")      # exact wins
     end
 
+    @testset "shared format registry (datasets + cache) / loader=/saver= overrides" begin
+        C = DataManifest.Cache
+        F = DataManifest.Formats
+        using DataManifest.DefaultLoaders: default_loader
+
+        # ── A `(save, load)` format usable as BOTH a dataset loader and a cache codec ──
+        # Register one codec; prove it serves the `@cached` produce/load AND a dataset load.
+        C.register_format!("sharedfmt",
+            (data, path) -> write(path, "SHARED:" * string(data)),
+            (path) -> replace(read(path, String), "SHARED:" => ""))
+        # It is reachable from the no-db built-in dataset path (default_loader consults the
+        # shared registry's `.load`), even though it was registered as a *cache* codec.
+        @test default_loader("sharedfmt") isa Function
+
+        sdir = mktempdir()
+        sidx = joinpath(sdir, ".datamanifest", "state.toml")
+        scalls = Ref(0)
+        @cached cachetype="shared" format="sharedfmt" ext="dat" key=(a -> (; a.n)) function shared_demo(;
+                n::Int=0, cache_dir=nothing, cached_toml=nothing)
+            scalls[] += 1
+            return "v$(n)"
+        end
+        withenv("DATAMANIFEST_USAGE_LOG" => joinpath(sdir, "usage.toml")) do
+            @test shared_demo(; n=3, cache_dir=sdir, cached_toml=sidx) == "v3"
+            adir = joinpath(sdir, "shared", param_hash((; n=3)))
+            @test startswith(read(joinpath(adir, "data.dat"), String), "SHARED:")  # codec wrote it
+            @test shared_demo(; n=3, cache_dir=sdir, cached_toml=sidx) == "v3"     # cache hit
+            @test scalls[] == 1
+        end
+        # The same codec's `load` reads the artifact directly as a dataset file.
+        afile = joinpath(sdir, "shared", param_hash((; n=3)), "data.dat")
+        @test default_loader("sharedfmt")(afile) == "v3"
+
+        # ── A load-only (read-only) format: usable as a dataset, but a `@cached` produce
+        # without `saver=` errors clearly. ──
+        C.register_format!("loadonly"; load=(path) -> "READ:" * read(path, String))
+        @test F.registered_saver("loadonly") === nothing
+        @test default_loader("loadonly") isa Function   # loadable as a dataset
+        rdir = mktempdir()
+        @cached cachetype="ro" format="loadonly" ext="dat" key=(a -> (; a.n)) function ro_demo(;
+                n::Int=0, cache_dir=nothing, cached_toml=nothing)
+            return "x$(n)"
+        end
+        withenv("DATAMANIFEST_USAGE_LOG" => joinpath(rdir, "usage.toml")) do
+            err = try
+                ro_demo(; n=1, cache_dir=rdir, cached_toml=joinpath(rdir, "s.toml"))
+                nothing
+            catch e
+                e
+            end
+            @test err isa Exception
+            @test occursin("read-only", sprint(showerror, err))
+        end
+
+        # ── `saver=` rescues a read-only format on produce; `loader=` reads it back. ──
+        wdir = mktempdir()
+        widx = joinpath(wdir, ".datamanifest", "state.toml")
+        wcalls = Ref(0)
+        @cached cachetype="ovr" format="loadonly" ext="dat" key=(a -> (; a.n)) saver=((d, p) -> write(p, "OVR:" * string(d))) function ovr_demo(;
+                n::Int=0, cache_dir=nothing, cached_toml=nothing)
+            wcalls[] += 1
+            return "w$(n)"
+        end
+        withenv("DATAMANIFEST_USAGE_LOG" => joinpath(wdir, "usage.toml")) do
+            # Produce: `saver=` writes the artifact; load uses the `format` registry `load`.
+            @test ovr_demo(; n=5, cache_dir=wdir, cached_toml=widx) == "w5"
+            adir = joinpath(wdir, "ovr", param_hash((; n=5)))
+            @test read(joinpath(adir, "data.dat"), String) == "OVR:w5"  # saver= wrote it
+            @test wcalls[] == 1
+            # Cache hit reads via the registry's `loadonly` reader (READ: prefix).
+            @test ovr_demo(; n=5, cache_dir=wdir, cached_toml=widx) == "READ:OVR:w5"
+            @test wcalls[] == 1
+        end
+
+        # ── `loader=` override on `@cached` bypasses the registry reader on a hit. ──
+        ldir = mktempdir()
+        lidx = joinpath(ldir, ".datamanifest", "state.toml")
+        @cached cachetype="lov" key=(a -> (; a.n)) saver=((d, p) -> write(p, string(d))) loader=((p) -> "LOADER:" * read(p, String)) function lov_demo(;
+                n::Int=0, cache_dir=nothing, cached_toml=nothing)
+            return "$(n)"
+        end
+        withenv("DATAMANIFEST_USAGE_LOG" => joinpath(ldir, "usage.toml")) do
+            @test lov_demo(; n=7, cache_dir=ldir, cached_toml=lidx) == "7"       # produce returns body value
+            @test lov_demo(; n=7, cache_dir=ldir, cached_toml=lidx) == "LOADER:7"  # hit goes through loader=
+        end
+
+        # ── Back-compat: the 3-arg positional `register_format!` keeps working. ──
+        C.register_format!("threearg",
+            (data, path) -> write(path, "3:" * string(data)),
+            (path) -> replace(read(path, String), "3:" => ""))
+        @test F.registered_saver("threearg") !== nothing
+        @test F.registered_loader("threearg") !== nothing
+        @test default_loader("threearg") isa Function
+        tdir = mktempdir()
+        @cached cachetype="tre" format="threearg" ext="dat" key=(a -> (; a.n)) function tre_demo(;
+                n::Int=0, cache_dir=nothing, cached_toml=nothing)
+            return "t$(n)"
+        end
+        withenv("DATAMANIFEST_USAGE_LOG" => joinpath(tdir, "usage.toml")) do
+            @test tre_demo(; n=2, cache_dir=tdir, cached_toml=joinpath(tdir, "s.toml")) == "t2"
+            adir = joinpath(tdir, "tre", param_hash((; n=2)))
+            @test read(joinpath(adir, "data.dat"), String) == "3:t2"
+        end
+
+        # The keyword form requires at least one of load=/save=.
+        @test_throws Exception C.register_format!("emptyfmt")
+    end
+
     @testset "database-scoped caching (db= / cache bundles)" begin
         C = DataManifest.Cache
         S = DataManifest.Storage

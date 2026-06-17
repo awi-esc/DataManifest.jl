@@ -4,6 +4,7 @@
 module DefaultLoaders
 
 using TOML  # already a dependency of DataManifest
+using ..Formats: registered_loader, register_format!, has_format
 
 # Directory containing this file (src/); used to find NetCDFDimStack.jl when pathof(DefaultLoaders) is nothing (e.g. in CI).
 const _SRC_DIR = @__DIR__
@@ -87,7 +88,17 @@ function default_loader(format::AbstractString)
     elseif f == "tar.gz"
         return _tar_gz_loader
     else
-        error("No default loader for format \"$format\". Pass a loader function or register a named loader in [_loaders].")
+        # A format registered in the shared registry (e.g. a `@cached` codec such as `nceof`)
+        # is automatically loadable as a dataset via its registered `load`. The built-in switch
+        # above wins for the canonical names; this consult is purely additive. Codec keys are
+        # case-sensitive, so try the original `format` as well as its lowercased form.
+        reg = registered_loader(f)
+        reg === nothing && (reg = registered_loader(String(format)))
+        reg === nothing &&
+            error("No default loader for format \"$format\". Pass a loader function, register " *
+                  "a named loader in [_loaders], or register the format with " *
+                  "DataManifest.Cache.register_format!.")
+        return reg
     end
 end
 
@@ -200,6 +211,27 @@ function _tar_gz_loader(path)
         tar.extract(codecz.GzipDecompressorStream(io), dir)
     end
     return dir
+end
+
+# The built-in format readers, by their canonical names. Registered into the shared format
+# registry at module init as read-only entries (`save=nothing`), so a built-in format is
+# reachable from both sides — `default_loader` resolves it (the switch above), and a `@cached`
+# load with this `format` finds the same reader. A built-in name is registered only when not
+# already present, so an extension (or the user) that registers a full `(save, load)` codec
+# under the same name keeps precedence.
+const _BUILTIN_LOADERS = (
+    "csv" => _csv_loader, "parquet" => _parquet_loader, "nc" => _nc_loader,
+    "dimstack" => _dimstack_loader, "md" => _text_io_loader, "txt" => _text_io_loader,
+    "json" => _json_loader, "yaml" => _yaml_loader, "yml" => _yaml_loader,
+    "toml" => _toml_loader, "zip" => _zip_loader, "tar" => _tar_loader,
+    "tar.gz" => _tar_gz_loader,
+)
+
+function __init__()
+    for (name, fn) in _BUILTIN_LOADERS
+        has_format(name) || register_format!(name; load=fn)
+    end
+    return nothing
 end
 
 end # module DefaultLoaders

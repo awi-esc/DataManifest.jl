@@ -592,7 +592,7 @@ Storage.ConfigSnapshot
 ## Caching: the `@cached` macro
 
 ```
-@cached key=(args -> (; …)) [cachetype="…"] [version="…"] [ext="jls"] [format="jls"] [basename="data"] [db=DB] function fn(pos…; kw…) … end
+@cached key=(args -> (; …)) [cachetype="…"] [version="…"] [ext="jls"] [format="jls"] [basename="data"] [db=DB] [loader=fn] [saver=fn] function fn(pos…; kw…) … end
 ```
 
 Wrap a function with produce-or-load disk caching: the result is computed once
@@ -627,12 +627,20 @@ and nulls (`nothing`/`missing`) raise an error.
   an existing `@cached ext="nc"` keeps using the `nc` codec. Pass it to select a
   distinct codec under a standard suffix — e.g. `format="nceof" ext="nc"` writes
   a `data.nc` file with the gridded-EOF codec. `jls` (stdlib `Serialization`) is
-  the dependency-free built-in; register others (`nc`, `jld2`, …) with
-  `DataManifest.Cache.register_format!(format, save, load)` where `save(data,
-  path)` writes and `load(path)` reads. On load the exact `<basename>.<ext>` is
-  preferred, falling back to a sibling `<basename>.*` artifact — so caches
-  written under a previous extension stay hittable when a site switches suffix
-  (the hash directory never depends on `ext`).
+  the dependency-free built-in; register others (`nc`, `jld2`, …) in the shared
+  format registry with `register_format!` (see
+  [Format registry](#format-registry-register_format)). On load the exact
+  `<basename>.<ext>` is preferred, falling back to a sibling `<basename>.*`
+  artifact — so caches written under a previous extension stay hittable when a
+  site switches suffix (the hash directory never depends on `ext`).
+- `loader` / `saver` (optional, an expression evaluated in the caller's scope at
+  call time, like `db`): explicit per-call codec overrides that bypass the
+  `format` registry for this call. `saver` is a writer `(data, path) -> nothing`
+  that writes `<basename>.<ext>`; `loader` a reader `path -> value`. Either may
+  be `nothing` (the default — use the `format` registry). Use them for a one-off
+  codec without a registry entry, or to write a `format` that is read-only in the
+  registry (a dataset format with a `load` but no `save`) — such a `format`
+  errors on produce unless a `saver=` is supplied.
 - `db` (optional): an expression whose value is a `Database`, evaluated in the
   caller's scope at **call** time (so a `const LIBDB = Database(...)` defined
   after the `@cached` function works). The entire cache context then derives
@@ -666,6 +674,44 @@ arguments with these names, they get extra meaning:
   own;
 - `cached_toml` overrides the state-file path the produced variation is
   registered in.
+
+---
+
+## Format registry: `register_format!`
+
+```julia
+register_format!(format, save, load)        # full (save, load) codec
+register_format!(format; load, save=nothing)  # keyword form; save=nothing ⇒ read-only
+```
+
+A **format** names a serialization. DataManifest keeps **one shared format
+registry** that both the produced cache (`@cached`, read + write) and fetched
+datasets (read only) draw from, so a format registered once is usable on both
+sides. Each entry is an optional `save(data, path)` writer plus an optional
+`load(path)` reader.
+
+- The three-argument positional form registers a full `(save, load)` codec —
+  usable as a `@cached` codec and, automatically, as a dataset loader (its
+  `load` is reachable from [`default_loader`](#load_dataset) on the no-loader
+  path).
+- The keyword form registers a load-only format when `save` is omitted: it is
+  loadable as a dataset, but a `@cached` produce selecting it errors unless the
+  call passes an explicit `saver=`. Pass `save=` to make it a full codec.
+
+The registry key is the **format name**, not the on-disk extension: a `@cached`
+site selects a codec with `format=` and names the file with a separate `ext=`
+(defaulting to `format`), so a custom codec can write a standard suffix
+(`format="nceof" ext="nc"` → a `data.nc` loaded by the EOF reader).
+
+`register_format!` is available as `DataManifest.register_format!` and
+`DataManifest.Cache.register_format!` (the same function). `jls` (stdlib
+`Serialization`) is the always-available built-in cache codec, handled without
+registration; the built-in dataset readers (`csv`, `nc`, `json`, `toml`, …)
+register their `load` into the shared registry as read-only entries. The
+db-context loader resolution (named loaders, `[_LANG.julia.loaders]`, an
+explicit dataset `loader=`) and the per-call `@cached` `loader=`/`saver=`
+overrides sit **above** the registry — they beat the registry default for a
+given call.
 
 ---
 

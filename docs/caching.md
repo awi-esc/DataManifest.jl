@@ -53,6 +53,11 @@ disk reads or writes.
   decoupled from the filename. Defaults to `ext`; pass it to select a distinct
   codec under a standard suffix — e.g. `format="nceof" ext="nc"` writes a
   `data.nc` while loading via the gridded-EOF codec. See [Formats](#formats).
+- `loader` / `saver` (optional, an expression like `db`): explicit per-call
+  codec overrides that bypass the `format` registry. `saver` is a writer
+  `(data, path) -> nothing`, `loader` a reader `path -> value`. Use them for a
+  one-off codec without a registry entry, or to write a `format` that is
+  read-only in the registry (see [Formats](#formats)).
 - `db` (optional): a `Database` the whole cache context derives from — gives a
   library its own cache bundle, separate from the host project's folders and
   state; see [library cache
@@ -66,14 +71,40 @@ uses (`1.0` → `1.0`, `1e-5` → `1e-05`). `NaN`, `±Inf`, and nulls
 
 ## Formats
 
-`jls` (stdlib `Serialization`) is the built-in zero-dependency format; register
-others (`nc`, `jld2`, …) with `DataManifest.Cache.register_format!(format, save, load)`.
-The registry key is the **codec name**, not the file extension: a `@cached` site
-selects the codec with `format=` and names the file with a separate `ext=`
-(defaulting to `format`), so a custom codec can still write a standard suffix
-(`format="nceof" ext="nc"` → a `data.nc` loaded by the EOF reader). The
-cross-language DataManifest spec recommends `jld2` as the Julia default; shipping
-`jls` as the built-in is a documented, spec-permitted deviation.
+A **format** names a serialization. DataManifest keeps one shared format
+registry that both the produced cache (`@cached`, read + write) and fetched
+datasets (read only) draw from — so a format registered once is usable on both
+sides. Each entry is an optional `save` plus an optional `load`:
+
+```julia
+# A full (save, load) codec — usable as a @cached codec AND a dataset loader.
+DataManifest.register_format!("nc", (data, path) -> …, path -> …)
+
+# A read-only format (keyword form) — loadable as a dataset, but a @cached
+# produce selecting it errors unless the call passes saver=.
+DataManifest.register_format!("myfmt"; load = path -> …)
+```
+
+`register_format!` is re-exported as `DataManifest.register_format!` and
+`DataManifest.Cache.register_format!` (same function). The registry key is the
+**format name**, not the file extension: a `@cached` site selects a codec with
+`format=` and names the file with a separate `ext=` (defaulting to `format`),
+so a custom codec can still write a standard suffix (`format="nceof" ext="nc"`
+→ a `data.nc` loaded by the EOF reader). A format registered as a cache codec
+is automatically loadable as a dataset, because the no-loader dataset path
+(`default_loader`) consults the same registry's `load`.
+
+`jls` (stdlib `Serialization`) is the built-in zero-dependency cache format,
+always available without registration. The built-in dataset readers (`csv`,
+`nc`, `json`, `toml`, …) register their `load` into the shared registry as
+read-only entries, so they are reachable from both sides. The cross-language
+DataManifest spec recommends `jld2` as the Julia default; shipping `jls` as the
+built-in is a documented, spec-permitted deviation.
+
+For a one-off codec without a registry entry — or to write a `format` that is
+read-only in the registry — pass `loader=`/`saver=` directly to `@cached`
+(reader `path -> value` / writer `(data, path) -> nothing`); they bypass the
+registry for that call.
 
 ## Special keyword arguments
 

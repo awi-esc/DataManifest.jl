@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.36.0] - 2026-06-17 — one shared format registry across datasets and cache
+
+### Added
+
+- **One shared format registry for datasets and the produced cache.** The
+  fetched-dataset side (`format → loader`, read only) and the `@cached` side
+  (`format → (save, load)` codec, read + write) previously used two separate
+  registries for the same concept. They now share one registry (`format →
+  optional save + load`), so a format registered once is usable on both sides:
+  a cache codec is automatically loadable as a dataset (the no-loader
+  `default_loader` path consults the registry's `load`), and the built-in
+  dataset readers (`csv`, `nc`, `json`, `toml`, …) register their `load` into
+  the same registry as read-only entries. `register_format!` is now available
+  as `DataManifest.register_format!` as well as `DataManifest.Cache.register_format!`
+  (the same function).
+- **`register_format!` keyword form for read-only formats.**
+  `register_format!(format; load, save=nothing)` registers a load-only format —
+  loadable as a dataset, but a `@cached` produce selecting it errors clearly
+  ("format X is read-only …") unless the call passes a `saver=`. The 3-argument
+  positional `register_format!(format, save, load)` is unchanged.
+- **`loader=` / `saver=` overrides on `@cached`, `save_cache`, `load_cache`.**
+  Explicit per-call codec overrides (reader `path -> value` / writer
+  `(data, path) -> nothing`) that bypass the `format` registry for that call —
+  for a one-off codec without a registry entry, or to write a `format` that is
+  read-only in the registry. Evaluated in the caller's scope at call time, like
+  `db=`.
+
+This is an additive change: no on-disk format, hash, or artifact-name change.
+The db-context loader resolution (named loaders, `[_LANG.julia.loaders]`, an
+explicit dataset `loader=`) is unchanged and still overrides the registry
+default. `format` defaulting to `ext` (0.35.0) is unchanged.
+
 ## [0.35.0] - 2026-06-17 — decouple the codec from the on-disk extension
 
 ### Added

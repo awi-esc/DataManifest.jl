@@ -29,6 +29,7 @@ datasets-test
 # Autonomous roadmap workflows (local coordination artifacts; never committed)
 workflows/
 .worktrees/
+.claude/
 
 # spec-v4.1 git-ignored state file (regenerable local inventory)
 .datamanifest-state.toml

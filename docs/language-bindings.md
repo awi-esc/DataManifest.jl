@@ -67,6 +67,16 @@ Project-wide format defaults go in `[_LANG.julia.loaders]` (e.g.
 default, and an explicit `loader=` argument to `load_dataset` overrides the
 whole ladder.
 
+The built-in format loaders, and any format added with
+`DataManifest.register_format!`, live in one **shared format registry** common
+to fetched datasets and the produced cache (`@cached`): a format registered as
+a cache codec (with a `save` and a `load`) is therefore also loadable as a
+dataset through its `load`. The override layer above is unchanged — the named
+loaders (`[_LANG.julia.loaders]`, `[_LOADERS]`), a per-dataset `loader`, and an
+explicit `loader=` all still beat the registry default. See
+[caching.md](caching.md#formats) for the registry and the `format` / `loader` /
+`saver` vocabulary.
+
 ## The Julia rungs of the ladders
 
 **Fetch** (how the bytes are obtained), first present rung wins:

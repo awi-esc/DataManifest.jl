@@ -13,6 +13,7 @@ if VERSION < v"1.11"
 end
 
 include("Config.jl")
+include("Formats.jl")
 include("Storage.jl")
 include("Databases.jl")
 include("DefaultLoaders.jl")
@@ -42,7 +43,10 @@ using .PipeLines: download_dataset, download_datasets, load_dataset, get_project
 
 const add_dataset = add
 
-export Databases, PipeLines, Loaders, Storage, Cache
+export Databases, PipeLines, Loaders, Storage, Cache, Formats
+# The shared format registry (datasets + produced cache): one `format → optional save + load`.
+using .Formats: register_format!, registered_loader, registered_saver, has_format
+export register_format!
 # Safe-materialization / consumer-side locking primitives (spec-v5.2).
 export materialize, with_lock
 # Produce-or-load (`@cached`) companion layer — spec-v4.1 `cache-produce`.
