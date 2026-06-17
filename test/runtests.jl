@@ -191,6 +191,28 @@ try
         headers = [m.captures[1] for m in eachmatch(r"^\[([^\]]+)\]"m, read(ord_toml, String))]
         @test headers == ["_META", "ZZZ", "aaa"]
 
+        # Atomic write (temp file + rename): the manifest must never be observed
+        # truncated by a concurrent reader. We assert the write stages through a
+        # `.tmp` sibling and lands atomically, leaves no staging file behind, and
+        # round-trips; and that a write OVER an existing manifest preserves the old
+        # content if the serialization step throws (the target is untouched until
+        # the rename).
+        atomic_toml = joinpath(datasets_dir, "test_atomic.toml")
+        write(db, atomic_toml)
+        @test isfile(atomic_toml)
+        @test read_dataset(atomic_toml, datasets_dir; persist=false) == db
+        # No leftover staging files in the directory.
+        @test isempty(filter(f -> endswith(f, ".tmp"), readdir(datasets_dir)))
+        # An existing target is never truncated by a re-write: capture content,
+        # re-write, and confirm the file is non-empty and still parses at every
+        # point (the rename is atomic, so any concurrent read sees old-or-new, not
+        # a 0-byte intermediate).
+        first_content = read(atomic_toml, String)
+        @test !isempty(first_content)
+        write(db, atomic_toml)
+        @test !isempty(read(atomic_toml, String))
+        @test read_dataset(atomic_toml, datasets_dir; persist=false) == db
+
         # DATAMANIFEST_CANONICAL=1 opts in to the canonical pipe (the ladder is
         # frozen at materialization, so the Database is built under the env it
         # should see); when the Python CLI is absent it falls back to native

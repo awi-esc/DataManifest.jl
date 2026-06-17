@@ -506,8 +506,26 @@ function write(db::Database, datasets_toml::String; canonical::Union{Bool,Nothin
             toml_string = _canonicalize_toml(toml_string, exe)
         end
     end
-    open(datasets_toml, "w") do io
-        Base.write(io, toml_string)
+    # Write via a temp file in the SAME directory + atomic rename, so a sibling
+    # process re-reading the manifest mid-write never observes a truncated (0-byte)
+    # file. POSIX rename is atomic within a filesystem; staging in the target's own
+    # directory keeps source and destination on the same filesystem. The staging name
+    # carries pid AND task identity so concurrent same-process writers never share a
+    # temp file (one's rename would otherwise pull the other's staging file out from
+    # under it mid-write) — mirrors Cache.write_index.
+    dir = dirname(datasets_toml)
+    isempty(dir) || mkpath(dir)
+    tmp = "$(datasets_toml).$(getpid())-$(objectid(current_task())).tmp"
+    try
+        open(tmp, "w") do io
+            Base.write(io, toml_string)
+        end
+        mv(tmp, datasets_toml; force=true)
+    catch
+        # A failed/interrupted write must never leave the target truncated; clean up
+        # the staging file (the target is untouched until the atomic rename lands).
+        isfile(tmp) && try; rm(tmp); catch; end
+        rethrow()
     end
 end
 

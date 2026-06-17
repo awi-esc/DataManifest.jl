@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.36.1] - 2026-06-17 — atomic manifest write
+
+### Fixed
+
+- **`write(db, path)` is now atomic (temp file + rename).** The manifest write
+  opened the target with truncation and wrote in place, so a sibling process
+  re-reading the manifest mid-write could observe a 0-byte file and parse an
+  empty database ("No dataset found"). The write now stages to a per-pid /
+  per-task `.tmp` sibling in the target's own directory and `mv(...; force=true)`
+  over the target (POSIX rename is atomic within a filesystem); a failed or
+  interrupted write cleans up the staging file and never truncates the target.
+  Mirrors the existing `Cache.write_index` pattern. Same class of fix as the
+  cal-diagnostics atomic-write change. No on-disk format, hash, or
+  artifact-name change.
+
 ## [0.36.0] - 2026-06-17 — one shared format registry across datasets and cache
 
 ### Added
